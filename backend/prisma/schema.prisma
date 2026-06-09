@@ -1,0 +1,101 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Role values: ADMIN | AGENT
+// Disposition values: INTERESTED | NOT_INTERESTED | NO_ANSWER | BUSY | CALLBACK | DO_NOT_CALL | OTHER
+// ClientStatus values: PENDING | IN_PROGRESS | INTERESTED | CONVERTED | NOT_INTERESTED | DO_NOT_CALL
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      String   @default("AGENT")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  imports     ImportBatch[]
+  assignments Assignment[]
+  callLogs    CallLog[]
+  callbacks   Callback[]
+}
+
+model ImportBatch {
+  id           String   @id @default(cuid())
+  filename     String
+  totalRecords Int
+  importedById String
+  importedBy   User     @relation(fields: [importedById], references: [id])
+  createdAt    DateTime @default(now())
+
+  clients Client[]
+}
+
+model Client {
+  id            String      @id @default(cuid())
+  name          String
+  phone         String
+  phone2        String?
+  email         String?
+  address       String?
+  currentOp     String?
+  plan          String?
+  notes         String?
+  status        String      @default("PENDING")
+  importBatchId String
+  importBatch   ImportBatch @relation(fields: [importBatchId], references: [id])
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  assignment Assignment?
+  callLogs   CallLog[]
+  callbacks  Callback[]
+}
+
+model Assignment {
+  id         String   @id @default(cuid())
+  clientId   String   @unique
+  client     Client   @relation(fields: [clientId], references: [id])
+  agentId    String
+  agent      User     @relation(fields: [agentId], references: [id])
+  assignedAt DateTime @default(now())
+}
+
+model CallLog {
+  id          String   @id @default(cuid())
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id])
+  agentId     String
+  agent       User     @relation(fields: [agentId], references: [id])
+  disposition String
+  aclaracion  String?
+  notes       String?
+  calledAt    DateTime @default(now())
+
+  callback Callback?
+}
+
+model Callback {
+  id          String    @id @default(cuid())
+  clientId    String
+  client      Client    @relation(fields: [clientId], references: [id])
+  agentId     String
+  agent       User      @relation(fields: [agentId], references: [id])
+  callLogId   String?   @unique
+  callLog     CallLog?  @relation(fields: [callLogId], references: [id])
+  scheduledAt DateTime
+  notes       String?
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+}

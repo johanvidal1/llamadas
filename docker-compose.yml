@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: llamadas_db
+    environment:
+      POSTGRES_DB: llamadas_crm
+      POSTGRES_USER: crm_user
+      POSTGRES_PASSWORD: crm_pass_2024
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

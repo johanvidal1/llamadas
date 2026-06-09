@@ -1,0 +1,36 @@
+﻿# ── Dependencias ──────────────────────────────────────────
+node_modules/
+
+# ── Variables de entorno (NUNCA subir al repo) ────────────
+.env
+.env.local
+.env.production
+
+# ── Build outputs ─────────────────────────────────────────
+dist/
+build/
+
+# ── Prisma ────────────────────────────────────────────────
+backend/node_modules/.prisma/
+
+# ── Logs ──────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── Uploads / archivos temporales ─────────────────────────
+backend/uploads/
+*.xlsx
+*.csv
+
+# ── Base de datos local ────────────────────────────────────
+*.db
+*.db-journal
+
+# ── Sistema operativo ─────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editor ────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
