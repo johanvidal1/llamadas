@@ -13,7 +13,7 @@ services:
     name: llamadas-backend
     env: node
     region: oregon
-    plan: free          # cambiar a "starter" si se necesita uptime 24/7
+    plan: starter
     rootDir: backend
     buildCommand: npm install && npm run build
     startCommand: npm start
@@ -37,10 +37,6 @@ services:
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
     envVars:
       - key: VITE_API_URL
         sync: false           # Se configura manualmente con la URL del backend
