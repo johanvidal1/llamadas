@@ -419,7 +419,7 @@ export default function Reports() {
                         {a.name.charAt(0)}
                       </div>
                       <span className="font-medium text-gray-900 text-sm">{a.name}</span>
-                      {idx === 0 && <Award size={13} className="text-amber-500" title="Mejor conversión" />}
+                      {idx === 0 && <Award size={13} className="text-amber-500" aria-label="Mejor conversión" />}
                     </div>
                   </td>
                   <td className="px-3 py-3 text-right text-gray-700">{a.assigned}</td>
