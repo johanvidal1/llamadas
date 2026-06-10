@@ -42,10 +42,10 @@ export default function Layout() {
   return (
     <div className="flex h-screen bg-gray-50">
       {/* Sidebar */}
-      <aside className="w-64 bg-blue-900 flex flex-col shadow-xl">
+      <aside className={`w-64 flex flex-col shadow-xl ${isAdmin ? 'bg-green-900' : 'bg-blue-900'}`}>
         {/* Logo */}
-        <div className="flex items-center gap-2 px-6 py-5 border-b border-blue-800">
-          <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
+        <div className={`flex items-center gap-2 px-6 py-5 border-b ${isAdmin ? 'border-green-800' : 'border-blue-800'}`}>
+          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isAdmin ? 'bg-green-500' : 'bg-blue-500'}`}>
             <Phone size={18} className="text-white" />
           </div>
           <div>
@@ -64,8 +64,8 @@ export default function Layout() {
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   isActive
-                    ? 'bg-blue-700 text-white'
-                    : 'text-blue-200 hover:bg-blue-800 hover:text-white'
+                    ? isAdmin ? 'bg-green-700 text-white' : 'bg-blue-700 text-white'
+                    : isAdmin ? 'text-green-200 hover:bg-green-800 hover:text-white' : 'text-blue-200 hover:bg-blue-800 hover:text-white'
                 }`
               }
             >
@@ -76,19 +76,19 @@ export default function Layout() {
         </nav>
 
         {/* User info */}
-        <div className="p-4 border-t border-blue-800">
+        <div className={`p-4 border-t ${isAdmin ? 'border-green-800' : 'border-blue-800'}`}>
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold ${isAdmin ? 'bg-green-600' : 'bg-blue-600'}`}>
               {user?.name.charAt(0).toUpperCase()}
             </div>
             <div className="min-w-0">
               <p className="text-white text-sm font-medium truncate">{user?.name}</p>
-              <p className="text-blue-300 text-xs">{isAdmin ? 'Administrador' : 'Agente'}</p>
+              <p className={`text-xs ${isAdmin ? 'text-green-300' : 'text-blue-300'}`}>{isAdmin ? 'Administrador' : 'Agente'}</p>
             </div>
           </div>
           <button
             onClick={handleLogout}
-            className="flex items-center gap-2 w-full px-3 py-2 text-blue-300 hover:text-white hover:bg-blue-800 rounded-lg text-sm transition-colors"
+            className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm transition-colors ${isAdmin ? 'text-green-300 hover:text-white hover:bg-green-800' : 'text-blue-300 hover:text-white hover:bg-blue-800'}`}
           >
             <LogOut size={16} />
             Cerrar sesión
