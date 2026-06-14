@@ -537,7 +537,7 @@ export default function MyLeads() {
                         <select
                           className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
                           value={disposition}
-                          onChange={(e) => { setDisposition(e.target.value); setAclaracion('') }}
+                          onChange={(e) => { setDisposition(e.target.value); setAclaracion(''); if (e.target.value === 'NOT_INTERESTED' || e.target.value === 'DO_NOT_CALL') { setSchedDate(''); setSchedNotes('') } }}
                         >
                           {RESPUESTA_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
@@ -568,7 +568,7 @@ export default function MyLeads() {
                   </div>
 
                   {/* Agendar */}
-                  <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                  <div className={`bg-white border border-gray-200 rounded-lg overflow-hidden transition-opacity ${disposition === 'NOT_INTERESTED' || disposition === 'DO_NOT_CALL' ? 'opacity-40 pointer-events-none select-none' : ''}`}>
                     <div className="bg-gray-100 border-b border-gray-200 px-4 py-2 flex items-center gap-2">
                       <CalendarClock size={14} className="text-gray-500" />
                       <span className="text-sm font-semibold text-gray-600">Agendar</span>
@@ -629,62 +629,146 @@ export default function MyLeads() {
             )}
           </div>
 
-          {/* ── Center: Stats + History (full-height panel) ── */}
-          {detail && (
-            <div className="w-80 shrink-0 border-l border-gray-200 flex flex-col bg-white overflow-hidden">
-              {/* Stats card */}
-              <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-4 py-3 shrink-0">
-                <p className="text-white font-semibold text-sm truncate">{detail.name}</p>
-                <p className="text-blue-200 text-xs font-mono mt-0.5">{detail.phone}</p>
+          {/* ── Right panel: Stats + Agendados + Historial (columna única) ── */}
+          <div className="w-72 shrink-0 border-l border-gray-200 flex flex-col bg-white overflow-hidden">
+
+            {/* ── 1. MINI STATS ── altura fija, siempre visible */}
+            {detail ? (
+              <>
+                <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-4 py-3 shrink-0">
+                  <p className="text-white font-semibold text-sm truncate">{detail.name}</p>
+                  <p className="text-blue-200 text-xs font-mono mt-0.5">{detail.phone}</p>
+                </div>
+                <div className="shrink-0 divide-y divide-gray-100 border-b-2 border-gray-200">
+                  <div className="flex items-center justify-between px-4 py-1.5">
+                    <span className="text-xs text-gray-500">Llamadas totales</span>
+                    <span className="text-sm font-bold text-gray-900">{detail.callLogs.length}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-4 py-1.5">
+                    <span className="text-xs text-gray-500">Última llamada</span>
+                    <span className="text-xs font-medium text-gray-700">
+                      {detail.callLogs.length > 0
+                        ? format(new Date([...detail.callLogs].sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())[0].calledAt), 'dd/MM/yyyy', { locale: es })
+                        : '—'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between px-4 py-1.5">
+                    <span className="text-xs text-gray-500">Próximo callback</span>
+                    <span className="text-xs font-medium text-gray-700">
+                      {detail.callbacks?.filter((c) => !c.completed).length > 0
+                        ? format(new Date(detail.callbacks.filter((c) => !c.completed).sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())[0].scheduledAt), 'dd/MM HH:mm', { locale: es })
+                        : '—'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between px-4 py-1.5">
+                    <span className="text-xs text-gray-500">Estado</span>
+                    <StatusBadge status={detail.status} />
+                  </div>
+                  {detail.currentOp && (
+                    <div className="flex items-center justify-between px-4 py-1.5">
+                      <span className="text-xs text-gray-500">Operador</span>
+                      <span className="text-xs font-semibold text-orange-600">{detail.currentOp}</span>
+                    </div>
+                  )}
+                  {detail.plan && (
+                    <div className="flex items-center justify-between px-4 py-1.5">
+                      <span className="text-xs text-gray-500">Plan actual</span>
+                      <span className="text-xs text-gray-700 truncate max-w-[170px]">{detail.plan}</span>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="shrink-0 bg-gradient-to-r from-gray-300 to-gray-400 px-4 py-4 border-b-2 border-gray-200">
+                <p className="text-white text-xs opacity-80 text-center">Seleccioná un cliente para ver su resumen</p>
               </div>
-              <div className="shrink-0 divide-y divide-gray-100 border-b border-gray-200">
-                <div className="flex items-center justify-between px-4 py-2">
-                  <span className="text-xs text-gray-500">Llamadas totales</span>
-                  <span className="text-sm font-bold text-gray-900">{detail.callLogs.length}</span>
+            )}
+
+            {/* ── 2. AGENDADOS ── altura fija con scroll interno */}
+            <div className="shrink-0 flex flex-col border-b-2 border-gray-200" style={{ maxHeight: '38%' }}>
+              <div className="bg-blue-600 text-white px-4 py-2.5 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2">
+                  <CalendarClock size={14} />
+                  <span className="font-semibold text-sm">Agendados</span>
                 </div>
-                <div className="flex items-center justify-between px-4 py-2">
-                  <span className="text-xs text-gray-500">Última llamada</span>
-                  <span className="text-xs font-medium text-gray-700">
-                    {detail.callLogs.length > 0
-                      ? format(new Date([...detail.callLogs].sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())[0].calledAt), 'dd/MM/yyyy', { locale: es })
-                      : '—'}
-                  </span>
+                <div className="flex gap-1">
+                  {overdueCount > 0 && <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{overdueCount}</span>}
+                  {todayCount > 0 && <span className="bg-amber-400 text-amber-900 text-xs font-bold px-1.5 py-0.5 rounded-full">{todayCount}</span>}
                 </div>
-                <div className="flex items-center justify-between px-4 py-2">
-                  <span className="text-xs text-gray-500">Próximo callback</span>
-                  <span className="text-xs font-medium text-gray-700">
-                    {detail.callbacks?.filter((c) => !c.completed).length > 0
-                      ? format(new Date(detail.callbacks.filter((c) => !c.completed).sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())[0].scheduledAt), 'dd/MM HH:mm', { locale: es })
-                      : '—'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between px-4 py-2">
-                  <span className="text-xs text-gray-500">Estado</span>
-                  <StatusBadge status={detail.status} />
-                </div>
-                {detail.currentOp && (
-                  <div className="flex items-center justify-between px-4 py-2">
-                    <span className="text-xs text-gray-500">Operador</span>
-                    <span className="text-xs font-semibold text-orange-600">{detail.currentOp}</span>
-                  </div>
-                )}
-                {detail.plan && (
-                  <div className="flex items-center justify-between px-4 py-2">
-                    <span className="text-xs text-gray-500">Plan actual</span>
-                    <span className="text-xs text-gray-700 truncate max-w-[160px]">{detail.plan}</span>
-                  </div>
-                )}
               </div>
 
-              {/* History — fills remaining height */}
-              <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200 shrink-0">
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Historial de llamadas</p>
-                <span className="text-xs text-gray-400">{detail.callLogs.length} registros</span>
+              {/* Tabs — solo para admins */}
+              {isAdmin && (
+                <div className="flex border-b border-gray-200 bg-gray-50 shrink-0">
+                  <button
+                    onClick={() => setCbTab('own')}
+                    className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${
+                      cbTab === 'own'
+                        ? 'text-blue-700 border-b-2 border-blue-600 bg-white'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    Míos ({ownCallbacks.length})
+                  </button>
+                  <button
+                    onClick={() => setCbTab('team')}
+                    className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${
+                      cbTab === 'team'
+                        ? 'text-blue-700 border-b-2 border-blue-600 bg-white'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    Equipo ({callbackList.length})
+                  </button>
+                </div>
+              )}
+
+              <div className="overflow-y-auto p-2 space-y-1.5">
+                {activeList.length === 0 ? (
+                  <div className="text-center text-gray-400 py-4 text-xs px-2">
+                    <CalendarClock size={20} className="mx-auto mb-1.5 opacity-40" />
+                    {cbTab === 'own' || !isAdmin ? 'Sin callbacks propios pendientes' : 'Sin callbacks pendientes en el equipo'}
+                  </div>
+                ) : (
+                  activeList.map((cb) => {
+                    const isCurrent = cb.client.id === currentClient?.id
+                    return (
+                      <button key={cb.id} onClick={() => goToClientById(cb.client.id)}
+                        className={`w-full text-left px-2.5 py-2 rounded border text-xs transition-all ${callbackColor(cb.scheduledAt)} ${isCurrent ? 'ring-2 ring-blue-400' : ''}`}>
+                        <p className="font-semibold truncate leading-tight">{cb.client.name}</p>
+                        <p className="opacity-70 truncate text-[10px]">{cb.client.phone}</p>
+                        {cbTab === 'team' && isAdmin && (
+                          <p className="text-[10px] opacity-60 truncate">→ {cb.agent.name}</p>
+                        )}
+                        <div className="flex items-center gap-1 mt-0.5 opacity-75">
+                          <Clock size={9} />
+                          <span className="text-[10px]">{format(new Date(cb.scheduledAt), 'dd/MM/yy HH:mm')}</span>
+                        </div>
+                        {cb.notes && <p className="opacity-60 truncate mt-0.5 italic text-[10px]">{cb.notes}</p>}
+                      </button>
+                    )
+                  })
+                )}
               </div>
-              {detail.callLogs.length === 0 ? (
+              <div className="border-t border-gray-100 px-3 py-1.5 shrink-0 bg-gray-50 flex items-center gap-3">
+                <div className="flex items-center gap-1 text-[10px] text-red-500"><AlertCircle size={8} /> Vencido</div>
+                <div className="flex items-center gap-1 text-[10px] text-amber-600"><Clock size={8} /> Hoy</div>
+                <div className="flex items-center gap-1 text-[10px] text-blue-600"><CalendarClock size={8} /> Próximo</div>
+              </div>
+            </div>
+
+            {/* ── 3. HISTORIAL DE LLAMADAS ── flex-1, scroll, más recientes primero */}
+            <div className="flex-1 overflow-hidden flex flex-col">
+              <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200 shrink-0">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1">
+                  <History size={10} /> Historial de llamadas
+                </p>
+                <span className="text-xs text-gray-400">{detail?.callLogs.length ?? 0}</span>
+              </div>
+              {!detail || detail.callLogs.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-gray-400">
                   <div className="text-center">
-                    <AlertCircle size={24} className="mx-auto mb-2 opacity-30" />
+                    <AlertCircle size={22} className="mx-auto mb-2 opacity-30" />
                     <p className="text-xs">Sin llamadas registradas</p>
                   </div>
                 </div>
@@ -707,26 +791,22 @@ export default function MyLeads() {
                       return (
                         <div
                           key={log.id}
-                          className={`bg-white rounded-lg border border-gray-200 border-l-4 ${borderColor[log.disposition] ?? 'border-l-gray-300'} p-3 shadow-sm`}
+                          className={`bg-white rounded-lg border border-gray-200 border-l-4 ${borderColor[log.disposition] ?? 'border-l-gray-300'} p-2.5 shadow-sm`}
                         >
-                          {/* Row 1: badge + date */}
-                          <div className="flex items-center justify-between gap-2 mb-2">
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
                             <span className={`badge text-[10px] ${cfg.classes}`}>{cfg.label}</span>
                             <span className="text-[10px] text-gray-400 font-mono shrink-0">
                               {format(new Date(log.calledAt), 'dd/MM/yy HH:mm')}
                             </span>
                           </div>
-                          {/* Row 2: aclaración */}
                           {log.aclaracion && (
-                            <p className="text-[11px] text-gray-500 italic mb-1.5">{log.aclaracion}</p>
+                            <p className="text-[11px] text-gray-500 italic mb-1">{log.aclaracion}</p>
                           )}
-                          {/* Row 3: notes */}
                           {log.notes && (
-                            <p className="text-xs text-gray-700 leading-snug mb-1.5 bg-gray-50 rounded px-2 py-1">{log.notes}</p>
+                            <p className="text-xs text-gray-700 leading-snug mb-1 bg-gray-50 rounded px-2 py-1">{log.notes}</p>
                           )}
-                          {/* Row 4: scheduled callback */}
                           {linkedCb && (
-                            <div className="mt-1.5 pt-1.5 border-t border-dashed border-blue-200 space-y-0.5">
+                            <div className="mt-1 pt-1 border-t border-dashed border-blue-200 space-y-0.5">
                               <div className="flex items-center gap-1 text-[10px] text-blue-600">
                                 <CalendarClock size={9} />
                                 <span className="font-semibold">Agendado:</span>
@@ -738,8 +818,7 @@ export default function MyLeads() {
                               )}
                             </div>
                           )}
-                          {/* Footer: agent */}
-                          <p className="text-[10px] text-gray-400 mt-2 pt-1.5 border-t border-gray-100">
+                          <p className="text-[10px] text-gray-400 mt-1.5 pt-1 border-t border-gray-100">
                             — {log.agent.name}
                           </p>
                         </div>
@@ -748,80 +827,7 @@ export default function MyLeads() {
                 </div>
               )}
             </div>
-          )}
 
-          {/* Agendados sidebar */}
-          <div className="w-56 shrink-0 border-l border-gray-200 flex flex-col bg-white overflow-hidden">
-            <div className="bg-blue-600 text-white px-4 py-3 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2">
-                <CalendarClock size={15} />
-                <span className="font-semibold text-sm">Agendados</span>
-              </div>
-              <div className="flex gap-1">
-                {overdueCount > 0 && <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{overdueCount}</span>}
-                {todayCount > 0 && <span className="bg-amber-400 text-amber-900 text-xs font-bold px-1.5 py-0.5 rounded-full">{todayCount}</span>}
-              </div>
-            </div>
-
-            {/* Tabs — only rendered for admins */}
-            {isAdmin && (
-              <div className="flex border-b border-gray-200 bg-gray-50 shrink-0">
-                <button
-                  onClick={() => setCbTab('own')}
-                  className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${
-                    cbTab === 'own'
-                      ? 'text-blue-700 border-b-2 border-blue-600 bg-white'
-                      : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  Míos ({ownCallbacks.length})
-                </button>
-                <button
-                  onClick={() => setCbTab('team')}
-                  className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${
-                    cbTab === 'team'
-                      ? 'text-blue-700 border-b-2 border-blue-600 bg-white'
-                      : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  Equipo ({callbackList.length})
-                </button>
-              </div>
-            )}
-
-            <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
-              {activeList.length === 0 ? (
-                <div className="text-center text-gray-400 py-8 text-xs px-2">
-                  <CalendarClock size={24} className="mx-auto mb-2 opacity-40" />
-                  {cbTab === 'own' || !isAdmin ? 'Sin callbacks propios pendientes' : 'Sin callbacks pendientes en el equipo'}
-                </div>
-              ) : (
-                activeList.map((cb) => {
-                  const isCurrent = cb.client.id === currentClient?.id
-                  return (
-                    <button key={cb.id} onClick={() => goToClientById(cb.client.id)}
-                      className={`w-full text-left px-2.5 py-2 rounded border text-xs transition-all ${callbackColor(cb.scheduledAt)} ${isCurrent ? 'ring-2 ring-blue-400' : ''}`}>
-                      <p className="font-semibold truncate leading-tight">{cb.client.name}</p>
-                      <p className="opacity-70 truncate text-[10px]">{cb.client.phone}</p>
-                      {cbTab === 'team' && isAdmin && (
-                        <p className="text-[10px] opacity-60 truncate">→ {cb.agent.name}</p>
-                      )}
-                      <div className="flex items-center gap-1 mt-0.5 opacity-75">
-                        <Clock size={9} />
-                        <span className="text-[10px]">{format(new Date(cb.scheduledAt), 'dd/MM/yy HH:mm')}</span>
-                      </div>
-                      {cb.notes && <p className="opacity-60 truncate mt-0.5 italic text-[10px]">{cb.notes}</p>}
-                    </button>
-                  )
-                })
-              )}
-            </div>
-            <div className="border-t border-gray-100 px-3 py-2 space-y-0.5 shrink-0 bg-gray-50">
-              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mb-1">Leyenda</p>
-              <div className="flex items-center gap-1 text-[10px] text-red-600"><AlertCircle size={9} /> Vencido</div>
-              <div className="flex items-center gap-1 text-[10px] text-amber-600"><Clock size={9} /> Hoy</div>
-              <div className="flex items-center gap-1 text-[10px] text-blue-600"><CalendarClock size={9} /> Próximo</div>
-            </div>
           </div>
         </div>
       )}

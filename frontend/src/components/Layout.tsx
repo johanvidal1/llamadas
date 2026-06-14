@@ -42,7 +42,7 @@ export default function Layout() {
   return (
     <div className="flex h-screen bg-gray-50">
       {/* Sidebar */}
-      <aside className={`w-64 flex flex-col shadow-xl ${isAdmin ? 'bg-green-900' : 'bg-blue-900'}`}>
+      <aside className={`w-44 flex flex-col shadow-xl ${isAdmin ? 'bg-green-900' : 'bg-blue-900'}`}>
         {/* Logo */}
         <div className={`flex items-center gap-2 px-6 py-5 border-b ${isAdmin ? 'border-green-800' : 'border-blue-800'}`}>
           <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isAdmin ? 'bg-green-500' : 'bg-blue-500'}`}>
