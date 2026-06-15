@@ -125,14 +125,14 @@ export default function Imports() {
           📋 Columnas reconocidas automáticamente:
         </p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-gray-500">
-          <span><strong>Nombre:</strong> nombre, name, cliente</span>
-          <span><strong>Teléfono:</strong> telefono, phone, celular</span>
-          <span><strong>Teléfono 2:</strong> telefono2, tel2, celular2</span>
-          <span><strong>Email:</strong> email, correo</span>
-          <span><strong>Dirección:</strong> direccion, address</span>
-          <span><strong>Operador:</strong> operador, compañia</span>
-          <span><strong>Plan:</strong> plan, tarifa</span>
-          <span><strong>Notas:</strong> notas, comentarios</span>
+          <span><strong>RUC:</strong> ruc</span>
+          <span><strong>Razón social:</strong> razon_social</span>
+          <span><strong>Contacto:</strong> nombre</span>
+          <span><strong>Teléfono:</strong> telefono</span>
+          <span><strong>Email:</strong> email</span>
+          <span><strong>DNI:</strong> dni</span>
+          <span><strong>Tipo contacto:</strong> tipo_contacto</span>
+          <span><strong>Estado:</strong> estado, fecha_consulta</span>
         </div>
       </div>
 
@@ -159,7 +159,7 @@ export default function Imports() {
                 totalRecords: number
                 createdAt: string
                 importedBy: { name: string }
-                _count: { clients: number }
+                _count: { companies: number }
               }) => (
                 <div key={batch.id}
                   className="card p-5 flex items-center justify-between hover:shadow-md hover:border-blue-200 transition-all">
@@ -172,7 +172,7 @@ export default function Imports() {
                       <div className="flex items-center gap-3 text-xs text-gray-400 mt-0.5">
                         <span className="flex items-center gap-1">
                           <Users size={12} />
-                          {batch._count.clients} registros
+                          {batch._count.companies} registros
                         </span>
                         <span className="flex items-center gap-1">
                           <Clock size={12} />
@@ -266,7 +266,7 @@ export default function Imports() {
               </p>
               {batchDetail && (
                 <p className="text-blue-200 text-xs mt-0.5">
-                  {batchDetail._count.clients} clientes ·{' '}
+                  {batchDetail._count.companies} empresas ·{' '}
                   {format(new Date(batchDetail.createdAt), "d MMM yyyy HH:mm", { locale: es })} ·{' '}
                   por {batchDetail.importedBy.name}
                 </p>
@@ -282,15 +282,15 @@ export default function Imports() {
 
           {/* Stats bar */}
           {batchDetail && (() => {
-            const clients: BatchClient[] = batchDetail.clients ?? []
-            const assigned = clients.filter((c) => c.assignment).length
-            const pending = clients.filter((c) => c.status === 'PENDING').length
-            const interested = clients.filter((c) => c.status === 'INTERESTED').length
-            const notInt = clients.filter((c) => c.status === 'NOT_INTERESTED').length
+            const companies: BatchCompany[] = batchDetail.companies ?? []
+            const assigned = companies.filter((c) => c.assignment).length
+            const pending = companies.filter((c) => c.status === 'PENDING').length
+            const interested = companies.filter((c) => c.status === 'INTERESTED').length
+            const notInt = companies.filter((c) => c.status === 'NOT_INTERESTED').length
             return (
               <div className="grid grid-cols-4 divide-x divide-gray-200 border-b border-gray-200 shrink-0">
                 {[
-                  { label: 'Total', value: batchDetail._count.clients, color: 'text-gray-900' },
+                  { label: 'Total', value: batchDetail._count.companies, color: 'text-gray-900' },
                   { label: 'Asignados', value: assigned, color: 'text-blue-600' },
                   { label: 'Pendientes', value: pending, color: 'text-amber-600' },
                   { label: 'Interesados', value: interested, color: 'text-green-600' },
@@ -312,7 +312,7 @@ export default function Imports() {
               <input
                 type="text"
                 className="w-full border border-gray-300 rounded-lg pl-8 pr-3 py-1.5 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                placeholder="Buscar por nombre, teléfono u operador..."
+                placeholder="Buscar por RUC, razón social o teléfono..."
                 value={drawerSearch}
                 onChange={(e) => setDrawerSearch(e.target.value)}
               />
@@ -328,17 +328,18 @@ export default function Imports() {
                 ))}
               </div>
             ) : (() => {
-              const clients: BatchClient[] = (batchDetail?.clients ?? []).filter((c: BatchClient) => {
+              const companies: BatchCompany[] = (batchDetail?.companies ?? []).filter((c: BatchCompany) => {
                 if (!drawerSearch) return true
                 const q = drawerSearch.toLowerCase()
+                const primaryPhone = c.contacts?.[0]?.telefono ?? ''
                 return (
-                  c.name.toLowerCase().includes(q) ||
-                  c.phone.includes(q) ||
-                  (c.currentOp ?? '').toLowerCase().includes(q) ||
-                  (c.email ?? '').toLowerCase().includes(q)
+                  c.ruc.toLowerCase().includes(q) ||
+                  (c.razonSocial ?? '').toLowerCase().includes(q) ||
+                  primaryPhone.includes(q) ||
+                  c.contacts.some((ct) => ct.nombre.toLowerCase().includes(q) || (ct.telefono ?? '').includes(q))
                 )
               })
-              if (clients.length === 0) return (
+              if (companies.length === 0) return (
                 <div className="flex items-center justify-center h-40 text-gray-400 text-sm">
                   Sin resultados
                 </div>
@@ -347,31 +348,42 @@ export default function Imports() {
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
                     <tr>
-                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Cliente</th>
-                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Operador</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Empresa</th>
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Contacto</th>
                       <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Estado</th>
                       <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Agente</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {clients.map((c) => (
+                    {companies.map((c) => {
+                      const primary = c.contacts?.[0]
+                      return (
                       <tr key={c.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-3">
-                          <p className="font-medium text-gray-900 leading-tight">{c.name}</p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className="flex items-center gap-1 text-xs text-gray-500">
-                              <Phone size={10} className="shrink-0" />{c.phone}
-                            </span>
-                            {c.email && (
-                              <span className="flex items-center gap-1 text-xs text-gray-400 truncate max-w-[140px]">
-                                <Mail size={10} className="shrink-0" />{c.email}
-                              </span>
-                            )}
-                          </div>
+                          <p className="font-medium text-gray-900 leading-tight">{c.razonSocial || c.ruc}</p>
+                          <p className="text-xs text-gray-400 font-mono mt-0.5">{c.ruc}</p>
                         </td>
                         <td className="px-3 py-3">
-                          <span className="text-xs font-medium text-orange-600">{c.currentOp ?? '—'}</span>
-                          {c.plan && <p className="text-[10px] text-gray-400 truncate max-w-[120px]">{c.plan}</p>}
+                          {primary ? (
+                            <>
+                              <p className="text-xs font-medium text-gray-800">{primary.nombre}</p>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                {primary.telefono && (
+                                  <span className="flex items-center gap-1 text-xs text-gray-500">
+                                    <Phone size={10} className="shrink-0" />{primary.telefono}
+                                  </span>
+                                )}
+                                {primary.email && (
+                                  <span className="flex items-center gap-1 text-xs text-gray-400 truncate max-w-[140px]">
+                                    <Mail size={10} className="shrink-0" />{primary.email}
+                                  </span>
+                                )}
+                              </div>
+                            </>
+                          ) : (
+                            <span className="text-xs text-gray-400">Sin contactos</span>
+                          )}
+                          {c.plan && <p className="text-[10px] text-gray-400 truncate max-w-[120px] mt-0.5">{c.plan}</p>}
                         </td>
                         <td className="px-3 py-3">
                           <StatusBadge status={c.status} />
@@ -389,14 +401,14 @@ export default function Imports() {
                           )}
                         </td>
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
               )
             })()}
-            {batchDetail && batchDetail._count.clients > 200 && (
+            {batchDetail && batchDetail._count.companies > 200 && (
               <p className="text-xs text-gray-400 text-center py-3">
-                Mostrando los primeros 200 de {batchDetail._count.clients} registros
+                Mostrando las primeras 200 de {batchDetail._count.companies} registros
               </p>
             )}
           </div>
@@ -407,8 +419,12 @@ export default function Imports() {
   )
 }
 
-interface BatchClient {
-  id: string; name: string; phone: string; email?: string
-  currentOp?: string; plan?: string; status: string
+interface BatchCompany {
+  id: string
+  ruc: string
+  razonSocial?: string
+  plan?: string
+  status: string
+  contacts: { nombre: string; telefono?: string; email?: string }[]
   assignment?: { agent: { name: string } } | null
 }

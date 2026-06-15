@@ -1,8 +1,39 @@
 import { Router, Response } from 'express'
 import multer from 'multer'
 import { prisma } from '../lib/prisma'
-import { parseExcel, parseCsv } from '../lib/parseFile'
+import { parseExcel, parseCsv, ParsedCompany } from '../lib/parseFile'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
+
+function parseFechaConsulta(raw?: string): Date | null {
+  if (!raw) return null
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+
+  const iso = new Date(trimmed)
+  if (!Number.isNaN(iso.getTime())) return iso
+
+  const match = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/)
+  if (match) {
+    const day = Number(match[1])
+    const month = Number(match[2])
+    let year = Number(match[3])
+    if (year < 100) year += 2000
+    const parsed = new Date(Date.UTC(year, month - 1, day))
+    if (!Number.isNaN(parsed.getTime())) return parsed
+  }
+
+  return null
+}
+
+function toContactCreate(contacts: ParsedCompany['contacts']) {
+  return contacts.map((c) => ({
+    nombre: c.nombre.trim() || c.telefono || 'Sin nombre',
+    tipoContacto: c.tipoContacto ?? null,
+    dni: c.dni ?? null,
+    email: c.email ?? null,
+    telefono: c.telefono ?? null,
+  }))
+}
 
 const router = Router()
 const upload = multer({
@@ -87,29 +118,34 @@ router.post(
       return
     }
 
-    const batch = await prisma.importBatch.create({
-      data: {
-        filename,
-        totalRecords: parsed.length,
-        importedById: req.user!.id,
-      },
-    })
-
-    for (const company of parsed) {
-      const { contacts, name, phone, email: _email, ...companyFields } = company
-      await prisma.company.create({
+    const batch = await prisma.$transaction(async (tx) => {
+      const created = await tx.importBatch.create({
         data: {
-          ruc: companyFields.ruc,
-          razonSocial: companyFields.razonSocial ?? null,
-          importStatus: companyFields.estado ?? null,
-          fechaConsulta: companyFields.fechaConsulta ? new Date(companyFields.fechaConsulta) : null,
-          plan: companyFields.plan ?? null,
-          notes: companyFields.notes ?? null,
-          importBatchId: batch.id,
-          contacts: contacts.length > 0 ? { create: contacts } : undefined,
+          filename,
+          totalRecords: parsed.length,
+          importedById: req.user!.id,
         },
       })
-    }
+
+      for (const company of parsed) {
+        const { contacts, name: _name, phone: _phone, email: _email, ...companyFields } = company
+        await tx.company.create({
+          data: {
+            ruc: companyFields.ruc,
+            razonSocial: companyFields.razonSocial ?? null,
+            importStatus: companyFields.estado ?? null,
+            fechaConsulta: parseFechaConsulta(companyFields.fechaConsulta),
+            plan: companyFields.plan ?? null,
+            notes: companyFields.notes ?? null,
+            importBatchId: created.id,
+            contacts:
+              contacts.length > 0 ? { create: toContactCreate(contacts) } : undefined,
+          },
+        })
+      }
+
+      return created
+    })
 
     res.status(201).json({
       id: batch.id,

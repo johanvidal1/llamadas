@@ -11,11 +11,11 @@ export interface AuthRequest extends Request {
   }
 }
 
-export function requireAuth(req: AuthRequest, res: Response, next: NextFunction): void {
+async function authenticateRequest(req: AuthRequest, res: Response): Promise<boolean> {
   const header = req.headers.authorization
   if (!header || !header.startsWith('Bearer ')) {
     res.status(401).json({ error: 'No autorizado' })
-    return
+    return false
   }
 
   const token = header.slice(7)
@@ -26,19 +26,40 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
       role: string
       name: string
     }
-    req.user = payload
-    next()
+    const user = await prisma.user.findUnique({
+      where: { id: payload.id },
+      select: { id: true, email: true, role: true, name: true, active: true },
+    })
+    if (!user || !user.active) {
+      res.status(401).json({ error: 'Sesión inválida. Inicia sesión nuevamente.' })
+      return false
+    }
+    req.user = { id: user.id, email: user.email, role: user.role, name: user.name }
+    return true
   } catch {
     res.status(401).json({ error: 'Token inválido o expirado' })
+    return false
   }
 }
 
-export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction): void {
-  requireAuth(req, res, () => {
-    if (req.user?.role !== 'ADMIN') {
-      res.status(403).json({ error: 'Acceso restringido a administradores' })
-      return
-    }
-    next()
-  })
+export async function requireAuth(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  if (!(await authenticateRequest(req, res))) return
+  next()
+}
+
+export async function requireAdmin(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  if (!(await authenticateRequest(req, res))) return
+  if (req.user?.role !== 'ADMIN') {
+    res.status(403).json({ error: 'Acceso restringido a administradores' })
+    return
+  }
+  next()
 }
