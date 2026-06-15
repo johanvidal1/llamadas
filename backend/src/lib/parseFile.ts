@@ -27,6 +27,73 @@ function normalizePhone(raw: string): string {
   return raw.replace(/\s+/g, '').replace(/^\+51/, '').trim()
 }
 
+function normalizeHeader(key: string): string {
+  return key
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, '_')
+}
+
+const HEADER_ALIASES: Record<string, string> = {
+  ruc: 'ruc',
+  razon_social: 'razon_social',
+  razonsocial: 'razon_social',
+  nombre: 'nombre',
+  name: 'nombre',
+  contacto: 'nombre',
+  cliente: 'nombre',
+  telefono: 'telefono',
+  tel: 'telefono',
+  phone: 'telefono',
+  celular: 'telefono',
+  movil: 'telefono',
+  mobile: 'telefono',
+  telefono2: 'telefono2',
+  tel2: 'telefono2',
+  celular2: 'telefono2',
+  movil2: 'telefono2',
+  phone2: 'telefono2',
+  email: 'email',
+  correo: 'email',
+  dni: 'dni',
+  documento: 'dni',
+  tipo_contacto: 'tipo_contacto',
+  tipo: 'tipo_contacto',
+  cargo: 'tipo_contacto',
+  estado: 'estado',
+  fecha_consulta: 'fecha_consulta',
+  fecha: 'fecha_consulta',
+}
+
+function normalizeRow(row: Record<string, unknown>): Record<string, unknown>[] {
+  const normalized: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(row)) {
+    const canonical = HEADER_ALIASES[normalizeHeader(key)]
+    if (canonical && value != null && String(value).trim() !== '') {
+      normalized[canonical] = value
+    }
+  }
+
+  const telefono2Raw = String(normalized['telefono2'] ?? '').trim()
+  const telefonoRaw = String(normalized['telefono'] ?? '').trim()
+  const telefono2 = telefono2Raw ? normalizePhone(telefono2Raw) : ''
+  const telefono = telefonoRaw ? normalizePhone(telefonoRaw) : ''
+
+  delete normalized['telefono2']
+
+  const rows: Record<string, unknown>[] = [normalized]
+  if (telefono2 && telefono2 !== telefono) {
+    rows.push({
+      ...normalized,
+      telefono: telefono2,
+    })
+  }
+
+  return rows
+}
+
 function parseRows(rows: Record<string, unknown>[]): ParsedCompany[] {
   // Group by RUC
   const byRuc = new Map<string, ParsedCompany>()
@@ -97,7 +164,8 @@ export async function parseExcel(buffer: Buffer): Promise<ParsedCompany[]> {
   const workbook = XLSX.read(buffer, { type: 'buffer' })
   const sheetName = workbook.SheetNames[0]
   const sheet = workbook.Sheets[sheetName]
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
+  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
+  const rows = rawRows.flatMap(normalizeRow)
   return parseRows(rows)
 }
 
@@ -108,7 +176,7 @@ export async function parseCsv(buffer: Buffer): Promise<ParsedCompany[]> {
     stream
       .pipe(csvParser())
       .on('data', (row: Record<string, unknown>) => rows.push(row))
-      .on('end', () => resolve(parseRows(rows)))
+      .on('end', () => resolve(parseRows(rows.flatMap(normalizeRow))))
       .on('error', reject)
   })
 }

@@ -46,6 +46,12 @@ export default function Imports() {
     mutationFn: (file: File) => uploadImport(file),
     onSuccess: (data) => {
       toast.success(`✅ Importados ${data.imported} registros de "${data.filename}"`)
+      if (data.withoutPhone && data.withoutPhone > 0) {
+        toast(`⚠️ ${data.withoutPhone} registro(s) sin teléfono`, { icon: '⚠️' })
+      }
+      if (data.withoutContacts && data.withoutContacts > 0) {
+        toast(`⚠️ ${data.withoutContacts} registro(s) sin contactos`, { icon: '⚠️' })
+      }
       qc.invalidateQueries({ queryKey: ['imports'] })
     },
     onError: (err: { response?: { data?: { error?: string } } }) => {
@@ -126,13 +132,15 @@ export default function Imports() {
         </p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-gray-500">
           <span><strong>RUC:</strong> ruc</span>
-          <span><strong>Razón social:</strong> razon_social</span>
-          <span><strong>Contacto:</strong> nombre</span>
-          <span><strong>Teléfono:</strong> telefono</span>
-          <span><strong>Email:</strong> email</span>
-          <span><strong>DNI:</strong> dni</span>
-          <span><strong>Tipo contacto:</strong> tipo_contacto</span>
-          <span><strong>Estado:</strong> estado, fecha_consulta</span>
+          <span><strong>Razón social:</strong> razon_social, razonsocial</span>
+          <span><strong>Contacto:</strong> nombre, name, contacto, cliente</span>
+          <span><strong>Teléfono:</strong> telefono, tel, phone, celular, móvil</span>
+          <span><strong>2º teléfono:</strong> telefono2, tel2, celular2, phone2</span>
+          <span><strong>Email:</strong> email, correo</span>
+          <span><strong>DNI:</strong> dni, documento</span>
+          <span><strong>Tipo contacto:</strong> tipo_contacto, tipo, cargo</span>
+          <span><strong>Estado:</strong> estado</span>
+          <span><strong>Fecha consulta:</strong> fecha_consulta, fecha</span>
         </div>
       </div>
 

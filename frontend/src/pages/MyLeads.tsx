@@ -18,6 +18,7 @@ import {
   LayoutGrid,
   List,
   AlignJustify,
+  Copy,
 } from 'lucide-react'
 import CallModal from '../components/CallModal'
 import { format, isPast, isToday } from 'date-fns'
@@ -108,6 +109,45 @@ function ReadField({ label, value }: { label: string; value?: string }) {
       <span className="text-xs text-gray-500 font-medium">{label}</span>
       <div className="bg-gray-100 border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-700 min-h-[34px] select-all font-mono">
         {value || <span className="text-gray-400 italic font-sans">—</span>}
+      </div>
+    </div>
+  )
+}
+
+function ContactPhoneField({ telefono }: { telefono?: string }) {
+  const copyPhone = () => {
+    if (!telefono) return
+    navigator.clipboard.writeText(telefono).then(() => toast.success('Teléfono copiado'))
+  }
+
+  if (!telefono) {
+    return (
+      <div className="col-span-full flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+        <AlertCircle size={16} className="text-amber-600 shrink-0" />
+        <span className="text-sm text-amber-800">Sin teléfono — verificar importación</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="col-span-full">
+      <span className="text-xs text-gray-500 font-medium">Teléfono</span>
+      <div className="mt-0.5 flex items-center gap-3 rounded-lg border-2 border-blue-200 bg-blue-50 px-4 py-3">
+        <Phone size={20} className="text-blue-600 shrink-0" />
+        <a
+          href={`tel:${telefono}`}
+          className="flex-1 text-2xl font-mono font-semibold text-blue-900 tracking-wide hover:text-blue-700"
+        >
+          {telefono}
+        </a>
+        <button
+          type="button"
+          onClick={copyPhone}
+          title="Copiar teléfono"
+          className="flex items-center gap-1 rounded-md border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors shrink-0"
+        >
+          <Copy size={13} /> Copiar
+        </button>
       </div>
     </div>
   )
@@ -556,44 +596,53 @@ export default function MyLeads() {
                 </div>
 
                 {/* ── Contacto (tabs) ── */}
-                {detail.contacts.length > 0 && (
-                  <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                    {detail.contacts.length > 1 && (
-                      <div className="flex border-b border-gray-200 bg-gray-50 overflow-x-auto">
-                        {detail.contacts.map((ct, idx) => (
-                          <button key={idx} onClick={() => setActiveContactIdx(idx)}
-                            className={`px-4 py-2 text-xs font-medium whitespace-nowrap transition-colors border-b-2 flex flex-col items-center leading-tight ${
-                              activeContactIdx === idx
-                                ? 'text-blue-700 border-blue-600 bg-white'
-                                : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-100'
-                            }`}>
-                            <span>{ct.nombre.split(' ')[0]}</span>
-                            {ct.tipoContacto && <span className="text-[10px] opacity-60 font-normal">{ct.tipoContacto}</span>}
-                          </button>
-                        ))}
+                <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                  {detail.contacts.length > 1 && (
+                    <div className="flex border-b border-gray-200 bg-gray-50 overflow-x-auto">
+                      {detail.contacts.map((ct, idx) => (
+                        <button key={idx} onClick={() => setActiveContactIdx(idx)}
+                          className={`px-4 py-2 text-xs font-medium whitespace-nowrap transition-colors border-b-2 flex flex-col items-center leading-tight min-w-[100px] ${
+                            activeContactIdx === idx
+                              ? 'text-blue-700 border-blue-600 bg-white'
+                              : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-100'
+                          }`}>
+                          <span>{ct.nombre.split(' ')[0] || 'Contacto'}</span>
+                          {ct.telefono && (
+                            <span className="text-[10px] font-mono text-blue-600 font-normal mt-0.5">{ct.telefono}</span>
+                          )}
+                          {ct.tipoContacto && <span className="text-[10px] opacity-60 font-normal">{ct.tipoContacto}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {detail.contacts.length === 0 ? (
+                    <div className="p-4">
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Contacto</p>
+                      <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                        <AlertCircle size={16} className="text-amber-600 shrink-0" />
+                        <span className="text-sm text-amber-800">Sin contactos importados — verificar archivo de importación</span>
                       </div>
-                    )}
-                    {detail.contacts[activeContactIdx] && (() => {
-                      const ct = detail.contacts[activeContactIdx]
-                      return (
-                        <div className="p-4">
-                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
-                            Contacto {activeContactIdx + 1} de {detail.contacts.length}
-                          </p>
-                          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                            <div className="col-span-2">
-                              <ReadField label="Nombre" value={ct.nombre} />
-                            </div>
-                            <ReadField label="Tipo" value={ct.tipoContacto} />
-                            <ReadField label="Teléfono" value={ct.telefono} />
-                            <ReadField label="Email" value={ct.email} />
-                            <ReadField label="DNI" value={ct.dni} />
+                    </div>
+                  ) : detail.contacts[activeContactIdx] && (() => {
+                    const ct = detail.contacts[activeContactIdx]
+                    return (
+                      <div className="p-4">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
+                          Contacto {activeContactIdx + 1} de {detail.contacts.length}
+                        </p>
+                        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                          <ContactPhoneField telefono={ct.telefono} />
+                          <div className="col-span-2">
+                            <ReadField label="Nombre" value={ct.nombre} />
                           </div>
+                          <ReadField label="Tipo" value={ct.tipoContacto} />
+                          <ReadField label="Email" value={ct.email} />
+                          <ReadField label="DNI" value={ct.dni} />
                         </div>
-                      )
-                    })()}
-                  </div>
-                )}
+                      </div>
+                    )
+                  })()}
+                </div>
 
                 {/* ── Resultado + Agendar apilados ── */}
                 <div className="flex flex-col gap-3 flex-1">

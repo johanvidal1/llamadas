@@ -118,6 +118,11 @@ router.post(
       return
     }
 
+    const withoutContacts = parsed.filter((c) => c.contacts.length === 0).length
+    const withoutPhone = parsed.filter(
+      (c) => c.contacts.length === 0 || !c.contacts.some((ct) => ct.telefono)
+    ).length
+
     const batch = await prisma.$transaction(async (tx) => {
       const created = await tx.importBatch.create({
         data: {
@@ -152,6 +157,8 @@ router.post(
       filename: batch.filename,
       totalRecords: batch.totalRecords,
       imported: parsed.length,
+      withoutContacts,
+      withoutPhone,
     })
   }
 )
