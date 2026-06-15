@@ -155,8 +155,7 @@ export default function Clients() {
                   ruc: string
                   razonSocial?: string
                   status: string
-                  contacts: { nombre: string; tipoContacto?: string; telefono?: string }[]
-                  assignment?: { agent?: { name: string } }
+                  contacts: { nombre: string; tipoContacto?: string; telefono?: string; assignment?: { agent?: { name: string } } }[]
                   importBatch?: { filename: string; createdAt: string }
                   callbacks?: { scheduledAt: string; notes?: string }[]
                   _count: { callLogs: number }
@@ -171,6 +170,13 @@ export default function Clients() {
                       : 'text-blue-700 bg-blue-50 border border-blue-200'
                     : ''
                   const primaryContact = c.contacts?.[0]
+                  const agentNames = [
+                    ...new Set(
+                      c.contacts
+                        .filter((ct) => ct.assignment?.agent?.name)
+                        .map((ct) => ct.assignment!.agent!.name)
+                    ),
+                  ]
                   return (
                   <tr key={c.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 font-mono text-xs text-gray-700">{c.ruc}</td>
@@ -191,7 +197,9 @@ export default function Clients() {
                       ) : <span className="text-gray-300 text-xs">Sin contactos</span>}
                     </td>
                     <td className="px-4 py-3 text-gray-600">
-                      {c.assignment?.agent?.name ?? (
+                      {agentNames.length > 0 ? (
+                        <span>{agentNames.join(', ')}</span>
+                      ) : (
                         <span className="text-gray-300">Sin asignar</span>
                       )}
                     </td>

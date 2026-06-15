@@ -10,6 +10,7 @@ const assignSchema = z.object({
   batchId: z.string().optional(),
   count: z.number().int().positive().optional(),
   clientIds: z.array(z.string()).optional(),
+  contactIds: z.array(z.string()).optional(),
 })
 
 // GET /api/assignments
@@ -17,14 +18,21 @@ router.get('/', requireAdmin, async (_req: AuthRequest, res: Response) => {
   const assignments = await prisma.assignment.findMany({
     include: {
       agent: { select: { id: true, name: true, email: true } },
-      company: {
+      contact: {
         select: {
           id: true,
-          ruc: true,
-          razonSocial: true,
-          status: true,
-          importBatch: { select: { filename: true } },
-          contacts: { select: { nombre: true, tipoContacto: true, telefono: true }, take: 3 },
+          nombre: true,
+          tipoContacto: true,
+          telefono: true,
+          company: {
+            select: {
+              id: true,
+              ruc: true,
+              razonSocial: true,
+              status: true,
+              importBatch: { select: { filename: true } },
+            },
+          },
         },
       },
     },
@@ -35,17 +43,26 @@ router.get('/', requireAdmin, async (_req: AuthRequest, res: Response) => {
 
 // POST /api/assignments
 router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
-  const { agentId, batchId, count, clientIds } = assignSchema.parse(req.body)
+  const { agentId, batchId, count, clientIds, contactIds } = assignSchema.parse(req.body)
 
   let idsToAssign: string[] = []
 
-  if (clientIds && clientIds.length > 0) {
-    idsToAssign = clientIds
+  if (contactIds && contactIds.length > 0) {
+    idsToAssign = contactIds
+  } else if (clientIds && clientIds.length > 0) {
+    const contacts = await prisma.contact.findMany({
+      where: {
+        companyId: { in: clientIds },
+        assignment: null,
+      },
+      select: { id: true },
+    })
+    idsToAssign = contacts.map((c) => c.id)
   } else {
-    const unassigned = await prisma.company.findMany({
+    const unassigned = await prisma.contact.findMany({
       where: {
         assignment: null,
-        ...(batchId ? { importBatchId: batchId } : {}),
+        ...(batchId ? { company: { importBatchId: batchId } } : {}),
       },
       select: { id: true },
       take: count ?? undefined,
@@ -55,24 +72,24 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   }
 
   if (idsToAssign.length === 0) {
-    res.status(400).json({ error: 'No hay empresas disponibles para asignar' })
+    res.status(400).json({ error: 'No hay contactos disponibles para asignar' })
     return
   }
 
   const existing = await prisma.assignment.findMany({
-    where: { companyId: { in: idsToAssign } },
-    select: { companyId: true },
+    where: { contactId: { in: idsToAssign } },
+    select: { contactId: true },
   })
-  const existingIds = new Set(existing.map((a) => a.companyId))
+  const existingIds = new Set(existing.map((a) => a.contactId))
   const newIds = idsToAssign.filter((id) => !existingIds.has(id))
 
   if (newIds.length === 0) {
-    res.status(400).json({ error: 'Todas las empresas seleccionadas ya tienen asignación' })
+    res.status(400).json({ error: 'Todos los contactos seleccionados ya tienen asignación' })
     return
   }
 
   await prisma.assignment.createMany({
-    data: newIds.map((companyId) => ({ companyId, agentId })),
+    data: newIds.map((contactId) => ({ contactId, agentId })),
   })
 
   res.status(201).json({ assigned: newIds.length, skipped: idsToAssign.length - newIds.length })

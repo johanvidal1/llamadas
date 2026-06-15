@@ -66,7 +66,13 @@ export const updateClient = (id: string, data: object) =>
 
 // ─── Assignments ──────────────────────────────────────────
 export const getAssignments = () => api.get('/assignments').then((r) => r.data)
-export const createAssignment = (data: object) =>
+export const createAssignment = (data: {
+  agentId: string
+  batchId?: string
+  count?: number
+  clientIds?: string[]
+  contactIds?: string[]
+}) =>
   api.post('/assignments', data).then((r) => r.data)
 export const deleteAssignment = (id: string) =>
   api.delete(`/assignments/${id}`).then((r) => r.data)

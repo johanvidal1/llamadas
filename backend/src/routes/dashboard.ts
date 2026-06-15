@@ -39,8 +39,11 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
     res.json({ totalClients, totalAgents, totalCalls, pendingCallbacks, clientsByStatus: statusMap, recentCalls })
   } else {
     const { batchId } = req.query as Record<string, string>
-    const batchFilter = batchId ? { importBatchId: batchId } : {}
-    const agentCompanyFilter = { assignment: { agentId: req.user!.id }, ...batchFilter }
+    const batchFilter = batchId ? { company: { importBatchId: batchId } } : {}
+    const agentCompanyFilter = {
+      contacts: { some: { assignment: { agentId: req.user!.id } } },
+      ...(batchId ? { importBatchId: batchId } : {}),
+    }
     const callFilter = batchId
       ? { agentId: req.user!.id, company: { importBatchId: batchId } }
       : { agentId: req.user!.id }
@@ -48,9 +51,9 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       ? { agentId: req.user!.id, company: { importBatchId: batchId } }
       : { agentId: req.user!.id }
 
-    const [assignedClients, clientsByStatus, totalCalls, pendingCallbacks, todayCallbacks, recentCalls] =
+    const [assignedContacts, clientsByStatus, totalCalls, pendingCallbacks, todayCallbacks, recentCalls] =
       await Promise.all([
-        prisma.assignment.count({ where: { agentId: req.user!.id, company: batchFilter } }),
+        prisma.assignment.count({ where: { agentId: req.user!.id, ...batchFilter } }),
         prisma.company.groupBy({ by: ['status'], _count: { status: true }, where: agentCompanyFilter }),
         prisma.callLog.count({ where: callFilter }),
         prisma.callback.count({ where: { ...cbFilter, completed: false } }),
@@ -78,7 +81,15 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
     const statusMap: Record<string, number> = {}
     for (const s of clientsByStatus) statusMap[s.status] = s._count.status
 
-    res.json({ assignedClients, totalCalls, pendingCallbacks, todayCallbacks, clientsByStatus: statusMap, recentCalls })
+    res.json({
+      assignedClients: assignedContacts,
+      assignedContacts,
+      totalCalls,
+      pendingCallbacks,
+      todayCallbacks,
+      clientsByStatus: statusMap,
+      recentCalls,
+    })
   }
 })
 
@@ -109,12 +120,14 @@ router.get('/agents-stats', requireAdmin, async (_req: AuthRequest, res: Respons
 router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => {
   const { agentId: filterAgentId } = req.query as Record<string, string>
   const agentFilter = filterAgentId ? { agentId: filterAgentId } : {}
-  const companyAgentFilter = filterAgentId ? { assignment: { agentId: filterAgentId } } : {}
+  const companyAgentFilter = filterAgentId
+    ? { contacts: { some: { assignment: { agentId: filterAgentId } } } }
+    : {}
   const thirtyDaysAgo = new Date()
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
   const now = new Date()
 
-  const [agents, allCallLogs, dispositionBreakdown, batchCompanyStatuses, batches, callsByAgentCompany, pendingCallbacks, overdueCallbacks] =
+  const [agents, allCallLogs, dispositionBreakdown, batchCompanyStatuses, batches, callsByAgentContact, pendingCallbacks, overdueCallbacks] =
     await Promise.all([
       prisma.user.findMany({
         where: { role: 'AGENT', active: true },
@@ -128,7 +141,11 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
       prisma.callLog.groupBy({ by: ['disposition'], _count: { disposition: true }, where: { ...agentFilter } }),
       prisma.company.groupBy({ by: ['importBatchId', 'status'], _count: { status: true }, where: { ...companyAgentFilter } }),
       prisma.importBatch.findMany({ select: { id: true, filename: true, createdAt: true, totalRecords: true }, orderBy: { createdAt: 'desc' } }),
-      prisma.callLog.groupBy({ by: ['agentId', 'companyId'], _count: { companyId: true } }),
+      prisma.callLog.groupBy({
+        by: ['agentId', 'contactId'],
+        _count: { contactId: true },
+        where: { contactId: { not: null }, ...agentFilter },
+      }),
       prisma.callback.groupBy({ by: ['agentId'], _count: { agentId: true }, where: { completed: false } }),
       prisma.callback.groupBy({ by: ['agentId'], _count: { agentId: true }, where: { completed: false, scheduledAt: { lt: now } } }),
     ])
@@ -149,10 +166,10 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
   for (const p of overdueCallbacks) { if (p.agentId) overdueMap[p.agentId] = p._count.agentId }
 
   const calledByAgent: Record<string, Set<string>> = {}
-  for (const row of callsByAgentCompany) {
-    if (!row.agentId) continue
+  for (const row of callsByAgentContact) {
+    if (!row.agentId || !row.contactId) continue
     if (!calledByAgent[row.agentId]) calledByAgent[row.agentId] = new Set()
-    calledByAgent[row.agentId].add(row.companyId)
+    calledByAgent[row.agentId].add(row.contactId)
   }
 
   const agentCompanyStatuses = await Promise.all(
@@ -160,7 +177,7 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
       prisma.company.groupBy({
         by: ['status'],
         _count: { status: true },
-        where: { assignment: { agentId: a.id } },
+        where: { contacts: { some: { assignment: { agentId: a.id } } } },
       }).then((rows) => {
         const m: Record<string, number> = {}
         for (const r of rows) m[r.status] = r._count.status
@@ -174,15 +191,31 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
   const agentPerformance = agents.map((a) => {
     const assigned = a._count.assignments
     const totalCalls = a._count.callLogs
-    const calledCompanies = calledByAgent[a.id]?.size ?? 0
+    const calledContacts = calledByAgent[a.id]?.size ?? 0
     const statuses = agentStatusMap[a.id] ?? {}
     const interested = statuses['INTERESTED'] ?? 0
     const converted = statuses['CONVERTED'] ?? 0
     const notInterested = statuses['NOT_INTERESTED'] ?? 0
-    const contactRate = assigned > 0 ? Math.round((calledCompanies / assigned) * 100) : 0
-    const conversionRate = calledCompanies > 0 ? Math.round(((interested + converted) / calledCompanies) * 100) : 0
-    const avgCallsPerCompany = calledCompanies > 0 ? Math.round((totalCalls / calledCompanies) * 10) / 10 : 0
-    return { id: a.id, name: a.name, assigned, calledClients: calledCompanies, totalCalls, interested, converted, notInterested, contactRate, conversionRate, avgCallsPerClient: avgCallsPerCompany, pendingCallbacks: pendingMap[a.id] ?? 0, overdueCallbacks: overdueMap[a.id] ?? 0 }
+    const contactRate = assigned > 0 ? Math.round((calledContacts / assigned) * 100) : 0
+    const conversionRate = calledContacts > 0 ? Math.round(((interested + converted) / calledContacts) * 100) : 0
+    const avgCallsPerContact = calledContacts > 0 ? Math.round((totalCalls / calledContacts) * 10) / 10 : 0
+    return {
+      id: a.id,
+      name: a.name,
+      assigned,
+      calledClients: calledContacts,
+      calledContacts,
+      totalCalls,
+      interested,
+      converted,
+      notInterested,
+      contactRate,
+      conversionRate,
+      avgCallsPerClient: avgCallsPerContact,
+      avgCallsPerContact,
+      pendingCallbacks: pendingMap[a.id] ?? 0,
+      overdueCallbacks: overdueMap[a.id] ?? 0,
+    }
   })
 
   const batchStatusMap: Record<string, Record<string, number>> = {}
@@ -192,7 +225,6 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
     batchStatusMap[bId][row.status] = (batchStatusMap[bId][row.status] ?? 0) + row._count.status
   }
 
-  // Per-batch call stats: total calls + calls with INTERESTED disposition
   const batchCallStats = await Promise.all(
     batches.map(async (b) => {
       const [callCount, interestedContactCount] = await Promise.all([
@@ -219,7 +251,7 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
     return { ...b, pending, inProgress, interested, interestedContactCount, converted, notInterested, doNotCall, contacted, callCount }
   })
 
-  const [totalCompanies, assignedCompanies, funnelStatuses] = await Promise.all([
+  const [totalCompanies, assignedContacts, funnelStatuses] = await Promise.all([
     prisma.company.count({ where: { ...companyAgentFilter } }),
     prisma.assignment.count({ where: filterAgentId ? { agentId: filterAgentId } : {} }),
     prisma.company.groupBy({ by: ['status'], _count: { status: true }, where: { ...companyAgentFilter } }),
@@ -232,7 +264,16 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
     callsByDay: Object.entries(callsByDay).map(([date, count]) => ({ date, count })),
     dispositionBreakdown: dispositionBreakdown.map((d) => ({ disposition: d.disposition, count: d._count.disposition })),
     batchProgress,
-    funnel: { total: totalCompanies, assigned: assignedCompanies, pending: funnelMap['PENDING'] ?? 0, inProgress: funnelMap['IN_PROGRESS'] ?? 0, interested: funnelMap['INTERESTED'] ?? 0, converted: funnelMap['CONVERTED'] ?? 0, notInterested: funnelMap['NOT_INTERESTED'] ?? 0, doNotCall: funnelMap['DO_NOT_CALL'] ?? 0 },
+    funnel: {
+      total: totalCompanies,
+      assigned: assignedContacts,
+      pending: funnelMap['PENDING'] ?? 0,
+      inProgress: funnelMap['IN_PROGRESS'] ?? 0,
+      interested: funnelMap['INTERESTED'] ?? 0,
+      converted: funnelMap['CONVERTED'] ?? 0,
+      notInterested: funnelMap['NOT_INTERESTED'] ?? 0,
+      doNotCall: funnelMap['DO_NOT_CALL'] ?? 0,
+    },
   })
 })
 
@@ -241,18 +282,20 @@ router.get('/my-batches', requireAuth, async (req: AuthRequest, res: Response) =
   const agentId = req.user!.id
 
   const batches = await prisma.importBatch.findMany({
-    where: { companies: { some: { assignment: { agentId } } } },
+    where: { companies: { some: { contacts: { some: { assignment: { agentId } } } } } },
     select: { id: true, filename: true, createdAt: true },
     orderBy: { createdAt: 'desc' },
   })
 
   const counts = await Promise.all(
     batches.map((b) =>
-      prisma.assignment.count({ where: { agentId, company: { importBatchId: b.id } } })
+      prisma.assignment.count({
+        where: { agentId, contact: { company: { importBatchId: b.id } } },
+      })
     )
   )
 
-  res.json(batches.map((b, i) => ({ ...b, clientCount: counts[i] })))
+  res.json(batches.map((b, i) => ({ ...b, clientCount: counts[i], contactCount: counts[i] })))
 })
 
 export default router

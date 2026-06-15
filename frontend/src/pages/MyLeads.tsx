@@ -254,6 +254,9 @@ export default function MyLeads() {
 
   // All loaded clients (unfiltered) — used only for batch derivation
   const allClients: ClientSummary[] = allClientsData?.clients ?? []
+  const countContacts = (list: ClientSummary[]) =>
+    list.reduce((sum, c) => sum + c.contacts.length, 0)
+  const allContactCount = countContacts(allClients)
 
   // Derive unique batches sorted newest first
   const batches = Array.from(
@@ -423,9 +426,9 @@ export default function MyLeads() {
   // Detail view loading / empty guards are now rendered INSIDE the layout
   // (so the top bar with batch selector remains visible at all times)
 
-  // Flat navigation helpers
-  const flatTotal = clients.reduce((sum, c) => sum + Math.max(1, c.contacts.length), 0)
-  const globalPosition = clients.slice(0, currentIndex).reduce((sum, c) => sum + Math.max(1, c.contacts.length), 0) + activeContactIdx + 1
+  // Flat navigation helpers — only assigned contacts
+  const flatTotal = clients.reduce((sum, c) => sum + c.contacts.length, 0)
+  const globalPosition = clients.slice(0, currentIndex).reduce((sum, c) => sum + c.contacts.length, 0) + activeContactIdx + 1
   const isFirst = currentIndex === 0 && activeContactIdx === 0
   const isLast = currentIndex >= clients.length - 1 && activeContactIdx >= (clients[currentIndex]?.contacts.length ?? 1) - 1
 
@@ -444,10 +447,10 @@ export default function MyLeads() {
               onChange={(e) => switchBatch(e.target.value)}
               className="bg-blue-700 border border-blue-500 text-white text-xs rounded px-2 py-1 focus:outline-none focus:border-blue-300 max-w-[220px] truncate"
             >
-              <option value="">Todos los lotes ({allClients.length})</option>
+              <option value="">Todos los lotes ({allContactCount})</option>
               {batches.map((b, i) => (
                 <option key={b.id} value={b.id}>
-                  {i === 0 ? '★ ' : ''}{b.filename.replace(/\.[^.]+$/, '')} ({allClients.filter(c => c.importBatch?.id === b.id).length})
+                  {i === 0 ? '★ ' : ''}{b.filename.replace(/\.[^.]+$/, '')} ({countContacts(allClients.filter(c => c.importBatch?.id === b.id))})
                 </option>
               ))}
             </select>

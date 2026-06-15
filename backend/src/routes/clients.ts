@@ -1,11 +1,25 @@
 import { Router, Response } from 'express'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma'
-import { requireAuth, requireAdmin, AuthRequest } from '../middleware/auth'
+import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
 
-// GET /api/clients — ADMIN sees all, AGENT sees only assigned
+function contactFilterForRole(
+  role: string,
+  userId: string,
+  agentId?: string
+): Record<string, unknown> | undefined {
+  if (role === 'AGENT') {
+    return { assignment: { agentId: userId } }
+  }
+  if (agentId) {
+    return { assignment: { agentId } }
+  }
+  return undefined
+}
+
+// GET /api/clients — ADMIN sees all, AGENT sees only assigned contacts
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const {
     page = '1',
@@ -19,18 +33,25 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
 
   const take = Math.min(Number(limit) || 50, 200)
   const skip = (Math.max(Number(page) || 1, 1) - 1) * take
+  const isAgent = req.user!.role === 'AGENT'
 
-  const where: Record<string, unknown> = {}
+  if (unassigned === 'true' && !isAgent) {
+    const contactWhere: Record<string, unknown> = { assignment: null }
+    if (batchId) contactWhere.company = { importBatchId: batchId }
 
-  if (req.user!.role === 'AGENT') {
-    where.assignment = { agentId: req.user!.id }
-    if (batchId) where.importBatchId = batchId
-  } else {
-    if (agentId) where.assignment = { agentId }
-    if (unassigned === 'true') where.assignment = null
-    if (batchId) where.importBatchId = batchId
+    const total = await prisma.contact.count({ where: contactWhere })
+    res.json({ clients: [], total, page: Number(page), limit: take })
+    return
   }
 
+  const where: Record<string, unknown> = {}
+  const contactWhere = contactFilterForRole(req.user!.role, req.user!.id, agentId)
+
+  if (contactWhere) {
+    where.contacts = { some: contactWhere }
+  }
+
+  if (batchId) where.importBatchId = batchId
   if (status) where.status = status
   if (search) {
     where.OR = [
@@ -41,12 +62,19 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     ]
   }
 
+  const contactsInclude = {
+    where: contactWhere,
+    include: {
+      assignment: { include: { agent: { select: { name: true, id: true } } } },
+    },
+    orderBy: { createdAt: 'asc' as const },
+  }
+
   const [companies, total] = await Promise.all([
     prisma.company.findMany({
       where,
       include: {
-        contacts: { orderBy: { createdAt: 'asc' } },
-        assignment: { include: { agent: { select: { name: true, id: true } } } },
+        contacts: contactsInclude,
         importBatch: { select: { id: true, filename: true, createdAt: true } },
         _count: { select: { callLogs: true, callbacks: true } },
         callbacks: {
@@ -68,11 +96,29 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
 
 // GET /api/clients/:id
 router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
+  const isAgent = req.user!.role === 'AGENT'
+  const contactWhere = isAgent ? { assignment: { agentId: req.user!.id } } : undefined
+
+  if (isAgent) {
+    const assignedCount = await prisma.contact.count({
+      where: { companyId: req.params.id, assignment: { agentId: req.user!.id } },
+    })
+    if (assignedCount === 0) {
+      res.status(403).json({ error: 'Sin acceso a esta empresa' })
+      return
+    }
+  }
+
   const company = await prisma.company.findUnique({
     where: { id: req.params.id },
     include: {
-      contacts: { orderBy: { createdAt: 'asc' } },
-      assignment: { include: { agent: { select: { name: true } } } },
+      contacts: {
+        where: contactWhere,
+        include: {
+          assignment: { include: { agent: { select: { name: true } } } },
+        },
+        orderBy: { createdAt: 'asc' },
+      },
       callLogs: {
         include: {
           agent: { select: { name: true } },
@@ -94,15 +140,6 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     return
   }
 
-  if (
-    req.user!.role === 'AGENT' &&
-    company.assignment &&
-    (company.assignment as { agentId?: string }).agentId !== req.user!.id
-  ) {
-    res.status(403).json({ error: 'Sin acceso a esta empresa' })
-    return
-  }
-
   res.json(company)
 })
 
@@ -114,6 +151,16 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     razonSocial: z.string().optional(),
   })
   const data = updateSchema.parse(req.body)
+
+  if (req.user!.role === 'AGENT') {
+    const assignedCount = await prisma.contact.count({
+      where: { companyId: req.params.id, assignment: { agentId: req.user!.id } },
+    })
+    if (assignedCount === 0) {
+      res.status(403).json({ error: 'Sin acceso a esta empresa' })
+      return
+    }
+  }
 
   const updated = await prisma.company.update({
     where: { id: req.params.id },

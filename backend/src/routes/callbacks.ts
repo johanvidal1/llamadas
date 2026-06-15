@@ -79,6 +79,19 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   })
   const data = schema.parse(req.body)
 
+  if (req.user!.role === 'AGENT') {
+    const hasAccess = await prisma.contact.findFirst({
+      where: {
+        companyId: data.clientId,
+        assignment: { agentId: req.user!.id },
+      },
+    })
+    if (!hasAccess) {
+      res.status(403).json({ error: 'Sin acceso a este contacto' })
+      return
+    }
+  }
+
   const callback = await prisma.callback.create({
     data: {
       companyId: data.clientId,

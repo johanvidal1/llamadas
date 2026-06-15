@@ -106,9 +106,23 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
   })
 
   const allClients: Array<{
-    id: string; name: string; phone: string; status: string
+    id: string
+    ruc: string
+    razonSocial?: string
+    status: string
+    contacts: { id: string; nombre: string; telefono?: string }[]
     _count: { callLogs: number; callbacks: number }
   }> = clientsData?.clients ?? []
+
+  const allContacts = allClients.flatMap((company) =>
+    company.contacts.map((contact) => ({
+      id: contact.id,
+      name: contact.nombre,
+      phone: contact.telefono ?? '',
+      status: company.status,
+      _count: company._count,
+    }))
+  )
 
   const allCallbacks: Array<{
     id: string; scheduledAt: string; notes?: string
@@ -117,25 +131,25 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
 
   // Derive lists per metric
   let tabALabel = '', tabBLabel = ''
-  let tabAList: typeof allClients = []
-  let tabBList: typeof allClients = []
+  let tabAList: typeof allContacts = []
+  let tabBList: typeof allContacts = []
   let overdueList: typeof allCallbacks = []
 
   if (drill.metric === 'contactRate') {
-    tabAList = allClients.filter((c) => c._count.callLogs > 0)
-    tabBList = allClients.filter((c) => c._count.callLogs === 0)
+    tabAList = allContacts.filter((c) => c._count.callLogs > 0)
+    tabBList = allContacts.filter((c) => c._count.callLogs === 0)
     tabALabel = `Contactados (${tabAList.length})`
     tabBLabel = `Sin contactar (${tabBList.length})`
   } else if (drill.metric === 'conversionRate') {
-    tabAList = allClients.filter((c) => c.status === 'INTERESTED' || c.status === 'CONVERTED')
-    tabBList = allClients.filter((c) => c._count.callLogs > 0 && c.status !== 'INTERESTED' && c.status !== 'CONVERTED')
+    tabAList = allContacts.filter((c) => c.status === 'INTERESTED' || c.status === 'CONVERTED')
+    tabBList = allContacts.filter((c) => c._count.callLogs > 0 && c.status !== 'INTERESTED' && c.status !== 'CONVERTED')
     tabALabel = `Interesados/Convertidos (${tabAList.length})`
     tabBLabel = `Contactados sin conversión (${tabBList.length})`
   } else if (drill.metric === 'avgCallsPerClient') {
-    tabAList = [...allClients].sort((a, b) => b._count.callLogs - a._count.callLogs)
-    tabALabel = `Todos los clientes (${tabAList.length})`
+    tabAList = [...allContacts].sort((a, b) => b._count.callLogs - a._count.callLogs)
+    tabALabel = `Todos los contactos (${tabAList.length})`
   } else if (drill.metric === 'interested') {
-    tabAList = allClients.filter((c) => c.status === 'INTERESTED' || c.status === 'CONVERTED')
+    tabAList = allContacts.filter((c) => c.status === 'INTERESTED' || c.status === 'CONVERTED')
     tabALabel = `Interesados (${tabAList.length})`
   } else if (drill.metric === 'overdueCallbacks') {
     overdueList = allCallbacks.filter((cb) => {
@@ -349,7 +363,7 @@ export default function Reports() {
         <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Embudo de campaña</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
           <StatCard label="Total clientes" value={funnel.total} icon={Users} />
-          <StatCard label="Asignados" value={funnel.assigned} icon={UserCheck2} color="text-blue-700" />
+          <StatCard label="Asignados" value={funnel.assigned} icon={UserCheck2} color="text-blue-700" sub="contactos" />
           <StatCard label="Pendientes" value={funnel.pending} color="text-gray-600" />
           <StatCard label="En progreso" value={funnel.inProgress} color="text-blue-600" />
           <StatCard label="Interesados" value={funnel.interested} color="text-green-600" icon={Target} />

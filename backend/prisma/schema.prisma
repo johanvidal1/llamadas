@@ -57,7 +57,6 @@ model Company {
   updatedAt     DateTime    @updatedAt
 
   contacts   Contact[]
-  assignment Assignment?
   callLogs   CallLog[]
   callbacks  Callback[]
 }
@@ -73,13 +72,14 @@ model Contact {
   telefono     String?
   createdAt    DateTime @default(now())
 
-  callLogs CallLog[]
+  assignment Assignment?
+  callLogs   CallLog[]
 }
 
 model Assignment {
   id         String   @id @default(cuid())
-  companyId  String   @unique
-  company    Company  @relation(fields: [companyId], references: [id])
+  contactId  String   @unique
+  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
   agentId    String
   agent      User     @relation(fields: [agentId], references: [id])
   assignedAt DateTime @default(now())

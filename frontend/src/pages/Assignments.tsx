@@ -24,33 +24,59 @@ export default function Assignments() {
   const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: getUsers })
   const { data: imports = [] } = useQuery({ queryKey: ['imports'], queryFn: getImports })
 
-  // Query clients for the selected agent in the drawer
+  // Query companies with assigned contacts for the selected agent in the drawer
   const { data: drawerClientsData, isLoading: loadingDrawer } = useQuery({
     queryKey: ['clients', 'agent-drawer', drawerAgentId],
     queryFn: () => getClients({ agentId: drawerAgentId!, limit: 500 }),
     enabled: !!drawerAgentId,
   })
-  const drawerClients: Array<{
-    id: string; name: string; phone: string; status: string
+
+  type DrawerContact = {
+    id: string
+    name: string
+    phone: string
+    companyName: string
+    status: string
     importBatch?: { id: string; filename: string; createdAt: string }
     _count: { callLogs: number; callbacks: number }
-  }> = drawerClientsData?.clients ?? []
+  }
 
-  // Group drawer clients by batch
+  const drawerContacts: DrawerContact[] = (drawerClientsData?.clients ?? []).flatMap(
+    (company: {
+      id: string
+      ruc: string
+      razonSocial?: string
+      status: string
+      contacts: { id: string; nombre: string; telefono?: string }[]
+      importBatch?: { id: string; filename: string; createdAt: string }
+      _count: { callLogs: number; callbacks: number }
+    }) =>
+      company.contacts.map((contact) => ({
+        id: contact.id,
+        name: contact.nombre,
+        phone: contact.telefono ?? '',
+        companyName: company.razonSocial || company.ruc,
+        status: company.status,
+        importBatch: company.importBatch,
+        _count: company._count,
+      }))
+  )
+
+  // Group drawer contacts by batch
   type BatchGroup = {
     id: string; filename: string; createdAt: string
-    clients: typeof drawerClients
+    contacts: DrawerContact[]
   }
   const drawerBatches: BatchGroup[] = []
   const seenBatchIds = new Set<string>()
-  drawerClients.forEach((c) => {
+  drawerContacts.forEach((c) => {
     const b = c.importBatch
     if (!b) return
     if (!seenBatchIds.has(b.id)) {
       seenBatchIds.add(b.id)
-      drawerBatches.push({ id: b.id, filename: b.filename, createdAt: b.createdAt, clients: [] })
+      drawerBatches.push({ id: b.id, filename: b.filename, createdAt: b.createdAt, contacts: [] })
     }
-    drawerBatches.find((bg) => bg.id === b.id)!.clients.push(c)
+    drawerBatches.find((bg) => bg.id === b.id)!.contacts.push(c)
   })
   drawerBatches.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 
@@ -58,7 +84,7 @@ export default function Assignments() {
     (u: { role: string; active: boolean }) => u.role === 'AGENT' && u.active
   )
 
-  // Count of unassigned clients in selected batch
+  // Count of unassigned contacts in selected batch
   const { data: unassignedData } = useQuery({
     queryKey: ['clients', 'unassigned', batchId],
     queryFn: () =>
@@ -72,14 +98,14 @@ export default function Assignments() {
   const unassignedTotal = unassignedData?.total ?? 0
 
   const mutation = useMutation({
-    mutationFn: (data: object) => createAssignment(data),
+    mutationFn: createAssignment,
     onSuccess: (data) => {
-      toast.success(`✅ ${data.assigned} clientes asignados`)
+      toast.success(`✅ ${data.assigned} contactos asignados`)
       qc.invalidateQueries({ queryKey: ['clients'] })
       qc.invalidateQueries({ queryKey: ['users'] })
     },
     onError: (err: { response?: { data?: { error?: string } } }) => {
-      toast.error(err?.response?.data?.error ?? 'Error al asignar clientes')
+      toast.error(err?.response?.data?.error ?? 'Error al asignar contactos')
     },
   })
 
@@ -102,9 +128,9 @@ export default function Assignments() {
   return (
     <div className="p-8 space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Asignar clientes a agentes</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Asignar contactos a agentes</h1>
         <p className="text-gray-500 text-sm mt-1">
-          Distribuye los clientes importados entre tu equipo de trabajo
+          Distribuye los contactos (teléfonos a llamar) entre tu equipo de trabajo
         </p>
       </div>
 
@@ -149,7 +175,7 @@ export default function Assignments() {
 
           {/* Count */}
           <div>
-            <label className="label">Cantidad de clientes</label>
+            <label className="label">Cantidad de contactos</label>
             <input
               type="number"
               className="input"
@@ -167,7 +193,7 @@ export default function Assignments() {
           <AlertCircle size={18} className="text-blue-500 shrink-0 mt-0.5" />
           <div className="text-sm">
             <p className="text-blue-800 font-medium">
-              Clientes sin asignar disponibles:{' '}
+              Contactos sin asignar disponibles:{' '}
               <span className="font-bold">{unassignedTotal}</span>
               {batchId && ' en esta importación'}
             </p>
@@ -175,7 +201,7 @@ export default function Assignments() {
               <p className="text-blue-600 mt-1">
                 Se asignarán hasta{' '}
                 <strong>{count === '' ? unassignedTotal : Math.min(count, unassignedTotal)}</strong>{' '}
-                clientes a <strong>{selectedAgent.name}</strong>
+                contactos a <strong>{selectedAgent.name}</strong>
               </p>
             )}
           </div>
@@ -188,12 +214,12 @@ export default function Assignments() {
             className="btn-primary"
           >
             <UserCheck size={18} />
-            {mutation.isPending ? 'Asignando...' : 'Asignar clientes'}
+            {mutation.isPending ? 'Asignando...' : 'Asignar contactos'}
           </button>
           {unassignedTotal === 0 && (
             <p className="text-sm text-amber-600 flex items-center gap-1">
               <AlertCircle size={14} />
-              No hay clientes disponibles para asignar
+              No hay contactos disponibles para asignar
             </p>
           )}
         </div>
@@ -303,23 +329,24 @@ export default function Assignments() {
                 {!loadingDrawer && drawerBatches.length === 0 && (
                   <div className="text-center text-gray-400 py-12">
                     <Package size={36} className="mx-auto mb-2" />
-                    <p>Este agente no tiene clientes asignados</p>
+                    <p>Este agente no tiene contactos asignados</p>
                   </div>
                 )}
                 {drawerBatches.map((batch, idx) => {
                   const isOpen = expandedBatches[batch.id] ?? idx === 0
                   const search = (batchSearch[batch.id] ?? '').toLowerCase()
                   const filtered = search
-                    ? batch.clients.filter(
+                    ? batch.contacts.filter(
                         (c) =>
                           c.name.toLowerCase().includes(search) ||
-                          c.phone.toLowerCase().includes(search)
+                          c.phone.toLowerCase().includes(search) ||
+                          c.companyName.toLowerCase().includes(search)
                       )
-                    : batch.clients
+                    : batch.contacts
 
                   // Status counts
                   const statusCounts: Record<string, number> = {}
-                  batch.clients.forEach((c) => {
+                  batch.contacts.forEach((c) => {
                     statusCounts[c.status] = (statusCounts[c.status] ?? 0) + 1
                   })
 
@@ -338,7 +365,7 @@ export default function Assignments() {
                             </p>
                             <p className="text-xs text-gray-500">
                               {format(new Date(batch.createdAt), "d 'de' MMMM yyyy", { locale: es })}
-                              {' · '}{batch.clients.length} clientes
+                              {' · '}{batch.contacts.length} contactos
                             </p>
                           </div>
                         </div>
@@ -356,10 +383,10 @@ export default function Assignments() {
                         </div>
                       </button>
 
-                      {/* Client list */}
+                      {/* Contact list */}
                       {isOpen && (
                         <div>
-                          {batch.clients.length > 6 && (
+                          {batch.contacts.length > 6 && (
                             <div className="px-4 py-2 border-b border-gray-100">
                               <input
                                 type="text"
@@ -378,6 +405,7 @@ export default function Assignments() {
                                 <div className="min-w-0">
                                   <p className="font-medium text-gray-800 truncate">{c.name}</p>
                                   <p className="text-xs text-gray-500">{c.phone}</p>
+                                  <p className="text-xs text-gray-400 truncate">{c.companyName}</p>
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0 ml-2">
                                   {c._count.callLogs > 0 && (

@@ -74,8 +74,11 @@ router.get('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
       importedBy: { select: { name: true } },
       companies: {
         include: {
-          contacts: true,
-          assignment: { include: { agent: { select: { name: true } } } },
+          contacts: {
+            include: {
+              assignment: { include: { agent: { select: { name: true } } } },
+            },
+          },
         },
         orderBy: { createdAt: 'asc' },
         take: 200,
@@ -173,7 +176,7 @@ router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
           companies: {
             where: {
               OR: [
-                { assignment: { isNot: null } },
+                { contacts: { some: { assignment: { isNot: null } } } },
                 { callLogs: { some: {} } },
                 { callbacks: { some: {} } },
               ],

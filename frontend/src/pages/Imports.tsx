@@ -291,7 +291,10 @@ export default function Imports() {
           {/* Stats bar */}
           {batchDetail && (() => {
             const companies: BatchCompany[] = batchDetail.companies ?? []
-            const assigned = companies.filter((c) => c.assignment).length
+            const assigned = companies.reduce(
+              (sum, c) => sum + c.contacts.filter((ct) => ct.assignment).length,
+              0
+            )
             const pending = companies.filter((c) => c.status === 'PENDING').length
             const interested = companies.filter((c) => c.status === 'INTERESTED').length
             const notInt = companies.filter((c) => c.status === 'NOT_INTERESTED').length
@@ -364,7 +367,9 @@ export default function Imports() {
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {companies.map((c) => {
+                      const assignedContacts = c.contacts.filter((ct) => ct.assignment)
                       const primary = c.contacts?.[0]
+                      const agentNames = [...new Set(assignedContacts.map((ct) => ct.assignment!.agent.name))]
                       return (
                       <tr key={c.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-3">
@@ -397,10 +402,13 @@ export default function Imports() {
                           <StatusBadge status={c.status} />
                         </td>
                         <td className="px-3 py-3">
-                          {c.assignment ? (
+                          {agentNames.length > 0 ? (
                             <span className="flex items-center gap-1 text-xs text-blue-700">
                               <UserCheck size={12} />
-                              {c.assignment.agent.name}
+                              {agentNames.join(', ')}
+                              {assignedContacts.length < c.contacts.length && (
+                                <span className="text-gray-400"> ({assignedContacts.length}/{c.contacts.length})</span>
+                              )}
                             </span>
                           ) : (
                             <span className="flex items-center gap-1 text-xs text-gray-400">
@@ -433,6 +441,10 @@ interface BatchCompany {
   razonSocial?: string
   plan?: string
   status: string
-  contacts: { nombre: string; telefono?: string; email?: string }[]
-  assignment?: { agent: { name: string } } | null
+  contacts: {
+    nombre: string
+    telefono?: string
+    email?: string
+    assignment?: { agent: { name: string } } | null
+  }[]
 }

@@ -135,7 +135,7 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard label="Clientes asignados" value={stats?.assignedClients ?? 0} icon={Users} color="bg-blue-600" />
+          <StatCard label="Contactos asignados" value={stats?.assignedContacts ?? stats?.assignedClients ?? 0} icon={Users} color="bg-blue-600" />
           <StatCard label="Llamadas realizadas" value={stats?.totalCalls ?? 0} icon={Phone} color="bg-green-600" />
           <StatCard label="Callbacks hoy" value={stats?.todayCallbacks ?? 0} icon={CalendarClock} color="bg-amber-500" />
           <StatCard label="Callbacks pendientes" value={stats?.pendingCallbacks ?? 0} icon={TrendingUp} color="bg-purple-600" />
