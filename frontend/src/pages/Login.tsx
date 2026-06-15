@@ -18,8 +18,12 @@ export default function Login() {
       toast.success('Sesión iniciada')
       navigate('/')
     },
-    onError: (err: { response?: { data?: { error?: string } } }) => {
-      toast.error(err?.response?.data?.error ?? 'Error al iniciar sesión')
+    onError: (err: { response?: { data?: { error?: string } }; message?: string }) => {
+      if (!err.response) {
+        toast.error('No se pudo conectar con el servidor. Verifica tu conexión.')
+        return
+      }
+      toast.error(err.response.data?.error ?? 'Error al iniciar sesión')
     },
   })
 
