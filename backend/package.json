@@ -8,9 +8,14 @@
     "build": "prisma generate && tsc",
     "start": "node dist/index.js",
     "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
     "db:seed": "ts-node src/seed.ts"
+  },
+  "prisma": {
+    "seed": "ts-node src/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",

@@ -16,7 +16,7 @@ services:
     plan: starter
     rootDir: backend
     buildCommand: npm install --include=dev && npm run build
-    startCommand: npx prisma db push && npx ts-node src/seed.ts && npm start
+    startCommand: npx prisma migrate deploy && npx prisma db seed && npm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV

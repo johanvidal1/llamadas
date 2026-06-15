@@ -119,10 +119,26 @@ Cuando quieras desplegar en un servidor real:
 4. Reinstala el cliente Prisma:
    ```bash
    cd backend
-   npx prisma db push
-   npx prisma generate
+   npm run db:migrate
+   npm run db:generate
    npm run db:seed
    ```
+
+---
+
+## Migraciones de base de datos (Prisma Migrate)
+
+El proyecto usa migraciones versionadas en lugar de `db push` para despliegues seguros.
+
+| Entorno | Comando | Uso |
+|---------|---------|-----|
+| **Desarrollo** | `npm run db:migrate` | Crea y aplica migraciones locales (`prisma migrate dev`) |
+| **Producción** | `npm run db:migrate:deploy` | Aplica migraciones pendientes (`prisma migrate deploy`) |
+
+**Reglas importantes:**
+- En desarrollo, crea migraciones con `npm run db:migrate` cada vez que cambies `schema.prisma`.
+- En producción (Render), el deploy ejecuta `prisma migrate deploy` automáticamente.
+- **Nunca** uses `prisma migrate reset` ni `db push --force-reset` en producción.
 
 ---
 
