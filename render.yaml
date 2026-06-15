@@ -16,7 +16,8 @@ services:
     plan: starter
     rootDir: backend
     buildCommand: npm install --include=dev && npm run build
-    startCommand: npx prisma db push --accept-data-loss && npm start
+    # TEMPORAL: un solo deploy con force-reset; revertir a `npx prisma db push && npm start` tras éxito
+    startCommand: npx prisma db push --force-reset && npx ts-node src/seed.ts && npm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
