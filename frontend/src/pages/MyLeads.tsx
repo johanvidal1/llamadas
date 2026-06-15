@@ -136,7 +136,7 @@ function ContactPhoneField({ telefono }: { telefono?: string }) {
         <Phone size={20} className="text-blue-600 shrink-0" />
         <a
           href={`tel:${telefono}`}
-          className="flex-1 text-2xl font-mono font-semibold text-blue-900 tracking-wide hover:text-blue-700"
+          className="flex-1 text-3xl font-mono font-semibold text-blue-900 tracking-wide hover:text-blue-700"
         >
           {telefono}
         </a>
