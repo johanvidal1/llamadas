@@ -1,6 +1,13 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getUsers, getImports, getClients, createAssignment } from '../api/client'
+import {
+  getUsers,
+  getImports,
+  getClients,
+  createAssignment,
+  previewAssignment,
+  type AssignmentPreview,
+} from '../api/client'
 import toast from 'react-hot-toast'
 import { UserCheck, Users, AlertCircle, X, Package, ChevronDown, ChevronRight } from 'lucide-react'
 import { format } from 'date-fns'
@@ -11,6 +18,8 @@ export default function Assignments() {
   const [agentId, setAgentId] = useState('')
   const [batchId, setBatchId] = useState('')
   const [count, setCount] = useState<number | ''>('')
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewModal, setPreviewModal] = useState<AssignmentPreview | null>(null)
   const qc = useQueryClient()
 
   // Drawer state — agent detail
@@ -101,6 +110,7 @@ export default function Assignments() {
     mutationFn: createAssignment,
     onSuccess: (data) => {
       toast.success(`✅ ${data.assigned} contactos asignados`)
+      setPreviewModal(null)
       qc.invalidateQueries({ queryKey: ['clients'] })
       qc.invalidateQueries({ queryKey: ['users'] })
     },
@@ -109,16 +119,56 @@ export default function Assignments() {
     },
   })
 
-  const handleAssign = () => {
+  const assignPayload = (opts?: { count?: number; contactIds?: string[] }) => ({
+    agentId,
+    batchId: batchId || undefined,
+    ...opts,
+  })
+
+  const runAssign = (opts?: { count?: number; contactIds?: string[] }) => {
+    mutation.mutate(assignPayload(opts))
+  }
+
+  const handleAssign = async () => {
     if (!agentId) {
       toast.error('Selecciona un agente')
       return
     }
-    mutation.mutate({
-      agentId,
-      batchId: batchId || undefined,
-      count: count === '' ? undefined : count,
-    })
+    setPreviewLoading(true)
+    try {
+      const preview = await previewAssignment({
+        agentId,
+        batchId: batchId || undefined,
+        count: count === '' ? undefined : count,
+      })
+      if (preview.contactIds.length === 0) {
+        toast.error('No hay contactos disponibles para asignar')
+        return
+      }
+      if (preview.completeBoundary) {
+        runAssign({ contactIds: preview.contactIds })
+        return
+      }
+      setPreviewModal(preview)
+    } catch (err: unknown) {
+      const message =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+        'Error al previsualizar la asignación'
+      toast.error(message)
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const handlePreviewChoice = (choice: 'expand' | 'shrink' | 'as_requested') => {
+    if (!previewModal?.suggestions) return
+    if (choice === 'expand') {
+      runAssign({ contactIds: previewModal.suggestions.expandContactIds })
+    } else if (choice === 'shrink') {
+      runAssign({ contactIds: previewModal.suggestions.shrinkContactIds })
+    } else {
+      runAssign({ contactIds: previewModal.contactIds })
+    }
   }
 
   const selectedAgent = agents.find(
@@ -210,11 +260,15 @@ export default function Assignments() {
         <div className="flex items-center gap-3">
           <button
             onClick={handleAssign}
-            disabled={mutation.isPending || !agentId || unassignedTotal === 0}
+            disabled={previewLoading || mutation.isPending || !agentId || unassignedTotal === 0}
             className="btn-primary"
           >
             <UserCheck size={18} />
-            {mutation.isPending ? 'Asignando...' : 'Asignar contactos'}
+            {previewLoading
+              ? 'Verificando...'
+              : mutation.isPending
+                ? 'Asignando...'
+                : 'Asignar contactos'}
           </button>
           {unassignedTotal === 0 && (
             <p className="text-sm text-amber-600 flex items-center gap-1">
@@ -224,6 +278,80 @@ export default function Assignments() {
           )}
         </div>
       </div>
+
+      {/* Boundary preview modal */}
+      {previewModal && !previewModal.completeBoundary && previewModal.boundaryCompany && previewModal.suggestions && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/40 z-40"
+            onClick={() => !mutation.isPending && setPreviewModal(null)}
+          />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Cierre de empresa incompleto</h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    La asignación termina en{' '}
+                    <strong>{previewModal.boundaryCompany.razonSocial || previewModal.boundaryCompany.ruc}</strong>
+                    {' '}(RUC {previewModal.boundaryCompany.ruc}): incluyes{' '}
+                    <strong>{previewModal.boundaryCompany.included}</strong> de{' '}
+                    <strong>{previewModal.boundaryCompany.total}</strong> contactos
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => !mutation.isPending && setPreviewModal(null)}
+                  className="p-1 rounded-lg hover:bg-gray-100 text-gray-400"
+                  aria-label="Cerrar"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {previewModal.conflict.hasConflict && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800 flex items-start gap-2">
+                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                  <p>
+                    Esta empresa ya tiene contactos asignados a{' '}
+                    <strong>{previewModal.conflict.otherAgentNames.join(', ')}</strong>.
+                    Completar la empresa puede repartir contactos entre agentes.
+                  </p>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  disabled={mutation.isPending}
+                  onClick={() => handlePreviewChoice('expand')}
+                  className="btn-primary justify-center"
+                >
+                  Completar empresa ({previewModal.suggestions.expandTo} contactos, +
+                  {previewModal.suggestions.expandAdd})
+                </button>
+                <button
+                  type="button"
+                  disabled={mutation.isPending}
+                  onClick={() => handlePreviewChoice('shrink')}
+                  className="btn-secondary justify-center"
+                >
+                  Solo empresas cerradas ({previewModal.suggestions.shrinkTo} contactos, -
+                  {previewModal.suggestions.shrinkRemove})
+                </button>
+                <button
+                  type="button"
+                  disabled={mutation.isPending}
+                  onClick={() => handlePreviewChoice('as_requested')}
+                  className="text-sm text-gray-600 hover:text-gray-900 py-2"
+                >
+                  Asignar {previewModal.requestedCount} igual
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Agents summary */}
       <div>

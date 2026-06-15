@@ -1,6 +1,8 @@
 import { Router, Response } from 'express'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma'
+import { getUnassignedContactsOrdered } from '../lib/assignmentOrder'
+import { buildAssignmentPreview } from '../lib/assignmentPreview'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
 
 const router = Router()
@@ -11,6 +13,12 @@ const assignSchema = z.object({
   count: z.number().int().positive().optional(),
   clientIds: z.array(z.string()).optional(),
   contactIds: z.array(z.string()).optional(),
+})
+
+const previewSchema = z.object({
+  agentId: z.string().min(1, 'Agente requerido'),
+  batchId: z.string().optional(),
+  count: z.number().int().positive().optional(),
 })
 
 // GET /api/assignments
@@ -41,6 +49,23 @@ router.get('/', requireAdmin, async (_req: AuthRequest, res: Response) => {
   res.json(assignments)
 })
 
+// POST /api/assignments/preview
+router.post('/preview', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const { agentId, batchId, count } = previewSchema.parse(req.body)
+
+  const agent = await prisma.user.findUnique({
+    where: { id: agentId },
+    select: { id: true, role: true, active: true },
+  })
+  if (!agent || agent.role !== 'AGENT' || !agent.active) {
+    res.status(400).json({ error: 'Agente no válido' })
+    return
+  }
+
+  const preview = await buildAssignmentPreview(agentId, batchId, count)
+  res.json(preview)
+})
+
 // POST /api/assignments
 router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   const { agentId, batchId, count, clientIds, contactIds } = assignSchema.parse(req.body)
@@ -59,15 +84,7 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     })
     idsToAssign = contacts.map((c) => c.id)
   } else {
-    const unassigned = await prisma.contact.findMany({
-      where: {
-        assignment: null,
-        ...(batchId ? { company: { importBatchId: batchId } } : {}),
-      },
-      select: { id: true },
-      take: count ?? undefined,
-      orderBy: { createdAt: 'asc' },
-    })
+    const unassigned = await getUnassignedContactsOrdered(batchId, count ?? undefined)
     idsToAssign = unassigned.map((c) => c.id)
   }
 

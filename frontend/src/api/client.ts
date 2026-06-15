@@ -66,6 +66,39 @@ export const updateClient = (id: string, data: object) =>
 
 // ─── Assignments ──────────────────────────────────────────
 export const getAssignments = () => api.get('/assignments').then((r) => r.data)
+
+export type AssignmentPreview = {
+  requestedCount: number
+  contactIds: string[]
+  completeBoundary: boolean
+  boundaryCompany: {
+    id: string
+    ruc: string
+    razonSocial: string | null
+    included: number
+    total: number
+    missing: number
+  } | null
+  suggestions: {
+    expandTo: number
+    expandAdd: number
+    shrinkTo: number
+    shrinkRemove: number
+    expandContactIds: string[]
+    shrinkContactIds: string[]
+  } | null
+  conflict: {
+    hasConflict: boolean
+    otherAgentNames: string[]
+  }
+}
+
+export const previewAssignment = (data: {
+  agentId: string
+  batchId?: string
+  count?: number
+}) => api.post<AssignmentPreview>('/assignments/preview', data).then((r) => r.data)
+
 export const createAssignment = (data: {
   agentId: string
   batchId?: string
@@ -74,6 +107,7 @@ export const createAssignment = (data: {
   contactIds?: string[]
 }) =>
   api.post('/assignments', data).then((r) => r.data)
+
 export const deleteAssignment = (id: string) =>
   api.delete(`/assignments/${id}`).then((r) => r.data)
 
