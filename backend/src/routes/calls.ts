@@ -7,6 +7,7 @@ const router = Router()
 
 const callSchema = z.object({
   clientId: z.string().min(1),
+  contactId: z.string().optional(),
   disposition: z.enum([
     'INTERESTED',
     'NOT_INTERESTED',
@@ -18,12 +19,10 @@ const callSchema = z.object({
   ]),
   aclaracion: z.string().optional(),
   notes: z.string().optional(),
-  // Required when disposition is CALLBACK
   callbackDate: z.string().datetime().optional(),
   callbackNotes: z.string().optional(),
 })
 
-// Map disposition to client status
 const dispositionToStatus: Record<string, string> = {
   INTERESTED: 'INTERESTED',
   NOT_INTERESTED: 'NOT_INTERESTED',
@@ -34,7 +33,7 @@ const dispositionToStatus: Record<string, string> = {
   OTHER: 'IN_PROGRESS',
 }
 
-// GET /api/calls — list calls (admin: all, agent: own)
+// GET /api/calls
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const { clientId, agentId, limit = '50' } = req.query as Record<string, string>
 
@@ -44,12 +43,13 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   } else if (agentId) {
     where.agentId = agentId
   }
-  if (clientId) where.clientId = clientId
+  if (clientId) where.companyId = clientId
 
   const logs = await prisma.callLog.findMany({
     where,
     include: {
-      client: { select: { name: true, phone: true } },
+      company: { select: { ruc: true, razonSocial: true } },
+      contact: { select: { nombre: true, tipoContacto: true } },
       agent: { select: { name: true } },
     },
     orderBy: { calledAt: 'desc' },
@@ -58,7 +58,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   res.json(logs)
 })
 
-// POST /api/calls — log a call result
+// POST /api/calls
 router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const data = callSchema.parse(req.body)
 
@@ -67,29 +67,26 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     return
   }
 
-  // Create call log
   const callLog = await prisma.callLog.create({
     data: {
-      clientId: data.clientId,
+      companyId: data.clientId,
       agentId: req.user!.id,
+      contactId: data.contactId ?? null,
       disposition: data.disposition,
       aclaracion: data.aclaracion,
       notes: data.notes,
     },
   })
 
-  // Update client status
-  const newStatus = dispositionToStatus[data.disposition]
-  await prisma.client.update({
+  await prisma.company.update({
     where: { id: data.clientId },
-    data: { status: newStatus },
+    data: { status: dispositionToStatus[data.disposition] },
   })
 
-  // If a callback date was provided (any disposition), create callback record
   if (data.callbackDate) {
     await prisma.callback.create({
       data: {
-        clientId: data.clientId,
+        companyId: data.clientId,
         agentId: req.user!.id,
         callLogId: callLog.id,
         scheduledAt: new Date(data.callbackDate),

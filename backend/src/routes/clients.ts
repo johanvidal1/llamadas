@@ -23,7 +23,6 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const where: Record<string, unknown> = {}
 
   if (req.user!.role === 'AGENT') {
-    // Agents only see their assigned clients; they can also filter by batch
     where.assignment = { agentId: req.user!.id }
     if (batchId) where.importBatchId = batchId
   } else {
@@ -35,17 +34,18 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   if (status) where.status = status
   if (search) {
     where.OR = [
-      { name: { contains: search, mode: 'insensitive' } },
-      { phone: { contains: search, mode: 'insensitive' } },
-      { phone2: { contains: search, mode: 'insensitive' } },
-      { email: { contains: search, mode: 'insensitive' } },
+      { ruc: { contains: search, mode: 'insensitive' } },
+      { razonSocial: { contains: search, mode: 'insensitive' } },
+      { contacts: { some: { nombre: { contains: search, mode: 'insensitive' } } } },
+      { contacts: { some: { telefono: { contains: search, mode: 'insensitive' } } } },
     ]
   }
 
-  const [clients, total] = await Promise.all([
-    prisma.client.findMany({
+  const [companies, total] = await Promise.all([
+    prisma.company.findMany({
       where,
       include: {
+        contacts: { orderBy: { createdAt: 'asc' } },
         assignment: { include: { agent: { select: { name: true, id: true } } } },
         importBatch: { select: { id: true, filename: true, createdAt: true } },
         _count: { select: { callLogs: true, callbacks: true } },
@@ -60,20 +60,25 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       take,
       skip,
     }),
-    prisma.client.count({ where }),
+    prisma.company.count({ where }),
   ])
 
-  res.json({ clients, total, page: Number(page), limit: take })
+  res.json({ clients: companies, total, page: Number(page), limit: take })
 })
 
-// GET /api/clients/:id — client detail with call history
+// GET /api/clients/:id
 router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
-  const client = await prisma.client.findUnique({
+  const company = await prisma.company.findUnique({
     where: { id: req.params.id },
     include: {
+      contacts: { orderBy: { createdAt: 'asc' } },
       assignment: { include: { agent: { select: { name: true } } } },
       callLogs: {
-        include: { agent: { select: { name: true } } },
+        include: {
+          agent: { select: { name: true } },
+          contact: { select: { id: true, nombre: true, tipoContacto: true } },
+          callback: true,
+        },
         orderBy: { calledAt: 'desc' },
       },
       callbacks: {
@@ -84,37 +89,33 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     },
   })
 
-  if (!client) {
-    res.status(404).json({ error: 'Cliente no encontrado' })
+  if (!company) {
+    res.status(404).json({ error: 'Empresa no encontrada' })
     return
   }
 
-  // Agents can only see their own clients
   if (
     req.user!.role === 'AGENT' &&
-    client.assignment?.agent !== undefined &&
-    (client.assignment as { agentId?: string })?.agentId !== req.user!.id
+    company.assignment &&
+    (company.assignment as { agentId?: string }).agentId !== req.user!.id
   ) {
-    res.status(403).json({ error: 'Sin acceso a este cliente' })
+    res.status(403).json({ error: 'Sin acceso a esta empresa' })
     return
   }
 
-  res.json(client)
+  res.json(company)
 })
 
-// PUT /api/clients/:id — update client notes, status
+// PUT /api/clients/:id — update notes, plan
 router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const updateSchema = z.object({
     notes: z.string().optional(),
-    phone2: z.string().optional(),
-    email: z.string().email().optional().or(z.literal('')),
-    address: z.string().optional(),
-    currentOp: z.string().optional(),
     plan: z.string().optional(),
+    razonSocial: z.string().optional(),
   })
   const data = updateSchema.parse(req.body)
 
-  const updated = await prisma.client.update({
+  const updated = await prisma.company.update({
     where: { id: req.params.id },
     data,
   })

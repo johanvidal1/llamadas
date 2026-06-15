@@ -51,9 +51,10 @@ const ACLARACION_OPTIONS: Record<string, string[]> = {
 
 interface ClientSummary {
   id: string
-  name: string
-  phone: string
+  ruc: string
+  razonSocial?: string
   status: string
+  contacts: { nombre: string; tipoContacto?: string; telefono?: string; email?: string; dni?: string }[]
   importBatch?: { id: string; filename: string; createdAt: string }
 }
 
@@ -64,19 +65,19 @@ interface CallLogEntry {
   notes?: string
   calledAt: string
   agent: { name: string }
+  contact?: { id: string; nombre: string; tipoContacto?: string }
 }
 
 interface ClientDetail {
   id: string
-  name: string
-  phone: string
-  phone2?: string
-  email?: string
-  address?: string
-  currentOp?: string
+  ruc: string
+  razonSocial?: string
+  importStatus?: string
+  fechaConsulta?: string
   plan?: string
   notes?: string
   status: string
+  contacts: { id: string; nombre: string; tipoContacto?: string; telefono?: string; email?: string; dni?: string }[]
   callLogs: CallLogEntry[]
   callbacks: { id: string; callLogId?: string; scheduledAt: string; notes?: string; completed: boolean }[]
 }
@@ -85,7 +86,8 @@ interface Callback {
   id: string
   scheduledAt: string
   notes?: string
-  client: { id: string; name: string; phone: string }
+  company: { id: string; ruc: string; razonSocial?: string; contacts: { nombre: string; telefono?: string }[] }
+  callLog?: { contact?: { id: string; nombre: string; telefono?: string; tipoContacto?: string } | null }
   agent: { id: string; name: string }
 }
 
@@ -162,28 +164,27 @@ export default function MyLeads() {
   const [gridSearch, setGridSearch] = useState('')
   const [gridStatus, setGridStatus] = useState('')
   const [gridPage, setGridPage] = useState(1)
-  const [selectedClient, setSelectedClient] = useState<{ id: string; name: string; phone: string; phone2?: string } | null>(null)
+  const [selectedClient, setSelectedClient] = useState<{ id: string; ruc: string; razonSocial?: string; contacts?: { id?: string; nombre: string; tipoContacto?: string; telefono?: string }[] } | null>(null)
 
   // ── Batch filter (shared between detail + grid views)
   const [selectedBatchId, setSelectedBatchId] = useState<string>('')
 
   // ── Agendados sidebar tab
   const [cbTab, setCbTab] = useState<'own' | 'team'>('own')
+  const [historialScope, setHistorialScope] = useState<'contact' | 'company'>('contact')
 
   // ── Persist last visited client per user
   const lastClientKey = `myLeads-lastClient-${user?.id ?? 'anon'}`
 
   const [currentIndex, setCurrentIndex] = useState(0)
-  const [editEmail, setEditEmail] = useState('')
-  const [editAddress, setEditAddress] = useState('')
-  const [editCurrentOp, setEditCurrentOp] = useState('')
+  const [activeContactIdx, setActiveContactIdx] = useState(0)
   const [editPlan, setEditPlan] = useState('')
+  const [editNotes, setEditNotes] = useState('')
   const [disposition, setDisposition] = useState('')
   const [aclaracion, setAclaracion] = useState('')
   const [callNotes, setCallNotes] = useState('')
   const [schedDate, setSchedDate] = useState('')
   const [schedTime, setSchedTime] = useState('09:00')
-  const [schedNotes, setSchedNotes] = useState('')
 
   // Load ALL clients without batch filter — used only to derive available batches
   const { data: allClientsData } = useQuery({
@@ -260,26 +261,55 @@ export default function MyLeads() {
   })
   const callbackList = agendados as Callback[]
 
-  // Sync editable fields when client changes
+  // Sync editable fields when company changes
   useEffect(() => {
     if (detail) {
-      setEditEmail(detail.email ?? '')
-      setEditAddress(detail.address ?? '')
-      setEditCurrentOp(detail.currentOp ?? '')
       setEditPlan(detail.plan ?? '')
+      setEditNotes(detail.notes ?? '')
+      setActiveContactIdx(0)
+      setHistorialScope('contact')
       setDisposition('')
       setAclaracion('')
       setCallNotes('')
       setSchedDate('')
       setSchedTime('09:00')
-      setSchedNotes('')
     }
   }, [detail?.id])
 
+  // Reset call form when switching contact tab within same company
+  useEffect(() => {
+    setDisposition('')
+    setAclaracion('')
+    setCallNotes('')
+    setSchedDate('')
+    setSchedTime('09:00')
+    setHistorialScope('contact')
+  }, [activeContactIdx])
+
   const goTo = useCallback(
-    (idx: number) => { if (idx >= 0 && idx < clients.length) setCurrentIndex(idx) },
+    (idx: number) => { if (idx >= 0 && idx < clients.length) { setCurrentIndex(idx); setActiveContactIdx(0) } },
     [clients.length]
   )
+
+  const goNext = useCallback(() => {
+    const currentContacts = clients[currentIndex]?.contacts ?? []
+    if (activeContactIdx < currentContacts.length - 1) {
+      setActiveContactIdx(activeContactIdx + 1)
+    } else if (currentIndex < clients.length - 1) {
+      setCurrentIndex(currentIndex + 1)
+      setActiveContactIdx(0)
+    }
+  }, [currentIndex, activeContactIdx, clients])
+
+  const goPrev = useCallback(() => {
+    if (activeContactIdx > 0) {
+      setActiveContactIdx(activeContactIdx - 1)
+    } else if (currentIndex > 0) {
+      const prevContacts = clients[currentIndex - 1]?.contacts ?? []
+      setCurrentIndex(currentIndex - 1)
+      setActiveContactIdx(Math.max(0, prevContacts.length - 1))
+    }
+  }, [currentIndex, activeContactIdx, clients])
 
   const switchBatch = (batchId: string) => {
     setSelectedBatchId(batchId)
@@ -297,33 +327,29 @@ export default function MyLeads() {
     mutationFn: async (autoNext: boolean) => {
       if (!currentClient) return autoNext
       await updateClient(currentClient.id, {
-        email: editEmail || undefined,
-        address: editAddress || undefined,
-        currentOp: editCurrentOp || undefined,
         plan: editPlan || undefined,
+        notes: editNotes || undefined,
       })
       if (disposition) {
         if (disposition === 'CALLBACK' && !schedDate)
           throw new Error('Selecciona la fecha para el callback')
         await logCall({
           clientId: currentClient.id,
+          contactId: detail?.contacts[activeContactIdx]?.id || undefined,
           disposition,
           aclaracion: aclaracion || undefined,
           notes: callNotes || undefined,
-          // Send callbackDate whenever a date is set (any disposition)
           callbackDate: schedDate
             ? new Date(`${schedDate}T${schedTime}:00`).toISOString()
             : undefined,
-          callbackNotes: schedNotes || undefined,
         })
       } else if (schedDate) {
-        // No disposition selected but date set — use CALLBACK as disposition
         await logCall({
           clientId: currentClient.id,
+          contactId: detail?.contacts[activeContactIdx]?.id || undefined,
           disposition: 'CALLBACK',
           notes: callNotes || undefined,
           callbackDate: new Date(`${schedDate}T${schedTime}:00`).toISOString(),
-          callbackNotes: schedNotes || undefined,
         })
       }
       return autoNext
@@ -334,7 +360,7 @@ export default function MyLeads() {
       qc.invalidateQueries({ queryKey: ['callbacks'] })
       qc.invalidateQueries({ queryKey: ['clients'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
-      if (autoNext && currentIndex < clients.length - 1) goTo(currentIndex + 1)
+      if (autoNext) goNext()
     },
     onError: (err: Error) => toast.error(err?.message ?? 'Error al guardar'),
   })
@@ -356,6 +382,12 @@ export default function MyLeads() {
 
   // Detail view loading / empty guards are now rendered INSIDE the layout
   // (so the top bar with batch selector remains visible at all times)
+
+  // Flat navigation helpers
+  const flatTotal = clients.reduce((sum, c) => sum + Math.max(1, c.contacts.length), 0)
+  const globalPosition = clients.slice(0, currentIndex).reduce((sum, c) => sum + Math.max(1, c.contacts.length), 0) + activeContactIdx + 1
+  const isFirst = currentIndex === 0 && activeContactIdx === 0
+  const isLast = currentIndex >= clients.length - 1 && activeContactIdx >= (clients[currentIndex]?.contacts.length ?? 1) - 1
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -383,7 +415,7 @@ export default function MyLeads() {
 
           {viewMode === 'detail' && detail && (
             <div className="flex items-center gap-2 shrink-0">
-              <span className="text-blue-300 text-xs">Contacto {currentIndex + 1} / {total}:</span>
+              <span className="text-blue-300 text-xs">Contacto {globalPosition} / {flatTotal}:</span>
               <StatusBadge status={detail.status} />
             </div>
           )}
@@ -451,15 +483,15 @@ export default function MyLeads() {
             <>
               <span className="text-blue-300 text-xs">{currentIndex + 1} / {total}</span>
               <button
-                onClick={() => goTo(currentIndex - 1)}
-                disabled={currentIndex === 0}
+                onClick={goPrev}
+                disabled={isFirst}
                 className="flex items-center gap-1 px-3 py-1.5 bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed rounded text-xs font-medium transition-colors"
               >
                 <ChevronLeft size={14} /> Anterior
               </button>
               <button
-                onClick={() => goTo(currentIndex + 1)}
-                disabled={currentIndex >= clients.length - 1}
+                onClick={goNext}
+                disabled={isLast}
                 className="flex items-center gap-1 px-3 py-1.5 bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed rounded text-xs font-medium transition-colors"
               >
                 Siguiente <ChevronRight size={14} />
@@ -505,25 +537,63 @@ export default function MyLeads() {
             {detail && (
               <div className="space-y-3 h-full flex flex-col">
 
-                {/* ── Datos del cliente ── */}
+                {/* ── Datos de la Empresa ── */}
                 <div className="bg-white border border-gray-200 rounded-lg p-4">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Datos del cliente</p>
-                  <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                    <ReadField label="Nombre" value={detail.name} />
-                    <ReadField label="Teléfono 1" value={detail.phone} />
-                    <ReadField label="Teléfono 2" value={detail.phone2} />
-                    <EditField label="Operador actual" value={editCurrentOp} onChange={setEditCurrentOp} placeholder="Movistar, Claro, AT&T..." />
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Empresa</p>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    <ReadField label="RUC" value={detail.ruc} />
                     <div className="col-span-2">
-                      <EditField label="Email" value={editEmail} onChange={setEditEmail} placeholder="correo@ejemplo.com" />
+                      <ReadField label="Razón Social" value={detail.razonSocial} />
                     </div>
-                    <div className="col-span-2">
-                      <EditField label="Dirección" value={editAddress} onChange={setEditAddress} placeholder="Calle, número, colonia..." />
-                    </div>
+                    <ReadField label="Estado" value={detail.importStatus} />
                     <div className="col-span-2">
                       <EditField label="Plan / Tarifa" value={editPlan} onChange={setEditPlan} placeholder="Plan actual del cliente" />
                     </div>
+                    <div className="col-span-2">
+                      <EditField label="Notas internas" value={editNotes} onChange={setEditNotes} placeholder="Observaciones sobre la empresa..." />
+                    </div>
                   </div>
                 </div>
+
+                {/* ── Contacto (tabs) ── */}
+                {detail.contacts.length > 0 && (
+                  <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                    {detail.contacts.length > 1 && (
+                      <div className="flex border-b border-gray-200 bg-gray-50 overflow-x-auto">
+                        {detail.contacts.map((ct, idx) => (
+                          <button key={idx} onClick={() => setActiveContactIdx(idx)}
+                            className={`px-4 py-2 text-xs font-medium whitespace-nowrap transition-colors border-b-2 flex flex-col items-center leading-tight ${
+                              activeContactIdx === idx
+                                ? 'text-blue-700 border-blue-600 bg-white'
+                                : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-100'
+                            }`}>
+                            <span>{ct.nombre.split(' ')[0]}</span>
+                            {ct.tipoContacto && <span className="text-[10px] opacity-60 font-normal">{ct.tipoContacto}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {detail.contacts[activeContactIdx] && (() => {
+                      const ct = detail.contacts[activeContactIdx]
+                      return (
+                        <div className="p-4">
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
+                            Contacto {activeContactIdx + 1} de {detail.contacts.length}
+                          </p>
+                          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                            <div className="col-span-2">
+                              <ReadField label="Nombre" value={ct.nombre} />
+                            </div>
+                            <ReadField label="Tipo" value={ct.tipoContacto} />
+                            <ReadField label="Teléfono" value={ct.telefono} />
+                            <ReadField label="Email" value={ct.email} />
+                            <ReadField label="DNI" value={ct.dni} />
+                          </div>
+                        </div>
+                      )
+                    })()}
+                  </div>
+                )}
 
                 {/* ── Resultado + Agendar apilados ── */}
                 <div className="flex flex-col gap-3 flex-1">
@@ -537,7 +607,7 @@ export default function MyLeads() {
                         <select
                           className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
                           value={disposition}
-                          onChange={(e) => { setDisposition(e.target.value); setAclaracion(''); if (e.target.value === 'NOT_INTERESTED' || e.target.value === 'DO_NOT_CALL') { setSchedDate(''); setSchedNotes('') } }}
+                          onChange={(e) => { setDisposition(e.target.value); setAclaracion(''); if (e.target.value === 'NOT_INTERESTED' || e.target.value === 'DO_NOT_CALL') { setSchedDate('') } }}
                         >
                           {RESPUESTA_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
@@ -593,12 +663,6 @@ export default function MyLeads() {
                           <Clock size={13} /> Primer libre
                         </button>
                       </div>
-                      <div className="flex flex-col gap-0.5">
-                        <label className="text-xs text-gray-500 font-medium">Observaciones del agendado</label>
-                        <textarea rows={3} className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none resize-none"
-                          placeholder="Ej: Llamar por la tarde, preguntar por el gerente..."
-                          value={schedNotes} onChange={(e) => setSchedNotes(e.target.value)} />
-                      </div>
                     </div>
                   </div>
 
@@ -610,16 +674,16 @@ export default function MyLeads() {
                     <Save size={15} />
                     {saveMutation.isPending ? 'Guardando...' : 'Guardar resultado'}
                   </button>
-                  <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || currentIndex >= clients.length - 1}
+                  <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || isLast}
                     className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
                     Guardar y siguiente <ChevronRight size={15} />
                   </button>
                   <div className="flex gap-2 ml-auto">
-                    <button onClick={() => goTo(currentIndex - 1)} disabled={currentIndex === 0}
+                    <button onClick={goPrev} disabled={isFirst}
                       className="flex items-center gap-1 px-4 py-2.5 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg text-sm font-medium disabled:opacity-40">
                       <ChevronLeft size={15} /> Anterior
                     </button>
-                    <button onClick={() => goTo(currentIndex + 1)} disabled={currentIndex >= clients.length - 1}
+                    <button onClick={goNext} disabled={isLast}
                       className="flex items-center gap-1 px-4 py-2.5 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg text-sm font-medium disabled:opacity-40">
                       Siguiente <ChevronRight size={15} />
                     </button>
@@ -636,8 +700,8 @@ export default function MyLeads() {
             {detail ? (
               <>
                 <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-4 py-3 shrink-0">
-                  <p className="text-white font-semibold text-sm truncate">{detail.name}</p>
-                  <p className="text-blue-200 text-xs font-mono mt-0.5">{detail.phone}</p>
+                  <p className="text-white font-semibold text-sm truncate">{detail.razonSocial || detail.ruc}</p>
+                  <p className="text-blue-200 text-xs font-mono mt-0.5">{detail.ruc}</p>
                 </div>
                 <div className="shrink-0 divide-y divide-gray-100 border-b-2 border-gray-200">
                   <div className="flex items-center justify-between px-4 py-1.5">
@@ -664,15 +728,13 @@ export default function MyLeads() {
                     <span className="text-xs text-gray-500">Estado</span>
                     <StatusBadge status={detail.status} />
                   </div>
-                  {detail.currentOp && (
-                    <div className="flex items-center justify-between px-4 py-1.5">
-                      <span className="text-xs text-gray-500">Operador</span>
-                      <span className="text-xs font-semibold text-orange-600">{detail.currentOp}</span>
-                    </div>
-                  )}
+                  <div className="flex items-center justify-between px-4 py-1.5">
+                    <span className="text-xs text-gray-500">Contactos</span>
+                    <span className="text-xs font-semibold text-gray-700">{detail.contacts.length}</span>
+                  </div>
                   {detail.plan && (
                     <div className="flex items-center justify-between px-4 py-1.5">
-                      <span className="text-xs text-gray-500">Plan actual</span>
+                      <span className="text-xs text-gray-500">Plan</span>
                       <span className="text-xs text-gray-700 truncate max-w-[170px]">{detail.plan}</span>
                     </div>
                   )}
@@ -731,12 +793,16 @@ export default function MyLeads() {
                   </div>
                 ) : (
                   activeList.map((cb) => {
-                    const isCurrent = cb.client.id === currentClient?.id
+                    const isCurrent = cb.company.id === currentClient?.id
                     return (
-                      <button key={cb.id} onClick={() => goToClientById(cb.client.id)}
+                      <button key={cb.id} onClick={() => goToClientById(cb.company.id)}
                         className={`w-full text-left px-2.5 py-2 rounded border text-xs transition-all ${callbackColor(cb.scheduledAt)} ${isCurrent ? 'ring-2 ring-blue-400' : ''}`}>
-                        <p className="font-semibold truncate leading-tight">{cb.client.name}</p>
-                        <p className="opacity-70 truncate text-[10px]">{cb.client.phone}</p>
+                        <p className="font-semibold truncate leading-tight">{cb.company.razonSocial || cb.company.ruc}</p>
+                        <p className="opacity-70 truncate text-[10px]">
+                          {cb.callLog?.contact
+                            ? `${cb.callLog.contact.nombre.split(' ')[0]}${cb.callLog.contact.telefono ? ' · ' + cb.callLog.contact.telefono : ''}`
+                            : (cb.company.contacts?.[0]?.telefono ?? cb.company.ruc)}
+                        </p>
                         {cbTab === 'team' && isAdmin && (
                           <p className="text-[10px] opacity-60 truncate">→ {cb.agent.name}</p>
                         )}
@@ -763,7 +829,21 @@ export default function MyLeads() {
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1">
                   <History size={10} /> Historial de llamadas
                 </p>
-                <span className="text-xs text-gray-400">{detail?.callLogs.length ?? 0}</span>
+                <div className="flex items-center gap-2">
+                  {(detail?.contacts.length ?? 0) > 1 && (
+                    <div className="flex bg-gray-200 rounded p-0.5 gap-0.5">
+                      <button
+                        onClick={() => setHistorialScope('contact')}
+                        className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${historialScope === 'contact' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                      >Contacto</button>
+                      <button
+                        onClick={() => setHistorialScope('company')}
+                        className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${historialScope === 'company' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                      >Empresa</button>
+                    </div>
+                  )}
+                  <span className="text-xs text-gray-400">{detail?.callLogs.length ?? 0}</span>
+                </div>
               </div>
               {!detail || detail.callLogs.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-gray-400">
@@ -774,9 +854,25 @@ export default function MyLeads() {
                 </div>
               ) : (
                 <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-gray-50">
-                  {[...detail.callLogs]
-                    .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())
-                    .map((log) => {
+                  {(() => {
+                    const activeContactId = detail.contacts[activeContactIdx]?.id
+                    const logs = [...detail.callLogs]
+                      .filter((log) => {
+                        if (historialScope === 'company' || (detail.contacts.length <= 1)) return true
+                        // Show logs for this contact, or logs with no contact assigned
+                        return !log.contact || log.contact.id === activeContactId
+                      })
+                      .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())
+                    if (logs.length === 0) return (
+                      <div className="flex items-center justify-center py-8 text-gray-400">
+                        <div className="text-center">
+                          <AlertCircle size={20} className="mx-auto mb-2 opacity-30" />
+                          <p className="text-xs">Sin llamadas para este contacto</p>
+                          <button onClick={() => setHistorialScope('company')} className="mt-1.5 text-[11px] text-blue-500 hover:underline">Ver toda la empresa</button>
+                        </div>
+                      </div>
+                    )
+                    return logs.map((log) => {
                       const cfg = DISPOSITION_CONFIG[log.disposition] ?? { label: log.disposition, classes: 'bg-gray-100 text-gray-600' }
                       const borderColor: Record<string, string> = {
                         INTERESTED: 'border-l-green-400',
@@ -799,6 +895,9 @@ export default function MyLeads() {
                               {format(new Date(log.calledAt), 'dd/MM/yy HH:mm')}
                             </span>
                           </div>
+                          {log.contact && (
+                            <p className="text-[10px] text-blue-600 mb-1 font-medium">{log.contact.nombre}{log.contact.tipoContacto ? ` · ${log.contact.tipoContacto}` : ''}</p>
+                          )}
                           {log.aclaracion && (
                             <p className="text-[11px] text-gray-500 italic mb-1">{log.aclaracion}</p>
                           )}
@@ -823,7 +922,8 @@ export default function MyLeads() {
                           </p>
                         </div>
                       )
-                    })}
+                    })
+                  })()}
                 </div>
               )}
             </div>
@@ -878,24 +978,27 @@ export default function MyLeads() {
           ) : (
             <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 transition-opacity ${fetchingGrid ? 'opacity-60' : ''}`}>
               {gridClients.map((c: {
-                id: string; name: string; phone: string; phone2?: string
-                currentOp?: string; plan?: string; notes?: string; status: string
+                id: string; ruc: string; razonSocial?: string
+                contacts: { nombre: string; telefono?: string }[]
+                plan?: string; notes?: string; status: string
                 _count: { callLogs: number; callbacks: number }
               }) => (
                 <div key={c.id} className="card p-4 flex flex-col gap-3 hover:shadow-md transition-shadow">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="font-semibold text-gray-900 truncate text-sm">{c.name}</p>
-                      <div className="flex items-center gap-1 text-xs text-gray-600 mt-0.5">
-                        <Phone size={11} className="text-gray-400 shrink-0" />
-                        <span className="font-medium font-mono">{c.phone}</span>
-                      </div>
-                      {c.phone2 && <p className="text-xs text-gray-400 font-mono pl-3">{c.phone2}</p>}
+                      <p className="font-semibold text-gray-900 truncate text-sm">{c.razonSocial || c.ruc}</p>
+                      <p className="text-xs text-gray-400 font-mono mt-0.5">{c.ruc}</p>
+                      {c.contacts?.[0] && (
+                        <div className="flex items-center gap-1 text-xs text-gray-600 mt-0.5">
+                          <Phone size={11} className="text-gray-400 shrink-0" />
+                          <span className="font-mono">{c.contacts[0].telefono ?? '—'}</span>
+                        </div>
+                      )}
                     </div>
                     <StatusBadge status={c.status} />
                   </div>
                   <div className="text-xs text-gray-400 space-y-0.5 flex-1">
-                    {c.currentOp && <p>Op: <span className="text-orange-600 font-medium">{c.currentOp}</span></p>}
+                    {c.contacts.length > 1 && <p className="text-blue-500">{c.contacts.length} contactos</p>}
                     {c.plan && <p className="truncate">Plan: <span className="text-gray-600">{c.plan}</span></p>}
                     {c.notes && <p className="truncate text-gray-500 italic">{c.notes}</p>}
                   </div>
@@ -956,7 +1059,7 @@ export default function MyLeads() {
         const listFiltered = clients.filter((c) => {
           const matchStatus = !listStatus || c.status === listStatus
           const q = listSearch.toLowerCase()
-          const matchSearch = !q || c.name.toLowerCase().includes(q) || c.phone.toLowerCase().includes(q)
+          const matchSearch = !q || c.ruc.toLowerCase().includes(q) || (c.razonSocial ?? '').toLowerCase().includes(q) || c.contacts.some((ct) => ct.nombre.toLowerCase().includes(q) || (ct.telefono ?? '').includes(q))
           return matchStatus && matchSearch
         })
         return (
@@ -1005,9 +1108,9 @@ export default function MyLeads() {
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
                       <th className="text-left px-4 py-3 font-medium text-gray-600">#</th>
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Nombre</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-600">RUC</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-600">Razón Social / Contacto</th>
                       <th className="text-left px-4 py-3 font-medium text-gray-600">Teléfono</th>
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Operador</th>
                       {!selectedBatchId && <th className="text-left px-4 py-3 font-medium text-gray-600">Lote</th>}
                       <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
                       <th className="text-left px-4 py-3 font-medium text-gray-600">Próximo agendado</th>
@@ -1020,7 +1123,7 @@ export default function MyLeads() {
                       const realIdx = clients.findIndex((x) => x.id === c.id)
                       // Find next pending callback for this client (sorted soonest first)
                       const nextCb = callbackList
-                        .filter((cb) => cb.client.id === c.id)
+                        .filter((cb) => cb.company.id === c.id)
                         .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())[0]
                       const cbDate = nextCb ? new Date(nextCb.scheduledAt) : null
                       const cbColor = cbDate
@@ -1039,11 +1142,14 @@ export default function MyLeads() {
                           onClick={() => { goTo(realIdx); switchView('detail') }}
                         >
                           <td className="px-4 py-2.5 text-gray-400 text-xs">{realIdx + 1}</td>
-                          <td className="px-4 py-2.5 font-medium text-gray-900">{c.name}</td>
-                          <td className="px-4 py-2.5 text-gray-600 font-mono text-xs">{c.phone}</td>
-                          <td className="px-4 py-2.5 text-gray-500 text-xs">
-                            {(c as ClientSummary & { currentOp?: string }).currentOp ?? '—'}
+                          <td className="px-4 py-2.5 font-mono text-xs text-gray-600">{c.ruc}</td>
+                          <td className="px-4 py-2.5">
+                            <p className="font-medium text-gray-900 text-sm">{(c as ClientSummary).razonSocial || <span className="text-gray-400 italic text-xs">Sin razón social</span>}</p>
+                            {(c as ClientSummary).contacts?.[0] && (
+                              <p className="text-xs text-gray-400">{(c as ClientSummary).contacts[0].nombre}</p>
+                            )}
                           </td>
+                          <td className="px-4 py-2.5 text-gray-600 font-mono text-xs">{(c as ClientSummary).contacts?.[0]?.telefono ?? '—'}</td>
                           {!selectedBatchId && (
                             <td className="px-4 py-2.5 text-xs text-gray-500">
                               {c.importBatch

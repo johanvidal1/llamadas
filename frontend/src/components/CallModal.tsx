@@ -6,9 +6,9 @@ import { X, Phone } from 'lucide-react'
 
 interface Client {
   id: string
-  name: string
-  phone: string
-  phone2?: string
+  ruc: string
+  razonSocial?: string
+  contacts?: { id?: string; nombre: string; tipoContacto?: string; telefono?: string }[]
 }
 
 interface Props {
@@ -29,6 +29,7 @@ const DISPOSITIONS = [
 export default function CallModal({ client, onClose }: Props) {
   const [disposition, setDisposition] = useState('')
   const [notes, setNotes] = useState('')
+  const [contactId, setContactId] = useState(client.contacts?.[0]?.id ?? '')
   const [callbackDate, setCallbackDate] = useState('')
   const [callbackTime, setCallbackTime] = useState('09:00')
   const [callbackNotes, setCallbackNotes] = useState('')
@@ -62,6 +63,7 @@ export default function CallModal({ client, onClose }: Props) {
 
     const payload: Record<string, unknown> = {
       clientId: client.id,
+      contactId: contactId || undefined,
       disposition,
       notes,
     }
@@ -84,8 +86,8 @@ export default function CallModal({ client, onClose }: Props) {
               <Phone size={20} className="text-blue-600" />
             </div>
             <div>
-              <h2 className="font-semibold text-gray-900">{client.name}</h2>
-              <p className="text-sm text-gray-500">{client.phone}{client.phone2 ? ` / ${client.phone2}` : ''}</p>
+              <h2 className="font-semibold text-gray-900">{client.razonSocial || client.ruc}</h2>
+              <p className="text-sm text-gray-500 font-mono">{client.ruc}</p>
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400">
@@ -95,6 +97,25 @@ export default function CallModal({ client, onClose }: Props) {
 
         <form onSubmit={handleSubmit} className="p-5 space-y-5">
           {/* Disposition selection */}
+          {/* Contact selector */}
+          {client.contacts && client.contacts.length > 0 && (
+            <div>
+              <label className="label">Contacto al que llamaste</label>
+              <select
+                className="input mt-1"
+                value={contactId}
+                onChange={(e) => setContactId(e.target.value)}
+              >
+                <option value="">— Sin especificar —</option>
+                {client.contacts.map((ct) => (
+                  <option key={ct.id} value={ct.id}>
+                    {ct.nombre}{ct.tipoContacto ? ` (${ct.tipoContacto})` : ''}{ct.telefono ? ` · ${ct.telefono}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div>
             <label className="label">Resultado de la llamada *</label>
             <div className="space-y-2 mt-2">

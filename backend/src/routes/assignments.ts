@@ -12,18 +12,19 @@ const assignSchema = z.object({
   clientIds: z.array(z.string()).optional(),
 })
 
-// GET /api/assignments — summary of assignments per agent
+// GET /api/assignments
 router.get('/', requireAdmin, async (_req: AuthRequest, res: Response) => {
   const assignments = await prisma.assignment.findMany({
     include: {
       agent: { select: { id: true, name: true, email: true } },
-      client: {
+      company: {
         select: {
           id: true,
-          name: true,
-          phone: true,
+          ruc: true,
+          razonSocial: true,
           status: true,
           importBatch: { select: { filename: true } },
+          contacts: { select: { nombre: true, tipoContacto: true, telefono: true }, take: 3 },
         },
       },
     },
@@ -32,18 +33,16 @@ router.get('/', requireAdmin, async (_req: AuthRequest, res: Response) => {
   res.json(assignments)
 })
 
-// POST /api/assignments — assign clients to an agent
+// POST /api/assignments
 router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   const { agentId, batchId, count, clientIds } = assignSchema.parse(req.body)
 
   let idsToAssign: string[] = []
 
   if (clientIds && clientIds.length > 0) {
-    // Assign specific clients
     idsToAssign = clientIds
   } else {
-    // Find unassigned clients (optionally from a batch)
-    const unassigned = await prisma.client.findMany({
+    const unassigned = await prisma.company.findMany({
       where: {
         assignment: null,
         ...(batchId ? { importBatchId: batchId } : {}),
@@ -56,31 +55,30 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   }
 
   if (idsToAssign.length === 0) {
-    res.status(400).json({ error: 'No hay clientes disponibles para asignar' })
+    res.status(400).json({ error: 'No hay empresas disponibles para asignar' })
     return
   }
 
-  // Create assignments (skip already assigned)
   const existing = await prisma.assignment.findMany({
-    where: { clientId: { in: idsToAssign } },
-    select: { clientId: true },
+    where: { companyId: { in: idsToAssign } },
+    select: { companyId: true },
   })
-  const existingIds = new Set(existing.map((a) => a.clientId))
+  const existingIds = new Set(existing.map((a) => a.companyId))
   const newIds = idsToAssign.filter((id) => !existingIds.has(id))
 
   if (newIds.length === 0) {
-    res.status(400).json({ error: 'Todos los clientes seleccionados ya tienen asignación' })
+    res.status(400).json({ error: 'Todas las empresas seleccionadas ya tienen asignación' })
     return
   }
 
   await prisma.assignment.createMany({
-    data: newIds.map((clientId) => ({ clientId, agentId })),
+    data: newIds.map((companyId) => ({ companyId, agentId })),
   })
 
   res.status(201).json({ assigned: newIds.length, skipped: idsToAssign.length - newIds.length })
 })
 
-// DELETE /api/assignments/:id — unassign client
+// DELETE /api/assignments/:id
 router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
   await prisma.assignment.delete({ where: { id: req.params.id } })
   res.json({ ok: true })

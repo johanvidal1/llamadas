@@ -168,14 +168,15 @@ export default function Dashboard() {
                 id: string
                 disposition: string
                 calledAt: string
-                client: { name: string; phone: string }
+                company: { ruc: string; razonSocial?: string }
+                contact?: { nombre: string } | null
                 agent?: { name: string }
               }) => (
                 <div key={call.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
                   <div>
-                    <p className="text-sm font-medium text-gray-900">{call.client.name}</p>
+                    <p className="text-sm font-medium text-gray-900">{call.company.razonSocial || call.company.ruc}</p>
                     <p className="text-xs text-gray-400">
-                      {call.client.phone}
+                      {call.contact ? call.contact.nombre : call.company.ruc}
                       {call.agent ? ` · ${call.agent.name}` : ''}
                     </p>
                   </div>

@@ -5,7 +5,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
 
-// GET /api/callbacks — get callbacks (agent: own, admin: all or by agentId)
+// GET /api/callbacks
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const { agentId, completed, date } = req.query as Record<string, string>
 
@@ -21,7 +21,6 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     where.completed = completed === 'true'
   }
 
-  // Filter by date (today's callbacks)
   if (date) {
     const start = new Date(date)
     start.setHours(0, 0, 0, 0)
@@ -33,7 +32,20 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const callbacks = await prisma.callback.findMany({
     where,
     include: {
-      client: { select: { id: true, name: true, phone: true, phone2: true, status: true } },
+      company: {
+        select: {
+          id: true,
+          ruc: true,
+          razonSocial: true,
+          status: true,
+          contacts: { select: { nombre: true, tipoContacto: true, telefono: true }, take: 3 },
+        },
+      },
+      callLog: {
+        select: {
+          contact: { select: { id: true, nombre: true, telefono: true, tipoContacto: true } },
+        },
+      },
       agent: { select: { id: true, name: true } },
     },
     orderBy: { scheduledAt: 'asc' },
@@ -42,7 +54,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   res.json(callbacks)
 })
 
-// PUT /api/callbacks/:id — mark as completed
+// PUT /api/callbacks/:id
 router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const schema = z.object({ completed: z.boolean(), notes: z.string().optional() })
   const data = schema.parse(req.body)
@@ -58,7 +70,7 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   res.json(callback)
 })
 
-// POST /api/callbacks — create manual callback
+// POST /api/callbacks
 router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const schema = z.object({
     clientId: z.string().min(1),
@@ -69,13 +81,13 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
 
   const callback = await prisma.callback.create({
     data: {
-      clientId: data.clientId,
+      companyId: data.clientId,
       agentId: req.user!.id,
       scheduledAt: new Date(data.scheduledAt),
       notes: data.notes,
     },
     include: {
-      client: { select: { name: true, phone: true } },
+      company: { select: { ruc: true, razonSocial: true } },
     },
   })
   res.status(201).json(callback)

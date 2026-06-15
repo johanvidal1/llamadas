@@ -13,12 +13,12 @@ interface Callback {
   notes?: string
   completed: boolean
   completedAt?: string
-  client: {
+  company: {
     id: string
-    name: string
-    phone: string
-    phone2?: string
+    ruc: string
+    razonSocial?: string
     status: string
+    contacts: { nombre: string; tipoContacto?: string; telefono?: string }[]
   }
   agent: { name: string }
 }
@@ -120,10 +120,10 @@ export default function Callbacks() {
                     <Phone size={18} className="text-blue-600" />
                   </div>
                   <div className="min-w-0">
-                    <p className="font-medium text-gray-900">{cb.client.name}</p>
+                    <p className="font-medium text-gray-900">{cb.company.razonSocial || cb.company.ruc}</p>
                     <p className="text-sm text-gray-500">
-                      {cb.client.phone}
-                      {cb.client.phone2 ? ` / ${cb.client.phone2}` : ''}
+                      {cb.company.contacts?.[0]?.nombre ?? '—'}
+                      {cb.company.contacts?.[0]?.telefono ? ` · ${cb.company.contacts[0].telefono}` : ''}
                     </p>
                     {cb.notes && (
                       <p className="text-xs text-gray-400 mt-0.5 truncate">{cb.notes}</p>
@@ -176,8 +176,8 @@ export default function Callbacks() {
             {done.slice(0, 20).map((cb) => (
               <div key={cb.id} className="card p-4 flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-700">{cb.client.name}</p>
-                  <p className="text-xs text-gray-400">{cb.client.phone}</p>
+                  <p className="text-sm font-medium text-gray-700">{cb.company.razonSocial || cb.company.ruc}</p>
+                  <p className="text-xs text-gray-400">{cb.company.contacts?.[0]?.telefono ?? '—'}</p>
                 </div>
                 <div className="text-right">
                   <span className="badge bg-green-100 text-green-700">Completado</span>

@@ -7,7 +7,7 @@ import { requireAdmin, AuthRequest } from '../middleware/auth'
 const router = Router()
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB max
+  limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const allowed = [
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -15,10 +15,7 @@ const upload = multer({
       'text/csv',
       'text/plain',
     ]
-    if (
-      allowed.includes(file.mimetype) ||
-      file.originalname.match(/\.(xlsx?|csv)$/i)
-    ) {
+    if (allowed.includes(file.mimetype) || file.originalname.match(/\.(xlsx?|csv)$/i)) {
       cb(null, true)
     } else {
       cb(new Error('Solo se permiten archivos Excel (.xlsx, .xls) o CSV (.csv)'))
@@ -26,32 +23,33 @@ const upload = multer({
   },
 })
 
-// GET /api/imports — list all import batches
+// GET /api/imports
 router.get('/', requireAdmin, async (_req: AuthRequest, res: Response) => {
   const batches = await prisma.importBatch.findMany({
     include: {
       importedBy: { select: { name: true } },
-      _count: { select: { clients: true } },
+      _count: { select: { companies: true } },
     },
     orderBy: { createdAt: 'desc' },
   })
   res.json(batches)
 })
 
-// GET /api/imports/:id — batch detail
+// GET /api/imports/:id
 router.get('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
   const batch = await prisma.importBatch.findUnique({
     where: { id: req.params.id },
     include: {
       importedBy: { select: { name: true } },
-      clients: {
+      companies: {
         include: {
+          contacts: true,
           assignment: { include: { agent: { select: { name: true } } } },
         },
         orderBy: { createdAt: 'asc' },
         take: 200,
       },
-      _count: { select: { clients: true } },
+      _count: { select: { companies: true } },
     },
   })
   if (!batch) {
@@ -61,7 +59,7 @@ router.get('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
   res.json(batch)
 })
 
-// POST /api/imports — upload and parse file
+// POST /api/imports
 router.post(
   '/',
   requireAdmin,
@@ -84,8 +82,7 @@ router.post(
 
     if (parsed.length === 0) {
       res.status(400).json({
-        error:
-          'No se encontraron registros válidos. Asegúrate de que el archivo tenga columnas reconocidas (nombre, telefono, etc.)',
+        error: 'No se encontraron registros válidos. Asegúrate de que el archivo tenga las columnas: ruc, nombre, telefono, etc.',
       })
       return
     }
@@ -95,30 +92,42 @@ router.post(
         filename,
         totalRecords: parsed.length,
         importedById: req.user!.id,
-        clients: {
-          create: parsed,
-        },
       },
-      include: { _count: { select: { clients: true } } },
     })
+
+    for (const company of parsed) {
+      const { contacts, name, phone, email: _email, ...companyFields } = company
+      await prisma.company.create({
+        data: {
+          ruc: companyFields.ruc,
+          razonSocial: companyFields.razonSocial ?? null,
+          importStatus: companyFields.estado ?? null,
+          fechaConsulta: companyFields.fechaConsulta ? new Date(companyFields.fechaConsulta) : null,
+          plan: companyFields.plan ?? null,
+          notes: companyFields.notes ?? null,
+          importBatchId: batch.id,
+          contacts: contacts.length > 0 ? { create: contacts } : undefined,
+        },
+      })
+    }
 
     res.status(201).json({
       id: batch.id,
       filename: batch.filename,
       totalRecords: batch.totalRecords,
-      imported: batch._count.clients,
+      imported: parsed.length,
     })
   }
 )
 
-// DELETE /api/imports/:id — delete a batch only if no agent has used it
+// DELETE /api/imports/:id
 router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
   const batch = await prisma.importBatch.findUnique({
     where: { id: req.params.id },
     include: {
       _count: {
         select: {
-          clients: {
+          companies: {
             where: {
               OR: [
                 { assignment: { isNot: null } },
@@ -137,16 +146,15 @@ router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
     return
   }
 
-  if (batch._count.clients > 0) {
+  if (batch._count.companies > 0) {
     res.status(400).json({
-      error: `Este lote tiene ${batch._count.clients} registro(s) que ya fueron usados por agentes y no puede eliminarse.`,
+      error: `Este lote tiene ${batch._count.companies} registro(s) que ya fueron usados por agentes y no puede eliminarse.`,
     })
     return
   }
 
-  // Delete all clients in the batch, then the batch itself
   await prisma.$transaction([
-    prisma.client.deleteMany({ where: { importBatchId: req.params.id } }),
+    prisma.company.deleteMany({ where: { importBatchId: req.params.id } }),
     prisma.importBatch.delete({ where: { id: req.params.id } }),
   ])
 

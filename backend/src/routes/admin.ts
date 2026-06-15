@@ -19,11 +19,12 @@ router.post('/reset-campaign', requireAdmin, async (req: AuthRequest, res: Respo
   }
 
   // Delete in FK-safe order
-  const [callbacks, callLogs, assignments, clients, batches] = await prisma.$transaction([
+  const [callbacks, callLogs, assignments, , companies, batches] = await prisma.$transaction([
     prisma.callback.deleteMany(),
     prisma.callLog.deleteMany(),
     prisma.assignment.deleteMany(),
-    prisma.client.deleteMany(),
+    prisma.contact.deleteMany(),
+    prisma.company.deleteMany(),
     prisma.importBatch.deleteMany(),
   ])
 
@@ -33,7 +34,7 @@ router.post('/reset-campaign', requireAdmin, async (req: AuthRequest, res: Respo
       callbacks: callbacks.count,
       callLogs: callLogs.count,
       assignments: assignments.count,
-      clients: clients.count,
+      companies: companies.count,
       importBatches: batches.count,
     },
   })
@@ -45,12 +46,12 @@ router.get('/reset-campaign/preview', requireAdmin, async (_req: AuthRequest, re
     prisma.callback.count(),
     prisma.callLog.count(),
     prisma.assignment.count(),
-    prisma.client.count(),
+    prisma.company.count(),
     prisma.importBatch.count(),
     prisma.user.count(),
   ])
 
-  res.json({ callbacks, callLogs, assignments, clients, importBatches: batches, users })
+  res.json({ callbacks, callLogs, assignments, companies: clients, importBatches: batches, users })
 })
 
 export default router

@@ -22,8 +22,8 @@ interface DayCount { date: string; count: number }
 interface DispCount { disposition: string; count: number }
 interface BatchProgress {
   id: string; filename: string; createdAt: string; totalRecords: number
-  pending: number; inProgress: number; interested: number
-  converted: number; notInterested: number; doNotCall: number; contacted: number
+  pending: number; inProgress: number; interested: number; interestedContactCount: number
+  converted: number; notInterested: number; doNotCall: number; contacted: number; callCount: number
 }
 interface Funnel {
   total: number; assigned: number; pending: number; inProgress: number
@@ -558,8 +558,10 @@ export default function Reports() {
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Archivo</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Fecha</th>
                 <th className="text-right px-3 py-3 font-medium text-gray-600">Total</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600">Contactados</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600">Interesados</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600">Llamadas</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600">Emp. contactadas</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600 border-l border-gray-200">Int. x contacto</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600">Int. x empresa</th>
                 <th className="text-right px-3 py-3 font-medium text-gray-600">Convertidos</th>
                 <th className="text-right px-3 py-3 font-medium text-gray-600">No interesados</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600 min-w-[160px]">Progreso</th>
@@ -579,10 +581,20 @@ export default function Reports() {
                     </td>
                     <td className="px-3 py-3 text-right text-gray-700">{b.totalRecords}</td>
                     <td className="px-3 py-3 text-right">
+                      <span className="text-gray-700 font-medium">{b.callCount}</span>
+                    </td>
+                    <td className="px-3 py-3 text-right">
                       <span className="text-blue-700 font-medium">{b.contacted}</span>
                       <span className="text-gray-400 text-xs ml-1">({Math.round(contactedPct)}%)</span>
                     </td>
-                    <td className="px-3 py-3 text-right text-green-700 font-medium">{b.interested}</td>
+                    <td className="px-3 py-3 text-right border-l border-gray-100">
+                      <span className="text-green-600 font-medium">{b.interestedContactCount}</span>
+                      <span className="text-gray-400 text-xs ml-1 block leading-none">llamadas</span>
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      <span className="text-green-700 font-medium">{b.interested}</span>
+                      <span className="text-gray-400 text-xs ml-1 block leading-none">empresas</span>
+                    </td>
                     <td className="px-3 py-3 text-right text-emerald-700 font-medium">{b.converted}</td>
                     <td className="px-3 py-3 text-right text-red-500">{b.notInterested}</td>
                     <td className="px-4 py-3">

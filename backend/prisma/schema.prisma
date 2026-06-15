@@ -12,7 +12,8 @@ datasource db {
 
 // Role values: ADMIN | AGENT
 // Disposition values: INTERESTED | NOT_INTERESTED | NO_ANSWER | BUSY | CALLBACK | DO_NOT_CALL | OTHER
-// ClientStatus values: PENDING | IN_PROGRESS | INTERESTED | CONVERTED | NOT_INTERESTED | DO_NOT_CALL
+// CompanyStatus values: PENDING | IN_PROGRESS | INTERESTED | CONVERTED | NOT_INTERESTED | DO_NOT_CALL
+// ImportStatus values: OK | NO_ENCONTRADO | SIN_CONTACTOS
 
 model User {
   id        String   @id @default(cuid())
@@ -31,24 +32,22 @@ model User {
 }
 
 model ImportBatch {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   filename     String
   totalRecords Int
   importedById String
-  importedBy   User     @relation(fields: [importedById], references: [id])
-  createdAt    DateTime @default(now())
+  importedBy   User      @relation(fields: [importedById], references: [id])
+  createdAt    DateTime  @default(now())
 
-  clients Client[]
+  companies Company[]
 }
 
-model Client {
+model Company {
   id            String      @id @default(cuid())
-  name          String
-  phone         String
-  phone2        String?
-  email         String?
-  address       String?
-  currentOp     String?
+  ruc           String
+  razonSocial   String?
+  importStatus  String?
+  fechaConsulta DateTime?
   plan          String?
   notes         String?
   status        String      @default("PENDING")
@@ -57,15 +56,30 @@ model Client {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
+  contacts   Contact[]
   assignment Assignment?
   callLogs   CallLog[]
   callbacks  Callback[]
 }
 
+model Contact {
+  id           String   @id @default(cuid())
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  nombre       String
+  tipoContacto String?
+  dni          String?
+  email        String?
+  telefono     String?
+  createdAt    DateTime @default(now())
+
+  callLogs CallLog[]
+}
+
 model Assignment {
   id         String   @id @default(cuid())
-  clientId   String   @unique
-  client     Client   @relation(fields: [clientId], references: [id])
+  companyId  String   @unique
+  company    Company  @relation(fields: [companyId], references: [id])
   agentId    String
   agent      User     @relation(fields: [agentId], references: [id])
   assignedAt DateTime @default(now())
@@ -73,8 +87,10 @@ model Assignment {
 
 model CallLog {
   id          String   @id @default(cuid())
-  clientId    String
-  client      Client   @relation(fields: [clientId], references: [id])
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id])
+  contactId   String?
+  contact     Contact? @relation(fields: [contactId], references: [id])
   agentId     String
   agent       User     @relation(fields: [agentId], references: [id])
   disposition String
@@ -87,8 +103,8 @@ model CallLog {
 
 model Callback {
   id          String    @id @default(cuid())
-  clientId    String
-  client      Client    @relation(fields: [clientId], references: [id])
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id])
   agentId     String
   agent       User      @relation(fields: [agentId], references: [id])
   callLogId   String?   @unique

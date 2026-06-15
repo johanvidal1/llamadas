@@ -72,7 +72,7 @@ export default function Clients() {
           <input
             type="text"
             className="input pl-9"
-            placeholder="Buscar por nombre, teléfono..."
+            placeholder="Buscar por RUC, razón social, contacto..."
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1) }}
           />
@@ -138,9 +138,9 @@ export default function Clients() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Nombre</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Teléfono</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Operador actual</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">RUC</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Razón Social</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Contactos</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Agente asignado</th>
                 {!batchId && <th className="text-left px-4 py-3 font-medium text-gray-600">Lote</th>}
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Agendado</th>
@@ -152,11 +152,10 @@ export default function Clients() {
               {clients.map(
                 (c: {
                   id: string
-                  name: string
-                  phone: string
-                  phone2?: string
-                  currentOp?: string
+                  ruc: string
+                  razonSocial?: string
                   status: string
+                  contacts: { nombre: string; tipoContacto?: string; telefono?: string }[]
                   assignment?: { agent?: { name: string } }
                   importBatch?: { filename: string; createdAt: string }
                   callbacks?: { scheduledAt: string; notes?: string }[]
@@ -171,17 +170,26 @@ export default function Clients() {
                       ? 'text-amber-700 bg-amber-50 border border-amber-200'
                       : 'text-blue-700 bg-blue-50 border border-blue-200'
                     : ''
+                  const primaryContact = c.contacts?.[0]
                   return (
                   <tr key={c.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium text-gray-900">{c.name}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-700">{c.ruc}</td>
+                    <td className="px-4 py-3 font-medium text-gray-900">{c.razonSocial || <span className="text-gray-400 italic text-xs">Sin razón social</span>}</td>
                     <td className="px-4 py-3 text-gray-600">
-                      <div className="flex items-center gap-1">
-                        <Phone size={13} className="text-gray-400" />
-                        {c.phone}
-                        {c.phone2 && <span className="text-gray-400">/ {c.phone2}</span>}
-                      </div>
+                      {primaryContact ? (
+                        <div className="space-y-0.5">
+                          <p className="text-sm font-medium">{primaryContact.nombre}</p>
+                          {primaryContact.telefono && (
+                            <div className="flex items-center gap-1 text-xs text-gray-400">
+                              <Phone size={11} />{primaryContact.telefono}
+                            </div>
+                          )}
+                          {c.contacts.length > 1 && (
+                            <p className="text-xs text-blue-500">+{c.contacts.length - 1} más</p>
+                          )}
+                        </div>
+                      ) : <span className="text-gray-300 text-xs">Sin contactos</span>}
                     </td>
-                    <td className="px-4 py-3 text-gray-500">{c.currentOp ?? '—'}</td>
                     <td className="px-4 py-3 text-gray-600">
                       {c.assignment?.agent?.name ?? (
                         <span className="text-gray-300">Sin asignar</span>
