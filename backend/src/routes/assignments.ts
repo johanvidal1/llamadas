@@ -76,13 +76,19 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     idsToAssign = contactIds
   } else if (clientIds && clientIds.length > 0) {
     const contacts = await prisma.contact.findMany({
-      where: {
-        companyId: { in: clientIds },
-        assignment: null,
-      },
+      where: { companyId: { in: clientIds } },
       select: { id: true },
     })
-    idsToAssign = contacts.map((c) => c.id)
+    const contactIds = contacts.map((c) => c.id)
+    const assigned =
+      contactIds.length === 0
+        ? []
+        : await prisma.assignment.findMany({
+            where: { contactId: { in: contactIds } },
+            select: { contactId: true },
+          })
+    const assignedIds = new Set(assigned.map((a) => a.contactId))
+    idsToAssign = contactIds.filter((id) => !assignedIds.has(id))
   } else {
     const unassigned = await getUnassignedContactsOrdered(batchId, count ?? undefined)
     idsToAssign = unassigned.map((c) => c.id)

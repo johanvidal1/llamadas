@@ -36,10 +36,28 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const isAgent = req.user!.role === 'AGENT'
 
   if (unassigned === 'true' && !isAgent) {
-    const contactWhere: Record<string, unknown> = { assignment: null }
-    if (batchId) contactWhere.company = { importBatchId: batchId }
+    const contactWhere = batchId ? { company: { importBatchId: batchId } } : {}
 
-    const total = await prisma.contact.count({ where: contactWhere })
+    let assignedCount: number
+    if (batchId) {
+      const batchContacts = await prisma.contact.findMany({
+        where: contactWhere,
+        select: { id: true },
+      })
+      const batchContactIds = batchContacts.map((c) => c.id)
+      assignedCount =
+        batchContactIds.length === 0
+          ? 0
+          : await prisma.assignment.count({
+              where: { contactId: { in: batchContactIds } },
+            })
+    } else {
+      assignedCount = await prisma.assignment.count()
+    }
+
+    const totalContacts = await prisma.contact.count({ where: contactWhere })
+    const total = totalContacts - assignedCount
+
     res.json({ clients: [], total, page: Number(page), limit: take })
     return
   }
