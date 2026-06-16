@@ -19,7 +19,6 @@ import {
   List,
   AlignJustify,
   Copy,
-  Download,
 } from 'lucide-react'
 import CallModal from '../components/CallModal'
 import { format, isPast, isToday } from 'date-fns'
@@ -202,6 +201,15 @@ const GRID_STATUS_FILTERS = [
   { value: 'DO_NOT_CALL', label: 'No llamar' },
 ]
 
+const AGENDADOS_SPLIT_STORAGE_KEY = 'myLeads-agendadosSplitPct'
+const AGENDADOS_SPLIT_DEFAULT = 38
+const AGENDADOS_SPLIT_MIN = 20
+const AGENDADOS_SPLIT_MAX = 75
+
+function clampAgendadosSplit(pct: number) {
+  return Math.min(AGENDADOS_SPLIT_MAX, Math.max(AGENDADOS_SPLIT_MIN, pct))
+}
+
 // ─── Main Component ────────────────────────────────────────────────────────────
 
 export default function MyLeads() {
@@ -233,6 +241,55 @@ export default function MyLeads() {
   // ── Agendados sidebar tab
   const [cbTab, setCbTab] = useState<'own' | 'team'>('own')
   const [historialScope, setHistorialScope] = useState<'contact' | 'company'>('contact')
+
+  // ── Agendados / Historial vertical split (persisted)
+  const [agendadosSplitPct, setAgendadosSplitPct] = useState(() => {
+    const saved = localStorage.getItem(AGENDADOS_SPLIT_STORAGE_KEY)
+    if (saved !== null) {
+      const n = parseFloat(saved)
+      if (!Number.isNaN(n)) return clampAgendadosSplit(n)
+    }
+    return AGENDADOS_SPLIT_DEFAULT
+  })
+  const rightPanelRef = useRef<HTMLDivElement>(null)
+  const isDraggingSplitRef = useRef(false)
+  const agendadosSplitPctRef = useRef(agendadosSplitPct)
+  agendadosSplitPctRef.current = agendadosSplitPct
+
+  const handleSplitMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isDraggingSplitRef.current = true
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
+  }, [])
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDraggingSplitRef.current || !rightPanelRef.current) return
+      const rect = rightPanelRef.current.getBoundingClientRect()
+      const pct = ((e.clientY - rect.top) / rect.height) * 100
+      const clamped = clampAgendadosSplit(pct)
+      agendadosSplitPctRef.current = clamped
+      setAgendadosSplitPct(clamped)
+    }
+
+    const handleMouseUp = () => {
+      if (!isDraggingSplitRef.current) return
+      isDraggingSplitRef.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      localStorage.setItem(AGENDADOS_SPLIT_STORAGE_KEY, String(agendadosSplitPctRef.current))
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+  }, [])
 
   // ── Persist last visited client per user
   const lastClientKey = `myLeads-lastClient-${user?.id ?? 'anon'}`
@@ -607,7 +664,7 @@ export default function MyLeads() {
       {/* ══════════════════════ SHARED TOP BAR ══════════════════════ */}
       <div className="bg-blue-800 text-white px-6 py-3 flex items-center justify-between shrink-0 gap-4">
         <div className="flex items-center gap-4 min-w-0 text-sm">
-          <span className="font-semibold truncate shrink-0">Campaña: Migración de Operador</span>
+          <span className="font-semibold truncate shrink-0">Migración de Operador</span>
 
           {/* Batch selector */}
           {batches.length > 0 && (
@@ -630,11 +687,10 @@ export default function MyLeads() {
               type="button"
               onClick={handleExport}
               disabled={exporting}
-              className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white text-xs font-medium rounded transition-colors shrink-0"
-              title="Descargar Excel con datos actualizados"
+              className="flex items-center justify-center p-1.5 bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white rounded transition-colors shrink-0"
+              title="Descargar mis registros"
             >
-              <Download size={13} />
-              {exporting ? 'Exportando...' : 'Descargar mis registros'}
+              <Save size={13} />
             </button>
           )}
 
@@ -969,10 +1025,10 @@ export default function MyLeads() {
           </div>
 
           {/* ── Right panel: Agendados + Historial ── */}
-          <div className="w-72 shrink-0 border-l border-gray-200 flex flex-col bg-white overflow-hidden">
+          <div ref={rightPanelRef} className="w-72 shrink-0 border-l border-gray-200 flex flex-col bg-white overflow-hidden min-h-0">
 
-            {/* ── AGENDADOS ── altura fija con scroll interno */}
-            <div className="shrink-0 flex flex-col border-b-2 border-gray-200" style={{ maxHeight: '38%' }}>
+            {/* ── AGENDADOS ── altura ajustable con scroll interno */}
+            <div className="shrink-0 flex flex-col overflow-hidden min-h-0" style={{ height: `${agendadosSplitPct}%` }}>
               <div className="bg-blue-600 text-white px-4 py-2.5 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2">
                   <CalendarClock size={14} />
@@ -1010,7 +1066,7 @@ export default function MyLeads() {
                 </div>
               )}
 
-              <div className="overflow-y-auto p-2 space-y-1.5">
+              <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1.5">
                 {activeList.length === 0 ? (
                   <div className="text-center text-gray-400 py-4 text-xs px-2">
                     <CalendarClock size={20} className="mx-auto mb-1.5 opacity-40" />
@@ -1048,8 +1104,19 @@ export default function MyLeads() {
               </div>
             </div>
 
+            {/* ── Resize handle ── */}
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              aria-valuenow={agendadosSplitPct}
+              onMouseDown={handleSplitMouseDown}
+              className="shrink-0 h-1.5 cursor-row-resize bg-gray-100 hover:bg-blue-100 border-y border-gray-200 flex items-center justify-center group"
+            >
+              <div className="w-10 h-0.5 bg-gray-300 group-hover:bg-blue-400 rounded-full" />
+            </div>
+
             {/* ── 3. HISTORIAL DE LLAMADAS ── flex-1, scroll, más recientes primero */}
-            <div className="flex-1 overflow-hidden flex flex-col">
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
               <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200 shrink-0">
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1">
                   <History size={10} /> Historial de llamadas
