@@ -540,6 +540,14 @@ router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
       if (companyIds.length > 0) {
         await tx.callback.deleteMany({ where: { companyId: { in: companyIds } } })
         await tx.callLog.deleteMany({ where: { companyId: { in: companyIds } } })
+      }
+
+      await tx.mobileLine.deleteMany({ where: { importBatchId: batchId } })
+
+      if (companyIds.length > 0) {
+        await tx.assignment.deleteMany({
+          where: { contact: { company: { importBatchId: batchId } } },
+        })
         await tx.company.deleteMany({ where: { importBatchId: batchId } })
       }
 
