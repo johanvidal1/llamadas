@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getDashboardStats, getAgentStats, getMyBatches } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
-import { Users, Phone, CalendarClock, TrendingUp, PhoneCall, Layers } from 'lucide-react'
+import { Users, Phone, CalendarClock, TrendingUp, PhoneCall, Layers, RefreshCw } from 'lucide-react'
 import { DispositionBadge } from '../components/StatusBadge'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -50,17 +50,23 @@ export default function Dashboard() {
     enabled: !isAdmin,
   })
 
-  const { data: stats, isLoading } = useQuery({
+  const { data: stats, isLoading, isFetching: isFetchingStats, refetch: refetchStats } = useQuery({
     queryKey: ['dashboard', 'stats', selectedBatchId],
     queryFn: () => getDashboardStats(selectedBatchId),
-    refetchInterval: 60000,
   })
 
-  const { data: agentStats } = useQuery({
+  const { data: agentStats, isFetching: isFetchingAgents, refetch: refetchAgents } = useQuery({
     queryKey: ['dashboard', 'agents-stats'],
     queryFn: getAgentStats,
     enabled: isAdmin,
   })
+
+  const isRefreshing = isFetchingStats || (isAdmin && isFetchingAgents)
+
+  const handleRefresh = () => {
+    refetchStats()
+    if (isAdmin) refetchAgents()
+  }
 
   if (isLoading) {
     return (
@@ -80,13 +86,25 @@ export default function Dashboard() {
   return (
     <div className="p-8 space-y-8">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">
-          Buen día, {user?.name.split(' ')[0]} 👋
-        </h1>
-        <p className="text-gray-500 text-sm mt-1">
-          {format(new Date(), "EEEE, d 'de' MMMM yyyy", { locale: es })}
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">
+            Buen día, {user?.name.split(' ')[0]} 👋
+          </h1>
+          <p className="text-gray-500 text-sm mt-1">
+            {format(new Date(), "EEEE, d 'de' MMMM yyyy", { locale: es })}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          title="Actualizar datos"
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors disabled:opacity-50 shrink-0"
+        >
+          <RefreshCw size={15} className={isRefreshing ? 'animate-spin' : ''} />
+          Actualizar
+        </button>
       </div>
 
       {/* Batch filter chips (agent only) */}

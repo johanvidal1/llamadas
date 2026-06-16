@@ -5,7 +5,7 @@ import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
 import {
   TrendingUp, Users, Phone, CalendarClock, Target,
-  Award, AlertCircle, ChevronUp, ChevronDown, Package, Filter, X,
+  Award, AlertCircle, ChevronUp, ChevronDown, Package, Filter, X, RefreshCw,
 } from 'lucide-react'
 import { StatusBadge } from '../components/StatusBadge'
 
@@ -290,17 +290,24 @@ export default function Reports() {
   const drill = (agentId: string, agentName: string, metric: MetricKey) =>
     setDrillDown({ agentId, agentName, metric })
 
-  const { data: allData } = useQuery<ReportsData>({
+  const { data: allData, isFetching: isFetchingAll, refetch: refetchAll } = useQuery<ReportsData>({
     queryKey: ['reports', 'all'],
     queryFn: () => getReports(),
     staleTime: 60_000,
   })
 
-  const { data, isLoading } = useQuery<ReportsData>({
+  const { data, isLoading, isFetching: isFetchingFiltered, refetch: refetchFiltered } = useQuery<ReportsData>({
     queryKey: ['reports', filterAgentId],
     queryFn: () => getReports(filterAgentId || undefined),
     staleTime: 60_000,
   })
+
+  const isRefreshing = isFetchingAll || isFetchingFiltered
+
+  const handleRefresh = () => {
+    refetchAll()
+    refetchFiltered()
+  }
 
   const { sorted: sortedAgents, sortBy, asc, toggle } = useSortedAgents(data?.agentPerformance ?? [])
 
@@ -364,9 +371,16 @@ export default function Reports() {
               Ver todos
             </button>
           )}
-          {isLoading && filterAgentId && (
-            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          )}
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Actualizar datos"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={15} className={isRefreshing ? 'animate-spin' : ''} />
+            Actualizar
+          </button>
         </div>
       </div>
 
