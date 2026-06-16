@@ -7,6 +7,7 @@ import authRouter from './routes/auth'
 import usersRouter from './routes/users'
 import importsRouter from './routes/imports'
 import clientsRouter from './routes/clients'
+import contactsRouter from './routes/contacts'
 import assignmentsRouter from './routes/assignments'
 import callsRouter from './routes/calls'
 import callbacksRouter from './routes/callbacks'
@@ -31,6 +32,7 @@ app.use('/api/auth', authRouter)
 app.use('/api/users', usersRouter)
 app.use('/api/imports', importsRouter)
 app.use('/api/clients', clientsRouter)
+app.use('/api/contacts', contactsRouter)
 app.use('/api/assignments', assignmentsRouter)
 app.use('/api/calls', callsRouter)
 app.use('/api/callbacks', callbacksRouter)

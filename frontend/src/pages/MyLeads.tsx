@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getClients, getClient, logCall, updateClient, getCallbacks } from '../api/client'
+import { getClients, getClient, logCall, updateClient, updateContact, getCallbacks, downloadImportExport } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
 import {
@@ -19,6 +19,7 @@ import {
   List,
   AlignJustify,
   Copy,
+  Download,
 } from 'lucide-react'
 import CallModal from '../components/CallModal'
 import { format, isPast, isToday } from 'date-fns'
@@ -78,6 +79,7 @@ interface ClientDetail {
   plan?: string
   notes?: string
   status: string
+  importBatch?: { id: string; filename: string; createdAt: string }
   contacts: { id: string; nombre: string; tipoContacto?: string; telefono?: string; email?: string; dni?: string }[]
   callLogs: CallLogEntry[]
   callbacks: { id: string; callLogId?: string; scheduledAt: string; notes?: string; completed: boolean }[]
@@ -101,6 +103,15 @@ function callbackColor(dt: string): string {
   return 'text-blue-700 bg-blue-50 border-blue-200 hover:bg-blue-100'
 }
 
+function contactNameParts(nombre?: string) {
+  const parts = (nombre ?? '').trim().split(/\s+/).filter(Boolean)
+  return {
+    primerNombre: parts[0] ?? '',
+    segundoNombre: parts[1] ?? '',
+    tercerNombre: parts[2] ?? '',
+  }
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function ReadField({ label, value }: { label: string; value?: string }) {
@@ -114,19 +125,16 @@ function ReadField({ label, value }: { label: string; value?: string }) {
   )
 }
 
-function ContactPhoneField({ telefono }: { telefono?: string }) {
+function ContactPhoneField({
+  telefono,
+  onChange,
+}: {
+  telefono: string
+  onChange: (v: string) => void
+}) {
   const copyPhone = () => {
     if (!telefono) return
     navigator.clipboard.writeText(telefono).then(() => toast.success('Teléfono copiado'))
-  }
-
-  if (!telefono) {
-    return (
-      <div className="col-span-full flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-        <AlertCircle size={16} className="text-amber-600 shrink-0" />
-        <span className="text-sm text-amber-800">Sin teléfono — verificar importación</span>
-      </div>
-    )
   }
 
   return (
@@ -134,20 +142,32 @@ function ContactPhoneField({ telefono }: { telefono?: string }) {
       <span className="text-xs text-gray-500 font-medium">Teléfono</span>
       <div className="mt-0.5 flex items-center gap-3 rounded-lg border-2 border-blue-200 bg-blue-50 px-4 py-3">
         <Phone size={20} className="text-blue-600 shrink-0" />
-        <a
-          href={`tel:${telefono}`}
-          className="flex-1 text-3xl font-mono font-semibold text-blue-900 tracking-wide hover:text-blue-700"
-        >
-          {telefono}
-        </a>
-        <button
-          type="button"
-          onClick={copyPhone}
-          title="Copiar teléfono"
-          className="flex items-center gap-1 rounded-md border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors shrink-0"
-        >
-          <Copy size={13} /> Copiar
-        </button>
+        <input
+          type="tel"
+          value={telefono}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Sin teléfono — ingresar manualmente"
+          className="flex-1 text-2xl font-mono font-semibold text-blue-900 tracking-wide bg-transparent border-none outline-none placeholder:text-blue-300 placeholder:text-base placeholder:font-sans min-w-0"
+        />
+        {telefono && (
+          <>
+            <a
+              href={`tel:${telefono}`}
+              title="Llamar"
+              className="text-blue-600 hover:text-blue-800 shrink-0"
+            >
+              <PhoneCall size={18} />
+            </a>
+            <button
+              type="button"
+              onClick={copyPhone}
+              title="Copiar teléfono"
+              className="flex items-center gap-1 rounded-md border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors shrink-0"
+            >
+              <Copy size={13} /> Copiar
+            </button>
+          </>
+        )}
       </div>
     </div>
   )
@@ -219,12 +239,17 @@ export default function MyLeads() {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [activeContactIdx, setActiveContactIdx] = useState(0)
   const [editPlan, setEditPlan] = useState('')
-  const [editNotes, setEditNotes] = useState('')
   const [disposition, setDisposition] = useState('')
   const [aclaracion, setAclaracion] = useState('')
   const [callNotes, setCallNotes] = useState('')
   const [schedDate, setSchedDate] = useState('')
   const [schedTime, setSchedTime] = useState('09:00')
+  const [editTelefono, setEditTelefono] = useState('')
+  const [editEmail, setEditEmail] = useState('')
+  const [editDni, setEditDni] = useState('')
+  const [exporting, setExporting] = useState(false)
+  const savedContactRef = useRef<{ id: string; telefono: string; email: string; dni: string } | null>(null)
+  const lastSyncedContactKey = useRef<string | null>(null)
 
   // Load ALL clients without batch filter — used only to derive available batches
   const { data: allClientsData } = useQuery({
@@ -296,6 +321,19 @@ export default function MyLeads() {
   })
   const detail = clientDetail as ClientDetail | undefined
 
+  // Prefer detail contacts; fall back to list summary when detail returns empty
+  const displayContacts: ClientDetail['contacts'] =
+    detail?.contacts?.length
+      ? detail.contacts
+      : (currentClient?.contacts ?? []).map((ct, idx) => ({
+          id: (ct as { id?: string }).id ?? `summary-${currentClient?.id ?? 'x'}-${idx}`,
+          nombre: ct.nombre ?? '',
+          tipoContacto: ct.tipoContacto,
+          telefono: ct.telefono,
+          email: ct.email,
+          dni: ct.dni,
+        }))
+
   // Load pending callbacks for Agendados panel
   const { data: agendados = [] } = useQuery({
     queryKey: ['callbacks', 'pending'],
@@ -304,12 +342,23 @@ export default function MyLeads() {
   })
   const callbackList = agendados as Callback[]
 
+  // Reset contact tab immediately when navigating to another company
+  useEffect(() => {
+    setActiveContactIdx(0)
+  }, [currentClient?.id])
+
+  // Clamp contact index when contact count changes
+  useEffect(() => {
+    if (!displayContacts.length) return
+    setActiveContactIdx((idx) =>
+      idx >= displayContacts.length ? Math.max(0, displayContacts.length - 1) : idx
+    )
+  }, [detail?.id, displayContacts.length])
+
   // Sync editable fields when company changes
   useEffect(() => {
     if (detail) {
       setEditPlan(detail.plan ?? '')
-      setEditNotes(detail.notes ?? '')
-      setActiveContactIdx(0)
       setHistorialScope('contact')
       setDisposition('')
       setAclaracion('')
@@ -329,30 +378,115 @@ export default function MyLeads() {
     setHistorialScope('contact')
   }, [activeContactIdx])
 
-  const goTo = useCallback(
-    (idx: number) => { if (idx >= 0 && idx < clients.length) { setCurrentIndex(idx); setActiveContactIdx(0) } },
-    [clients.length]
+  const saveActiveContactIfDirty = useCallback(async () => {
+    if (!displayContacts.length) return
+    const idx = Math.min(activeContactIdx, displayContacts.length - 1)
+    const ct = displayContacts[idx]
+    if (!ct?.id || ct.id.startsWith('summary-')) return
+
+    const saved = savedContactRef.current
+    if (!saved || saved.id !== ct.id) return
+
+    const telefono = editTelefono.trim()
+    const email = editEmail.trim()
+    const dni = editDni.trim()
+
+    if (telefono === saved.telefono && email === saved.email && dni === saved.dni) return
+
+    await updateContact(ct.id, {
+      telefono: telefono || null,
+      email: email || null,
+      dni: dni || null,
+    })
+    savedContactRef.current = { id: ct.id, telefono, email, dni }
+    lastSyncedContactKey.current = `${ct.id}:${telefono}:${email}:${dni}`
+    if (currentClient?.id) {
+      qc.invalidateQueries({ queryKey: ['client-detail', currentClient.id] })
+    }
+    qc.invalidateQueries({ queryKey: ['clients'] })
+  }, [displayContacts, activeContactIdx, editTelefono, editEmail, editDni, currentClient?.id, qc])
+
+  // Sync editable contact fields when active contact changes
+  const activeContactIdForSync =
+    displayContacts.length > 0
+      ? displayContacts[Math.min(activeContactIdx, displayContacts.length - 1)]?.id
+      : undefined
+
+  useEffect(() => {
+    if (!activeContactIdForSync) return
+    const ct = displayContacts.find((c) => c.id === activeContactIdForSync)
+    if (!ct) return
+    const telefono = ct.telefono ?? ''
+    const email = ct.email ?? ''
+    const dni = ct.dni ?? ''
+    const syncKey = `${ct.id}:${telefono}:${email}:${dni}`
+    if (lastSyncedContactKey.current === syncKey) return
+    lastSyncedContactKey.current = syncKey
+    setEditTelefono(telefono)
+    setEditEmail(email)
+    setEditDni(dni)
+    if (!ct.id.startsWith('summary-')) {
+      savedContactRef.current = { id: ct.id, telefono, email, dni }
+    } else {
+      savedContactRef.current = null
+    }
+  }, [activeContactIdForSync, displayContacts])
+
+  const contactCountFor = useCallback(
+    (clientIdx: number) => {
+      const client = clients[clientIdx]
+      if (!client) return 0
+      if (clientIdx === currentIndex && detail?.id === client.id) {
+        return displayContacts.length
+      }
+      return client.contacts?.length ?? 0
+    },
+    [clients, currentIndex, detail?.id, displayContacts.length]
   )
 
-  const goNext = useCallback(() => {
-    const currentContacts = clients[currentIndex]?.contacts ?? []
-    if (activeContactIdx < currentContacts.length - 1) {
+  const goTo = useCallback(
+    async (idx: number) => {
+      await saveActiveContactIfDirty()
+      if (idx >= 0 && idx < clients.length) {
+        setCurrentIndex(idx)
+        setActiveContactIdx(0)
+      }
+    },
+    [clients.length, saveActiveContactIfDirty]
+  )
+
+  const goNext = useCallback(async () => {
+    await saveActiveContactIfDirty()
+    const currentContacts = contactCountFor(currentIndex)
+    if (activeContactIdx < currentContacts - 1) {
       setActiveContactIdx(activeContactIdx + 1)
     } else if (currentIndex < clients.length - 1) {
       setCurrentIndex(currentIndex + 1)
       setActiveContactIdx(0)
     }
-  }, [currentIndex, activeContactIdx, clients])
+  }, [currentIndex, activeContactIdx, clients.length, contactCountFor, saveActiveContactIfDirty])
 
-  const goPrev = useCallback(() => {
+  const goPrev = useCallback(async () => {
+    await saveActiveContactIfDirty()
     if (activeContactIdx > 0) {
       setActiveContactIdx(activeContactIdx - 1)
     } else if (currentIndex > 0) {
-      const prevContacts = clients[currentIndex - 1]?.contacts ?? []
+      const prevContacts = contactCountFor(currentIndex - 1)
       setCurrentIndex(currentIndex - 1)
-      setActiveContactIdx(Math.max(0, prevContacts.length - 1))
+      setActiveContactIdx(Math.max(0, prevContacts - 1))
     }
-  }, [currentIndex, activeContactIdx, clients])
+  }, [currentIndex, activeContactIdx, contactCountFor, saveActiveContactIfDirty])
+
+  const navigateWithSave = useCallback(
+    (action: () => Promise<void>) => async () => {
+      try {
+        await action()
+      } catch (err) {
+        toast.error((err as Error)?.message ?? 'Error al guardar contacto')
+      }
+    },
+    []
+  )
 
   const switchBatch = (batchId: string) => {
     setSelectedBatchId(batchId)
@@ -369,16 +503,16 @@ export default function MyLeads() {
   const saveMutation = useMutation({
     mutationFn: async (autoNext: boolean) => {
       if (!currentClient) return autoNext
+      await saveActiveContactIfDirty()
       await updateClient(currentClient.id, {
         plan: editPlan || undefined,
-        notes: editNotes || undefined,
       })
       if (disposition) {
         if (disposition === 'CALLBACK' && !schedDate)
           throw new Error('Selecciona la fecha para el callback')
         await logCall({
           clientId: currentClient.id,
-          contactId: detail?.contacts[activeContactIdx]?.id || undefined,
+          contactId: activeContact?.id || undefined,
           disposition,
           aclaracion: aclaracion || undefined,
           notes: callNotes || undefined,
@@ -389,7 +523,7 @@ export default function MyLeads() {
       } else if (schedDate) {
         await logCall({
           clientId: currentClient.id,
-          contactId: detail?.contacts[activeContactIdx]?.id || undefined,
+          contactId: activeContact?.id || undefined,
           disposition: 'CALLBACK',
           notes: callNotes || undefined,
           callbackDate: new Date(`${schedDate}T${schedTime}:00`).toISOString(),
@@ -397,13 +531,13 @@ export default function MyLeads() {
       }
       return autoNext
     },
-    onSuccess: (autoNext) => {
+    onSuccess: async (autoNext) => {
       toast.success('Guardado correctamente')
       qc.invalidateQueries({ queryKey: ['client-detail', currentClient?.id] })
       qc.invalidateQueries({ queryKey: ['callbacks'] })
       qc.invalidateQueries({ queryKey: ['clients'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
-      if (autoNext) goNext()
+      if (autoNext) await goNext()
     },
     onError: (err: Error) => toast.error(err?.message ?? 'Error al guardar'),
   })
@@ -426,11 +560,45 @@ export default function MyLeads() {
   // Detail view loading / empty guards are now rendered INSIDE the layout
   // (so the top bar with batch selector remains visible at all times)
 
-  // Flat navigation helpers — only assigned contacts
-  const flatTotal = clients.reduce((sum, c) => sum + c.contacts.length, 0)
-  const globalPosition = clients.slice(0, currentIndex).reduce((sum, c) => sum + c.contacts.length, 0) + activeContactIdx + 1
+  // Flat navigation helpers — prefer detail contact counts for current client
+  const flatTotal = clients.reduce((sum, c, idx) => sum + contactCountFor(idx), 0)
+  const globalPosition =
+    clients.slice(0, currentIndex).reduce((sum, _c, idx) => sum + contactCountFor(idx), 0) +
+    activeContactIdx +
+    1
   const isFirst = currentIndex === 0 && activeContactIdx === 0
-  const isLast = currentIndex >= clients.length - 1 && activeContactIdx >= (clients[currentIndex]?.contacts.length ?? 1) - 1
+  const currentContactCount = contactCountFor(currentIndex)
+  const isLast =
+    currentIndex >= clients.length - 1 &&
+    activeContactIdx >= Math.max(0, currentContactCount - 1)
+
+  const duplicateRucCount = detail
+    ? clients.filter((c) => c.ruc === detail.ruc).length
+    : 0
+  const safeContactIdx =
+    displayContacts.length > 0
+      ? Math.min(activeContactIdx, displayContacts.length - 1)
+      : 0
+  const activeContact = displayContacts[safeContactIdx]
+
+  const exportBatchId = selectedBatchId || detail?.importBatch?.id
+
+  const handleExport = async () => {
+    if (!exportBatchId) {
+      toast.error('Selecciona un lote para exportar')
+      return
+    }
+    setExporting(true)
+    try {
+      await downloadImportExport(exportBatchId, isAdmin ? undefined : user?.id)
+      toast.success('Descarga iniciada')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(msg ?? 'Error al exportar')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -454,6 +622,19 @@ export default function MyLeads() {
                 </option>
               ))}
             </select>
+          )}
+
+          {exportBatchId && (
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={exporting}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white text-xs font-medium rounded transition-colors shrink-0"
+              title="Descargar Excel con datos actualizados"
+            >
+              <Download size={13} />
+              {exporting ? 'Exportando...' : 'Descargar mis registros'}
+            </button>
           )}
 
           {viewMode === 'detail' && detail && (
@@ -526,14 +707,14 @@ export default function MyLeads() {
             <>
               <span className="text-blue-300 text-xs">{currentIndex + 1} / {total}</span>
               <button
-                onClick={goPrev}
+                onClick={navigateWithSave(goPrev)}
                 disabled={isFirst}
                 className="flex items-center gap-1 px-3 py-1.5 bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed rounded text-xs font-medium transition-colors"
               >
                 <ChevronLeft size={14} /> Anterior
               </button>
               <button
-                onClick={goNext}
+                onClick={navigateWithSave(goNext)}
                 disabled={isLast}
                 className="flex items-center gap-1 px-3 py-1.5 bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed rounded text-xs font-medium transition-colors"
               >
@@ -581,44 +762,65 @@ export default function MyLeads() {
               <div className="space-y-3 h-full flex flex-col">
 
                 {/* ── Datos de la Empresa ── */}
-                <div className="bg-white border border-gray-200 rounded-lg p-4">
+                <div className="bg-white border border-gray-200 rounded-lg p-4 shrink-0">
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Empresa</p>
+                  {duplicateRucCount > 1 && (
+                    <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                      <AlertCircle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                      <p className="text-xs text-amber-800">
+                        Hay {duplicateRucCount} registros con el mismo RUC ({detail.ruc}) en tu lista.
+                        Revisá el lote de importación para distinguirlos.
+                      </p>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                     <ReadField label="RUC" value={detail.ruc} />
                     <div className="col-span-2">
                       <ReadField label="Razón Social" value={detail.razonSocial} />
                     </div>
-                    <ReadField label="Estado" value={detail.importStatus} />
-                    <div className="col-span-2">
-                      <EditField label="Plan / Tarifa" value={editPlan} onChange={setEditPlan} placeholder="Plan actual del cliente" />
-                    </div>
-                    <div className="col-span-2">
-                      <EditField label="Notas internas" value={editNotes} onChange={setEditNotes} placeholder="Observaciones sobre la empresa..." />
-                    </div>
+                    {detail.importBatch && (
+                      <div className="col-span-2">
+                        <ReadField
+                          label="Lote de importación"
+                          value={`${detail.importBatch.filename.replace(/\.[^.]+$/, '')} · ${format(new Date(detail.importBatch.createdAt), 'd MMM yyyy', { locale: es })}`}
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 {/* ── Contacto (tabs) ── */}
-                <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                  {detail.contacts.length > 1 && (
+                <div className="bg-white border border-gray-200 rounded-lg shrink-0">
+                  {displayContacts.length > 0 && (
                     <div className="flex border-b border-gray-200 bg-gray-50 overflow-x-auto">
-                      {detail.contacts.map((ct, idx) => (
-                        <button key={idx} onClick={() => setActiveContactIdx(idx)}
-                          className={`px-4 py-2 text-xs font-medium whitespace-nowrap transition-colors border-b-2 flex flex-col items-center leading-tight min-w-[100px] ${
-                            activeContactIdx === idx
-                              ? 'text-blue-700 border-blue-600 bg-white'
-                              : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-100'
-                          }`}>
-                          <span>{ct.nombre.split(' ')[0] || 'Contacto'}</span>
-                          {ct.telefono && (
-                            <span className="text-[10px] font-mono text-blue-600 font-normal mt-0.5">{ct.telefono}</span>
-                          )}
-                          {ct.tipoContacto && <span className="text-[10px] opacity-60 font-normal">{ct.tipoContacto}</span>}
-                        </button>
-                      ))}
+                      {displayContacts.map((ct, idx) => {
+                        const { primerNombre, segundoNombre, tercerNombre } = contactNameParts(ct.nombre)
+                        return (
+                          <button
+                            key={ct.id ?? idx}
+                            onClick={navigateWithSave(async () => {
+                              await saveActiveContactIfDirty()
+                              setActiveContactIdx(idx)
+                            })}
+                            className={`px-4 py-2 text-xs font-medium whitespace-nowrap transition-colors border-b-2 flex flex-col items-center leading-tight min-w-[100px] ${
+                              safeContactIdx === idx
+                                ? 'text-blue-700 border-blue-600 bg-white'
+                                : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-100'
+                            }`}>
+                            <span>{primerNombre || 'Contacto'}</span>
+                            {(segundoNombre || tercerNombre) && (
+                              <span className="flex items-center gap-1 text-[10px] font-normal opacity-75 mt-0.5">
+                                {segundoNombre && <span>{segundoNombre}</span>}
+                                {tercerNombre && <span>{tercerNombre}</span>}
+                              </span>
+                            )}
+                            {ct.tipoContacto && <span className="text-[10px] font-normal opacity-60 mt-0.5 truncate max-w-full">{ct.tipoContacto}</span>}
+                          </button>
+                        )
+                      })}
                     </div>
                   )}
-                  {detail.contacts.length === 0 ? (
+                  {displayContacts.length === 0 ? (
                     <div className="p-4">
                       <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Contacto</p>
                       <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
@@ -626,25 +828,18 @@ export default function MyLeads() {
                         <span className="text-sm text-amber-800">Sin contactos importados — verificar archivo de importación</span>
                       </div>
                     </div>
-                  ) : detail.contacts[activeContactIdx] && (() => {
-                    const ct = detail.contacts[activeContactIdx]
-                    return (
+                  ) : (
                       <div className="p-4">
                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
-                          Contacto {activeContactIdx + 1} de {detail.contacts.length}
+                          Contacto {safeContactIdx + 1} de {displayContacts.length}
                         </p>
                         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                          <ContactPhoneField telefono={ct.telefono} />
-                          <div className="col-span-2">
-                            <ReadField label="Nombre" value={ct.nombre} />
-                          </div>
-                          <ReadField label="Tipo" value={ct.tipoContacto} />
-                          <ReadField label="Email" value={ct.email} />
-                          <ReadField label="DNI" value={ct.dni} />
+                          <ContactPhoneField telefono={editTelefono} onChange={setEditTelefono} />
+                          <EditField label="Email" value={editEmail} onChange={setEditEmail} placeholder="correo@ejemplo.com" />
+                          <EditField label="DNI" value={editDni} onChange={setEditDni} placeholder="Documento" />
                         </div>
                       </div>
-                    )
-                  })()}
+                  )}
                 </div>
 
                 {/* ── Resultado + Agendar apilados ── */}
@@ -731,11 +926,11 @@ export default function MyLeads() {
                     Guardar y siguiente <ChevronRight size={15} />
                   </button>
                   <div className="flex gap-2 ml-auto">
-                    <button onClick={goPrev} disabled={isFirst}
+                    <button onClick={navigateWithSave(goPrev)} disabled={isFirst}
                       className="flex items-center gap-1 px-4 py-2.5 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg text-sm font-medium disabled:opacity-40">
                       <ChevronLeft size={15} /> Anterior
                     </button>
-                    <button onClick={goNext} disabled={isLast}
+                    <button onClick={navigateWithSave(goNext)} disabled={isLast}
                       className="flex items-center gap-1 px-4 py-2.5 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg text-sm font-medium disabled:opacity-40">
                       Siguiente <ChevronRight size={15} />
                     </button>
@@ -745,60 +940,10 @@ export default function MyLeads() {
             )}
           </div>
 
-          {/* ── Right panel: Stats + Agendados + Historial (columna única) ── */}
+          {/* ── Right panel: Agendados + Historial ── */}
           <div className="w-72 shrink-0 border-l border-gray-200 flex flex-col bg-white overflow-hidden">
 
-            {/* ── 1. MINI STATS ── altura fija, siempre visible */}
-            {detail ? (
-              <>
-                <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-4 py-3 shrink-0">
-                  <p className="text-white font-semibold text-sm truncate">{detail.razonSocial || detail.ruc}</p>
-                  <p className="text-blue-200 text-xs font-mono mt-0.5">{detail.ruc}</p>
-                </div>
-                <div className="shrink-0 divide-y divide-gray-100 border-b-2 border-gray-200">
-                  <div className="flex items-center justify-between px-4 py-1.5">
-                    <span className="text-xs text-gray-500">Llamadas totales</span>
-                    <span className="text-sm font-bold text-gray-900">{detail.callLogs.length}</span>
-                  </div>
-                  <div className="flex items-center justify-between px-4 py-1.5">
-                    <span className="text-xs text-gray-500">Última llamada</span>
-                    <span className="text-xs font-medium text-gray-700">
-                      {detail.callLogs.length > 0
-                        ? format(new Date([...detail.callLogs].sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())[0].calledAt), 'dd/MM/yyyy', { locale: es })
-                        : '—'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between px-4 py-1.5">
-                    <span className="text-xs text-gray-500">Próximo callback</span>
-                    <span className="text-xs font-medium text-gray-700">
-                      {detail.callbacks?.filter((c) => !c.completed).length > 0
-                        ? format(new Date(detail.callbacks.filter((c) => !c.completed).sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())[0].scheduledAt), 'dd/MM HH:mm', { locale: es })
-                        : '—'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between px-4 py-1.5">
-                    <span className="text-xs text-gray-500">Estado</span>
-                    <StatusBadge status={detail.status} />
-                  </div>
-                  <div className="flex items-center justify-between px-4 py-1.5">
-                    <span className="text-xs text-gray-500">Contactos</span>
-                    <span className="text-xs font-semibold text-gray-700">{detail.contacts.length}</span>
-                  </div>
-                  {detail.plan && (
-                    <div className="flex items-center justify-between px-4 py-1.5">
-                      <span className="text-xs text-gray-500">Plan</span>
-                      <span className="text-xs text-gray-700 truncate max-w-[170px]">{detail.plan}</span>
-                    </div>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="shrink-0 bg-gradient-to-r from-gray-300 to-gray-400 px-4 py-4 border-b-2 border-gray-200">
-                <p className="text-white text-xs opacity-80 text-center">Seleccioná un cliente para ver su resumen</p>
-              </div>
-            )}
-
-            {/* ── 2. AGENDADOS ── altura fija con scroll interno */}
+            {/* ── AGENDADOS ── altura fija con scroll interno */}
             <div className="shrink-0 flex flex-col border-b-2 border-gray-200" style={{ maxHeight: '38%' }}>
               <div className="bg-blue-600 text-white px-4 py-2.5 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2">
@@ -882,7 +1027,7 @@ export default function MyLeads() {
                   <History size={10} /> Historial de llamadas
                 </p>
                 <div className="flex items-center gap-2">
-                  {(detail?.contacts.length ?? 0) > 1 && (
+                  {displayContacts.length > 1 && (
                     <div className="flex bg-gray-200 rounded p-0.5 gap-0.5">
                       <button
                         onClick={() => setHistorialScope('contact')}
@@ -907,10 +1052,10 @@ export default function MyLeads() {
               ) : (
                 <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-gray-50">
                   {(() => {
-                    const activeContactId = detail.contacts[activeContactIdx]?.id
+                    const activeContactId = activeContact?.id
                     const logs = [...detail.callLogs]
                       .filter((log) => {
-                        if (historialScope === 'company' || (detail.contacts.length <= 1)) return true
+                        if (historialScope === 'company' || (displayContacts.length <= 1)) return true
                         // Show logs for this contact, or logs with no contact assigned
                         return !log.contact || log.contact.id === activeContactId
                       })

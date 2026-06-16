@@ -2,10 +2,11 @@ import path from 'path'
 import { Router, Response } from 'express'
 import multer from 'multer'
 import { z } from 'zod'
+import * as XLSX from 'xlsx'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
 import { parseExcel, parseCsv, ParsedCompany, ParseResult, MissingContactosSheetError } from '../lib/parseFile'
-import { requireAdmin, AuthRequest } from '../middleware/auth'
+import { requireAdmin, requireAuth, AuthRequest } from '../middleware/auth'
 
 function parseFechaConsulta(raw?: string): Date | null {
   if (!raw) return null
@@ -152,6 +153,130 @@ router.get('/', requireAdmin, async (_req: AuthRequest, res: Response) => {
   )
 
   res.json(batchesWithCounts)
+})
+
+const STATUS_LABELS: Record<string, string> = {
+  PENDING: 'Pendiente',
+  IN_PROGRESS: 'En progreso',
+  INTERESTED: 'Interesado',
+  CONVERTED: 'Convertido',
+  NOT_INTERESTED: 'No interesado',
+  DO_NOT_CALL: 'No llamar',
+}
+
+const DISPOSITION_LABELS: Record<string, string> = {
+  INTERESTED: 'Interesado',
+  NOT_INTERESTED: 'No interesado',
+  NO_ANSWER: 'Sin respuesta',
+  BUSY: 'Ocupado',
+  CALLBACK: 'Callback agendado',
+  DO_NOT_CALL: 'No llamar',
+  OTHER: 'Otro',
+}
+
+function formatExportDate(date: Date | null | undefined): string {
+  if (!date) return ''
+  return date.toISOString().slice(0, 10)
+}
+
+function sanitizeFilename(name: string): string {
+  return name.replace(/[^\w\s.-]/g, '').replace(/\s+/g, '_').slice(0, 80)
+}
+
+// GET /api/imports/:id/export
+router.get('/:id/export', requireAuth, async (req: AuthRequest, res: Response) => {
+  const batchId = req.params.id
+  const { agentId: agentIdQuery } = req.query as { agentId?: string }
+  const isAgent = req.user!.role === 'AGENT'
+
+  const batch = await prisma.importBatch.findUnique({
+    where: { id: batchId },
+    select: { id: true, filename: true, displayName: true },
+  })
+
+  if (!batch) {
+    res.status(404).json({ error: 'Importación no encontrada' })
+    return
+  }
+
+  const filterAgentId = isAgent ? req.user!.id : agentIdQuery || undefined
+
+  const contactWhere: Prisma.ContactWhereInput = {
+    company: { importBatchId: batchId },
+  }
+  if (filterAgentId) {
+    contactWhere.assignment = { agentId: filterAgentId }
+  }
+
+  const contacts = await prisma.contact.findMany({
+    where: contactWhere,
+    include: {
+      company: {
+        include: {
+          importBatch: { select: { filename: true, displayName: true } },
+          callLogs: {
+            orderBy: { calledAt: 'desc' },
+            select: {
+              disposition: true,
+              aclaracion: true,
+              notes: true,
+              calledAt: true,
+              contactId: true,
+            },
+          },
+        },
+      },
+      assignment: { include: { agent: { select: { name: true } } } },
+    },
+    orderBy: [{ company: { createdAt: 'asc' } }, { createdAt: 'asc' }],
+  })
+
+  const exportDate = new Date()
+  const batchLabel = batch.displayName?.trim() || batch.filename.replace(/\.[^.]+$/, '')
+
+  const rows = contacts.map((contact) => {
+    const company = contact.company
+    const contactLogs = company.callLogs.filter((log) => log.contactId === contact.id)
+    const lastCall = contactLogs[0]
+
+    return {
+      ruc: company.ruc,
+      razon_social: company.razonSocial ?? '',
+      nombre: contact.nombre,
+      telefono: contact.telefono ?? '',
+      email: contact.email ?? '',
+      dni: contact.dni ?? '',
+      tipo_contacto: contact.tipoContacto ?? '',
+      estado: company.importStatus ?? '',
+      fecha_consulta: formatExportDate(company.fechaConsulta),
+      agente_asignado: contact.assignment?.agent.name ?? '',
+      estado_campana: STATUS_LABELS[company.status] ?? company.status,
+      ultima_disposicion: lastCall
+        ? (DISPOSITION_LABELS[lastCall.disposition] ?? lastCall.disposition)
+        : '',
+      ultima_aclaracion: lastCall?.aclaracion ?? '',
+      fecha_ultima_llamada: lastCall ? formatExportDate(lastCall.calledAt) : '',
+      notas_ultima_llamada: lastCall?.notes ?? '',
+      total_llamadas: contactLogs.length,
+      lote_importacion: batchLabel,
+      fecha_exportacion: formatExportDate(exportDate),
+    }
+  })
+
+  const ws = XLSX.utils.json_to_sheet(rows)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Contactos')
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
+
+  const suffix = filterAgentId && !isAgent ? '-agente' : isAgent ? '-mis-registros' : '-actualizado'
+  const filename = `${sanitizeFilename(batchLabel)}${suffix}-${exportDate.toISOString().slice(0, 10)}.xlsx`
+
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  )
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+  res.send(buffer)
 })
 
 // GET /api/imports/:id

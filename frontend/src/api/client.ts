@@ -92,6 +92,28 @@ export const getClient = (id: string) => api.get(`/clients/${id}`).then((r) => r
 export const updateClient = (id: string, data: object) =>
   api.put(`/clients/${id}`, data).then((r) => r.data)
 
+export const updateContact = (
+  id: string,
+  data: { telefono?: string | null; email?: string | null; dni?: string | null }
+) => api.put(`/contacts/${id}`, data).then((r) => r.data)
+
+export const downloadImportExport = async (id: string, agentId?: string) => {
+  const response = await api.get(`/imports/${id}/export`, {
+    params: agentId ? { agentId } : undefined,
+    responseType: 'blob',
+  })
+  const disposition = response.headers['content-disposition'] as string | undefined
+  let filename = 'export.xlsx'
+  const match = disposition?.match(/filename="([^"]+)"/)
+  if (match?.[1]) filename = match[1]
+  const url = window.URL.createObjectURL(new Blob([response.data]))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  window.URL.revokeObjectURL(url)
+}
+
 // ─── Assignments ──────────────────────────────────────────
 export const getAssignments = () => api.get('/assignments').then((r) => r.data)
 

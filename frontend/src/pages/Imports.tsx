@@ -1,11 +1,11 @@
 import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getImports, getImport, uploadImport, deleteImport, patchImport } from '../api/client'
+import { getImports, getImport, uploadImport, deleteImport, patchImport, downloadImportExport } from '../api/client'
 import type { DuplicateFileWarning } from '../api/client'
 import toast from 'react-hot-toast'
 import {
   Upload, FileSpreadsheet, ChevronRight, Clock, Users, X,
-  Phone, Mail, UserCheck, UserX, Search, Trash2, AlertTriangle, Building2, List, Ban, ShieldCheck,
+  Phone, Mail, UserCheck, UserX, Search, Trash2, AlertTriangle, Building2, List, Ban, ShieldCheck, Download,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -89,6 +89,7 @@ export default function Imports() {
     existingBatch: DuplicateFileWarning['existingBatch']
   } | null>(null)
   const [duplicateDisplayName, setDuplicateDisplayName] = useState('')
+  const [exportingBatchId, setExportingBatchId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const qc = useQueryClient()
 
@@ -209,6 +210,19 @@ export default function Imports() {
     setDragging(false)
     const file = e.dataTransfer.files[0]
     if (file) handleFile(file)
+  }
+
+  const handleExportBatch = async (batchId: string) => {
+    setExportingBatchId(batchId)
+    try {
+      await downloadImportExport(batchId)
+      toast.success('Descarga iniciada')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(msg ?? 'Error al exportar')
+    } finally {
+      setExportingBatchId(null)
+    }
   }
 
   return (
@@ -363,6 +377,17 @@ export default function Imports() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleExportBatch(batch.id)
+                      }}
+                      disabled={exportingBatchId === batch.id}
+                      className="p-2 rounded-lg hover:bg-green-50 text-gray-400 hover:text-green-600 transition-colors disabled:opacity-50"
+                      title="Descargar Excel actualizado"
+                    >
+                      <Download size={16} />
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation()

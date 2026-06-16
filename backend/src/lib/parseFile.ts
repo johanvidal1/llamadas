@@ -28,7 +28,7 @@ export interface ParseResult {
   sourceRowCount: number
 }
 
-function normalizePhone(raw: string): string {
+export function normalizePhone(raw: string): string {
   return raw.replace(/\s+/g, '').replace(/^\+51/, '').trim()
 }
 
@@ -49,6 +49,7 @@ const HEADER_ALIASES: Record<string, string> = {
   name: 'nombre',
   contacto: 'nombre',
   cliente: 'nombre',
+  nombre_completo: 'nombre',
   telefono: 'telefono',
   tel: 'telefono',
   phone: 'telefono',
@@ -67,6 +68,9 @@ const HEADER_ALIASES: Record<string, string> = {
   tipo_contacto: 'tipo_contacto',
   tipo: 'tipo_contacto',
   cargo: 'tipo_contacto',
+  area: 'tipo_contacto',
+  area_de_trabajo: 'tipo_contacto',
+  puesto: 'tipo_contacto',
   estado: 'estado',
   fecha_consulta: 'fecha_consulta',
   fecha: 'fecha_consulta',
