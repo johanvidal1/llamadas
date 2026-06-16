@@ -778,14 +778,6 @@ export default function MyLeads() {
                     <div className="col-span-2">
                       <ReadField label="Razón Social" value={detail.razonSocial} />
                     </div>
-                    {detail.importBatch && (
-                      <div className="col-span-2">
-                        <ReadField
-                          label="Lote de importación"
-                          value={`${detail.importBatch.filename.replace(/\.[^.]+$/, '')} · ${format(new Date(detail.importBatch.createdAt), 'd MMM yyyy', { locale: es })}`}
-                        />
-                      </div>
-                    )}
                   </div>
                 </div>
 
