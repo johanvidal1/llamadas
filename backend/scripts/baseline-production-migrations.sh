@@ -16,9 +16,6 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
   echo '  export DATABASE_URL="postgresql://crm_user:...@dpg-....oregon-postgres.render.com/llamadas_crm"'
   echo "  bash scripts/baseline-production-migrations.sh"
   echo ""
-  echo "Or run from Render dashboard > llamadas-db > Connect > External Database URL,"
-  echo "then paste into the export command above."
-  echo ""
   exit 1
 fi
 
@@ -38,10 +35,37 @@ DEPLOY_MIGRATIONS=(
   "20260616000000_import_batch_blocked"
 )
 
+resolve_applied_if_needed() {
+  local migration=$1
+  local output=""
+  local exit_code=0
+
+  output="$(npx prisma migrate resolve --applied "$migration" 2>&1)" || exit_code=$?
+
+  if [[ $exit_code -eq 0 ]]; then
+    echo "  OK: $migration marked as applied"
+    return 0
+  fi
+
+  if echo "$output" | grep -q 'P3008'; then
+    echo "  SKIP: $migration (P3008 - already in _prisma_migrations)"
+    return 0
+  fi
+
+  if echo "$output" | grep -q 'P3017'; then
+    echo "  SKIP: $migration (P3017 - migration folder not found locally)"
+    return 0
+  fi
+
+  echo "  ERROR resolve --applied $migration:"
+  echo "$output"
+  return 1
+}
+
 echo "[1/2] Marking migrations already in prod as applied..."
 for migration in "${BASELINE_MIGRATIONS[@]}"; do
   echo "  -> resolve --applied $migration"
-  npx prisma migrate resolve --applied "$migration"
+  resolve_applied_if_needed "$migration" || exit 1
 done
 
 echo ""
@@ -53,14 +77,4 @@ npx prisma migrate deploy
 
 echo ""
 echo "Baseline complete."
-echo "Resolved (already in prod):"
-for migration in "${BASELINE_MIGRATIONS[@]}"; do
-  echo "  - $migration"
-done
-echo "Deployed:"
-for migration in "${DEPLOY_MIGRATIONS[@]}"; do
-  echo "  - $migration"
-done
-echo ""
-echo "Next: trigger a redeploy of llamadas-backend on Render."
 echo ""

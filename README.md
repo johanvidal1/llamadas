@@ -139,7 +139,7 @@ El proyecto usa migraciones versionadas en lugar de `db push` para despliegues s
 
 **Reglas importantes:**
 - En desarrollo, crea migraciones con `npm run db:migrate` cada vez que cambies `schema.prisma`.
-- En producción (Render), el deploy ejecuta `prisma migrate deploy` automáticamente.
+- En producción (Render), el `startCommand` ejecuta `scripts/migrate-deploy-prod.sh`: aplica migraciones pendientes y, si falla (p. ej. P3005), marca `init` y `assignment_by_contact` como aplicadas y reintenta el deploy.
 - **Nunca** uses `prisma migrate reset` ni `db push --force-reset` en producción.
 
 ### Render: baseline migraciones (P3005)
@@ -150,7 +150,7 @@ Si el deploy falla con:
 Error P3005: The database schema is not empty (no migration baseline)
 ```
 
-significa que la base de datos de producción ya tiene tablas (p. ej. por un `db push` anterior) pero **no** tiene historial en `_prisma_migrations`. Hay que hacer un baseline **una sola vez** antes de que `prisma migrate deploy` vuelva a funcionar.
+significa que la base de datos de producción ya tiene tablas (p. ej. por un `db push` anterior) pero **no** tiene historial en `_prisma_migrations`. En deploys nuevos esto lo intenta automáticamente `migrate-deploy-prod.sh`. Si aún falla, usa el baseline manual (una vez) con los pasos siguientes.
 
 | Acción | Migraciones |
 |--------|-------------|
@@ -180,7 +180,7 @@ bash scripts/baseline-production-migrations.sh
 # equivalente npm: npm run db:baseline:prod
 ```
 
-4. **Manual Deploy** de `llamadas-backend` (o espera al siguiente push). El `startCommand` normal (`migrate deploy && db seed && npm start`) debería pasar.
+4. **Manual Deploy** de `llamadas-backend` (o espera al siguiente push). El `startCommand` (`bash scripts/migrate-deploy-prod.sh && db seed && npm start`) debería pasar sin pasos manuales.
 
 #### Opción B — Local con External Database URL
 
@@ -202,7 +202,7 @@ cd backend
 npm run db:baseline:prod
 ```
 
-> ⚠️ Usa la **External Database URL** del dashboard de Render. No modifiques `render.yaml` ni el `startCommand` para esto: el baseline es un paso manual puntual.
+> ⚠️ Usa la **External Database URL** del dashboard de Render. El `startCommand` ya incluye reintento automático de baseline; los scripts `baseline-production-migrations` son respaldo manual si hace falta.
 
 ---
 

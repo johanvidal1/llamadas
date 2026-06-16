@@ -1,4 +1,4 @@
-# baseline-production-migrations.ps1
+﻿# baseline-production-migrations.ps1
 # One-time fix for Prisma P3005 on Render: prod DB has tables but no _prisma_migrations history.
 # Marks init + assignment_by_contact as already applied, then deploys the 3 newer migrations.
 
@@ -9,7 +9,7 @@ Set-Location $backendRoot
 
 if (-not $env:DATABASE_URL) {
     Write-Host ""
-    Write-Host "ERROR: DATABASE_URL no está definida." -ForegroundColor Red
+    Write-Host "ERROR: DATABASE_URL no estÃ¡ definida." -ForegroundColor Red
     Write-Host ""
     Write-Host "Opciones:" -ForegroundColor Yellow
     Write-Host "  A) Render Shell (recomendado): copia la External Database URL del dashboard y ejecuta:"
@@ -27,7 +27,7 @@ if ($env:DATABASE_URL -notmatch "dpg-|render\.com") {
     Write-Host ""
     Write-Host "ADVERTENCIA: DATABASE_URL no parece ser de Render (esperado dpg- o render.com)." -ForegroundColor Yellow
     Write-Host "URL actual: $($env:DATABASE_URL.Substring(0, [Math]::Min(60, $env:DATABASE_URL.Length)))..."
-    $confirm = Read-Host "¿Continuar de todos modos? (s/N)"
+    $confirm = Read-Host "Â¿Continuar de todos modos? (s/N)"
     if ($confirm -notmatch "^[sS]") {
         Write-Host "Cancelado."
         exit 1
@@ -35,7 +35,7 @@ if ($env:DATABASE_URL -notmatch "dpg-|render\.com") {
 }
 
 Write-Host ""
-Write-Host "=== Baseline migraciones producción (P3005) ===" -ForegroundColor Cyan
+Write-Host "=== Baseline migraciones producciÃ³n (P3005) ===" -ForegroundColor Cyan
 Write-Host "Directorio: $backendRoot"
 Write-Host ""
 
@@ -81,5 +81,6 @@ foreach ($migration in $deployMigrations) {
     Write-Host "  - $migration"
 }
 Write-Host ""
-Write-Host "Siguiente paso: redeploy de llamadas-backend en Render (o esperar al próximo deploy)." -ForegroundColor Yellow
+Write-Host "Siguiente paso: redeploy de llamadas-backend en Render (o esperar al prÃ³ximo deploy)." -ForegroundColor Yellow
 Write-Host ""
+
