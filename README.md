@@ -18,6 +18,8 @@ Sistema profesional de call center para gestión de campañas de migración de o
 
 ## Cómo iniciar el sistema
 
+Desde la raíz del repo: `.\start.ps1` (inicio limpio) o `.\restart.ps1` (libera puertos 3001/5173 y reinicia).
+
 ### Opción A — Dos terminales separadas (recomendado)
 
 **Terminal 1 — Backend:**
