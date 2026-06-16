@@ -4,7 +4,8 @@ import { login as apiLogin } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Phone, LogIn } from 'lucide-react'
+import { LogIn } from 'lucide-react'
+import OptickBrand from '../components/OptickBrand'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -35,14 +36,7 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-900 to-blue-700 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-600 rounded-2xl mb-4 shadow-lg">
-            <Phone size={32} className="text-white" />
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900">CRM Llamadas</h1>
-          <p className="text-gray-500 text-sm mt-1">Sistema de Call Center Profesional</p>
-        </div>
+        <OptickBrand variant="login" />
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
@@ -81,7 +75,7 @@ export default function Login() {
         </form>
 
         <p className="text-center text-xs text-gray-400 mt-8">
-          Call Center CRM © {new Date().getFullYear()}
+          Desarrollado por Optick Cloud © {new Date().getFullYear()}
         </p>
       </div>
     </div>

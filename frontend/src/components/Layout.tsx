@@ -11,6 +11,7 @@ import {
   Phone,
   BarChart2,
 } from 'lucide-react'
+import OptickBrand from './OptickBrand'
 
 const adminNav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', end: true },
@@ -44,14 +45,8 @@ export default function Layout() {
       {/* Sidebar */}
       <aside className={`w-44 flex flex-col shadow-xl ${isAdmin ? 'bg-green-900' : 'bg-blue-900'}`}>
         {/* Logo */}
-        <div className={`flex items-center gap-2 px-6 py-5 border-b ${isAdmin ? 'border-green-800' : 'border-blue-800'}`}>
-          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isAdmin ? 'bg-green-500' : 'bg-blue-500'}`}>
-            <Phone size={18} className="text-white" />
-          </div>
-          <div>
-            <p className="text-white font-bold text-sm leading-tight">CRM Llamadas</p>
-            <p className="text-blue-300 text-xs">Call Center</p>
-          </div>
+        <div className={`px-4 py-5 border-b ${isAdmin ? 'border-green-800 bg-green-950/40' : 'border-blue-800 bg-blue-950/40'}`}>
+          <OptickBrand variant="sidebar" />
         </div>
 
         {/* Nav */}
