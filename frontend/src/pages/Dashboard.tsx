@@ -143,24 +143,44 @@ export default function Dashboard() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Status breakdown */}
+        {/* Record status breakdown (primary) */}
         <div className="card p-6">
-          <h2 className="font-semibold text-gray-900 mb-4">Estado de clientes</h2>
+          <h2 className="font-semibold text-gray-900 mb-1">Estado de registros</h2>
+          <p className="text-xs text-gray-400 mb-4">Por contacto (cada fila del Excel)</p>
           <div className="space-y-3">
-            {Object.entries(stats?.clientsByStatus ?? {}).map(([status, count]) => (
+            {Object.entries(stats?.contactsByStatus ?? {}).map(([status, count]) => (
               <div key={status} className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">{STATUS_LABELS[status] ?? status}</span>
                 <span className="text-sm font-semibold text-gray-900">{count as number}</span>
               </div>
             ))}
-            {Object.keys(stats?.clientsByStatus ?? {}).length === 0 && (
+            {Object.keys(stats?.contactsByStatus ?? {}).length === 0 && (
               <p className="text-sm text-gray-400 text-center py-4">Sin datos todavía</p>
             )}
           </div>
         </div>
 
-        {/* Recent calls */}
+        {/* Company status breakdown (supplementary) */}
         <div className="card p-6">
+          <h2 className="font-semibold text-gray-900 mb-1">Por empresa (RUC)</h2>
+          <p className="text-xs text-gray-400 mb-4">Estado agregado por empresa</p>
+          <div className="space-y-3">
+            {Object.entries(stats?.companiesByStatus ?? stats?.clientsByStatus ?? {}).map(([status, count]) => (
+              <div key={status} className="flex items-center justify-between">
+                <span className="text-sm text-gray-600">{STATUS_LABELS[status] ?? status}</span>
+                <span className="text-sm font-semibold text-gray-500">{count as number}</span>
+              </div>
+            ))}
+            {Object.keys(stats?.companiesByStatus ?? stats?.clientsByStatus ?? {}).length === 0 && (
+              <p className="text-sm text-gray-400 text-center py-4">Sin datos todavía</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Recent calls */}
+        <div className="card p-6 lg:col-span-2">
           <h2 className="font-semibold text-gray-900 mb-4">Últimas llamadas</h2>
           <div className="space-y-3">
             {stats?.recentCalls?.map(

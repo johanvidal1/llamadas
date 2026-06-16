@@ -13,6 +13,7 @@ datasource db {
 // Role values: ADMIN | AGENT
 // Disposition values: INTERESTED | NOT_INTERESTED | NO_ANSWER | BUSY | CALLBACK | DO_NOT_CALL | OTHER
 // CompanyStatus values: PENDING | IN_PROGRESS | INTERESTED | CONVERTED | NOT_INTERESTED | DO_NOT_CALL
+// ContactStatus values: same as CompanyStatus
 // ImportStatus values: OK | NO_ENCONTRADO | SIN_CONTACTOS
 
 model User {
@@ -93,6 +94,7 @@ model Contact {
   dni          String?
   email        String?
   telefono     String?
+  status       String   @default("PENDING")
   createdAt    DateTime @default(now())
 
   assignment Assignment?

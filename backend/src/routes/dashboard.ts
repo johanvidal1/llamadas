@@ -4,6 +4,12 @@ import { requireAuth, requireAdmin, AuthRequest } from '../middleware/auth'
 
 const router = Router()
 
+function toStatusMap(rows: { status: string; _count: { status: number } }[]): Record<string, number> {
+  const map: Record<string, number> = {}
+  for (const s of rows) map[s.status] = s._count.status
+  return map
+}
+
 // GET /api/dashboard/stats
 router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
   const isAdmin = req.user!.role === 'ADMIN'
@@ -11,13 +17,17 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
   if (isAdmin) {
     const [
       totalClients,
-      clientsByStatus,
+      totalContacts,
+      contactsByStatusRows,
+      companiesByStatusRows,
       totalAgents,
       totalCalls,
       pendingCallbacks,
       recentCalls,
     ] = await Promise.all([
       prisma.company.count(),
+      prisma.contact.count(),
+      prisma.contact.groupBy({ by: ['status'], _count: { status: true } }),
       prisma.company.groupBy({ by: ['status'], _count: { status: true } }),
       prisma.user.count({ where: { role: 'AGENT', active: true } }),
       prisma.callLog.count(),
@@ -33,16 +43,30 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       }),
     ])
 
-    const statusMap: Record<string, number> = {}
-    for (const s of clientsByStatus) statusMap[s.status] = s._count.status
+    const contactsByStatus = toStatusMap(contactsByStatusRows)
+    const companiesByStatus = toStatusMap(companiesByStatusRows)
 
-    res.json({ totalClients, totalAgents, totalCalls, pendingCallbacks, clientsByStatus: statusMap, recentCalls })
+    res.json({
+      totalClients,
+      totalContacts,
+      totalAgents,
+      totalCalls,
+      pendingCallbacks,
+      contactsByStatus,
+      companiesByStatus,
+      clientsByStatus: companiesByStatus,
+      recentCalls,
+    })
   } else {
     const { batchId } = req.query as Record<string, string>
     const batchFilter = batchId ? { company: { importBatchId: batchId } } : {}
     const agentCompanyFilter = {
       contacts: { some: { assignment: { agentId: req.user!.id } } },
       ...(batchId ? { importBatchId: batchId } : {}),
+    }
+    const agentContactFilter = {
+      assignment: { agentId: req.user!.id },
+      ...(batchId ? { company: { importBatchId: batchId } } : {}),
     }
     const callFilter = batchId
       ? { agentId: req.user!.id, company: { importBatchId: batchId } }
@@ -51,9 +75,10 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       ? { agentId: req.user!.id, company: { importBatchId: batchId } }
       : { agentId: req.user!.id }
 
-    const [assignedContacts, clientsByStatus, totalCalls, pendingCallbacks, todayCallbacks, recentCalls] =
+    const [assignedContacts, contactsByStatusRows, companiesByStatusRows, totalCalls, pendingCallbacks, todayCallbacks, recentCalls] =
       await Promise.all([
         prisma.assignment.count({ where: { agentId: req.user!.id, ...batchFilter } }),
+        prisma.contact.groupBy({ by: ['status'], _count: { status: true }, where: agentContactFilter }),
         prisma.company.groupBy({ by: ['status'], _count: { status: true }, where: agentCompanyFilter }),
         prisma.callLog.count({ where: callFilter }),
         prisma.callback.count({ where: { ...cbFilter, completed: false } }),
@@ -78,8 +103,8 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
         }),
       ])
 
-    const statusMap: Record<string, number> = {}
-    for (const s of clientsByStatus) statusMap[s.status] = s._count.status
+    const contactsByStatus = toStatusMap(contactsByStatusRows)
+    const companiesByStatus = toStatusMap(companiesByStatusRows)
 
     res.json({
       assignedClients: assignedContacts,
@@ -87,7 +112,9 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       totalCalls,
       pendingCallbacks,
       todayCallbacks,
-      clientsByStatus: statusMap,
+      contactsByStatus,
+      companiesByStatus,
+      clientsByStatus: companiesByStatus,
       recentCalls,
     })
   }
@@ -122,6 +149,9 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
   const agentFilter = filterAgentId ? { agentId: filterAgentId } : {}
   const companyAgentFilter = filterAgentId
     ? { contacts: { some: { assignment: { agentId: filterAgentId } } } }
+    : {}
+  const contactAgentFilter = filterAgentId
+    ? { assignment: { agentId: filterAgentId } }
     : {}
   const thirtyDaysAgo = new Date()
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
@@ -172,32 +202,53 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
     calledByAgent[row.agentId].add(row.contactId)
   }
 
-  const agentCompanyStatuses = await Promise.all(
-    agents.map((a) =>
-      prisma.company.groupBy({
-        by: ['status'],
-        _count: { status: true },
-        where: { contacts: { some: { assignment: { agentId: a.id } } } },
-      }).then((rows) => {
-        const m: Record<string, number> = {}
-        for (const r of rows) m[r.status] = r._count.status
-        return { agentId: a.id, statuses: m }
-      })
-    )
+  const agentStatusData = await Promise.all(
+    agents.map(async (a) => {
+      const [contactRows, companyRows] = await Promise.all([
+        prisma.contact.groupBy({
+          by: ['status'],
+          _count: { status: true },
+          where: { assignment: { agentId: a.id } },
+        }),
+        prisma.company.groupBy({
+          by: ['status'],
+          _count: { status: true },
+          where: { contacts: { some: { assignment: { agentId: a.id } } } },
+        }),
+      ])
+      return {
+        agentId: a.id,
+        contactStatuses: toStatusMap(contactRows),
+        companyStatuses: toStatusMap(companyRows),
+      }
+    })
   )
-  const agentStatusMap: Record<string, Record<string, number>> = {}
-  for (const a of agentCompanyStatuses) agentStatusMap[a.agentId] = a.statuses
+  const agentContactStatusMap: Record<string, Record<string, number>> = {}
+  const agentCompanyStatusMap: Record<string, Record<string, number>> = {}
+  for (const a of agentStatusData) {
+    agentContactStatusMap[a.agentId] = a.contactStatuses
+    agentCompanyStatusMap[a.agentId] = a.companyStatuses
+  }
 
   const agentPerformance = agents.map((a) => {
     const assigned = a._count.assignments
     const totalCalls = a._count.callLogs
     const calledContacts = calledByAgent[a.id]?.size ?? 0
-    const statuses = agentStatusMap[a.id] ?? {}
-    const interested = statuses['INTERESTED'] ?? 0
-    const converted = statuses['CONVERTED'] ?? 0
-    const notInterested = statuses['NOT_INTERESTED'] ?? 0
+    const contactStatuses = agentContactStatusMap[a.id] ?? {}
+    const companyStatuses = agentCompanyStatusMap[a.id] ?? {}
+    const interestedRecords = contactStatuses['INTERESTED'] ?? 0
+    const convertedRecords = contactStatuses['CONVERTED'] ?? 0
+    const notInterestedRecords = contactStatuses['NOT_INTERESTED'] ?? 0
+    const pendingRecords = contactStatuses['PENDING'] ?? 0
+    const interestedCompanies = companyStatuses['INTERESTED'] ?? 0
+    const convertedCompanies = companyStatuses['CONVERTED'] ?? 0
+    const notInterestedCompanies = companyStatuses['NOT_INTERESTED'] ?? 0
+    const pendingCompanies = companyStatuses['PENDING'] ?? 0
+    const interested = interestedRecords
+    const converted = convertedRecords
+    const notInterested = notInterestedRecords
     const contactRate = assigned > 0 ? Math.round((calledContacts / assigned) * 100) : 0
-    const conversionRate = calledContacts > 0 ? Math.round(((interested + converted) / calledContacts) * 100) : 0
+    const conversionRate = calledContacts > 0 ? Math.round(((interestedRecords + convertedRecords) / calledContacts) * 100) : 0
     const avgCallsPerContact = calledContacts > 0 ? Math.round((totalCalls / calledContacts) * 10) / 10 : 0
     return {
       id: a.id,
@@ -209,6 +260,14 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
       interested,
       converted,
       notInterested,
+      interestedRecords,
+      convertedRecords,
+      notInterestedRecords,
+      pendingRecords,
+      interestedCompanies,
+      convertedCompanies,
+      notInterestedCompanies,
+      pendingCompanies,
       contactRate,
       conversionRate,
       avgCallsPerClient: avgCallsPerContact,
@@ -218,46 +277,92 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
     }
   })
 
-  const batchStatusMap: Record<string, Record<string, number>> = {}
+  const batchCompanyStatusMap: Record<string, Record<string, number>> = {}
   for (const row of batchCompanyStatuses) {
     const bId = row.importBatchId ?? '__none__'
-    if (!batchStatusMap[bId]) batchStatusMap[bId] = {}
-    batchStatusMap[bId][row.status] = (batchStatusMap[bId][row.status] ?? 0) + row._count.status
+    if (!batchCompanyStatusMap[bId]) batchCompanyStatusMap[bId] = {}
+    batchCompanyStatusMap[bId][row.status] = (batchCompanyStatusMap[bId][row.status] ?? 0) + row._count.status
   }
 
-  const batchCallStats = await Promise.all(
+  const batchContactStatusByBatch = await Promise.all(
     batches.map(async (b) => {
-      const [callCount, interestedContactCount] = await Promise.all([
+      const rows = await prisma.contact.groupBy({
+        by: ['status'],
+        _count: { status: true },
+        where: { company: { importBatchId: b.id, ...companyAgentFilter }, ...contactAgentFilter },
+      })
+      return { batchId: b.id, statuses: toStatusMap(rows) }
+    })
+  )
+  const batchContactStatusMap: Record<string, Record<string, number>> = {}
+  for (const row of batchContactStatusByBatch) {
+    batchContactStatusMap[row.batchId] = row.statuses
+  }
+
+  const batchCounts = await Promise.all(
+    batches.map(async (b) => {
+      const [contactCount, companyCount, callCount, interestedContactCount] = await Promise.all([
+        prisma.contact.count({ where: { company: { importBatchId: b.id, ...companyAgentFilter }, ...contactAgentFilter } }),
+        prisma.company.count({ where: { importBatchId: b.id, ...companyAgentFilter } }),
         prisma.callLog.count({ where: { company: { importBatchId: b.id } } }),
         prisma.callLog.count({ where: { disposition: 'INTERESTED', company: { importBatchId: b.id } } }),
       ])
-      return { batchId: b.id, callCount, interestedContactCount }
+      return { batchId: b.id, contactCount, companyCount, callCount, interestedContactCount }
     })
   )
-  const batchCallMap: Record<string, { callCount: number; interestedContactCount: number }> = {}
-  for (const s of batchCallStats) batchCallMap[s.batchId] = s
+  const batchCountMap: Record<string, { contactCount: number; companyCount: number; callCount: number; interestedContactCount: number }> = {}
+  for (const s of batchCounts) batchCountMap[s.batchId] = s
 
   const batchProgress = batches.map((b) => {
-    const s = batchStatusMap[b.id] ?? {}
-    const pending = s['PENDING'] ?? 0
-    const inProgress = s['IN_PROGRESS'] ?? 0
-    const interested = s['INTERESTED'] ?? 0
-    const converted = s['CONVERTED'] ?? 0
-    const notInterested = s['NOT_INTERESTED'] ?? 0
-    const doNotCall = s['DO_NOT_CALL'] ?? 0
-    const total = b.totalRecords
-    const contacted = total - pending
-    const { callCount = 0, interestedContactCount = 0 } = batchCallMap[b.id] ?? {}
-    return { ...b, pending, inProgress, interested, interestedContactCount, converted, notInterested, doNotCall, contacted, callCount }
+    const companyS = batchCompanyStatusMap[b.id] ?? {}
+    const recordS = batchContactStatusMap[b.id] ?? {}
+    const pending = companyS['PENDING'] ?? 0
+    const inProgress = companyS['IN_PROGRESS'] ?? 0
+    const interested = companyS['INTERESTED'] ?? 0
+    const converted = companyS['CONVERTED'] ?? 0
+    const notInterested = companyS['NOT_INTERESTED'] ?? 0
+    const doNotCall = companyS['DO_NOT_CALL'] ?? 0
+    const pendingRecords = recordS['PENDING'] ?? 0
+    const inProgressRecords = recordS['IN_PROGRESS'] ?? 0
+    const interestedRecords = recordS['INTERESTED'] ?? 0
+    const convertedRecords = recordS['CONVERTED'] ?? 0
+    const notInterestedRecords = recordS['NOT_INTERESTED'] ?? 0
+    const doNotCallRecords = recordS['DO_NOT_CALL'] ?? 0
+    const { contactCount = 0, companyCount = 0, callCount = 0, interestedContactCount = 0 } = batchCountMap[b.id] ?? {}
+    const contacted = companyCount - pending
+    const contactedRecords = contactCount - pendingRecords
+    return {
+      ...b,
+      totalRecords: contactCount,
+      totalCompanies: companyCount,
+      pending,
+      inProgress,
+      interested,
+      interestedContactCount,
+      converted,
+      notInterested,
+      doNotCall,
+      pendingRecords,
+      inProgressRecords,
+      interestedRecords,
+      convertedRecords,
+      notInterestedRecords,
+      doNotCallRecords,
+      contacted,
+      contactedRecords,
+      callCount,
+    }
   })
 
-  const [totalCompanies, assignedContacts, funnelStatuses] = await Promise.all([
+  const [totalCompanies, totalRecords, assignedContacts, funnelContactStatuses, funnelCompanyStatuses] = await Promise.all([
     prisma.company.count({ where: { ...companyAgentFilter } }),
+    prisma.contact.count({ where: { ...contactAgentFilter } }),
     prisma.assignment.count({ where: filterAgentId ? { agentId: filterAgentId } : {} }),
+    prisma.contact.groupBy({ by: ['status'], _count: { status: true }, where: { ...contactAgentFilter } }),
     prisma.company.groupBy({ by: ['status'], _count: { status: true }, where: { ...companyAgentFilter } }),
   ])
-  const funnelMap: Record<string, number> = {}
-  for (const s of funnelStatuses) funnelMap[s.status] = s._count.status
+  const recordMap = toStatusMap(funnelContactStatuses)
+  const companyMap = toStatusMap(funnelCompanyStatuses)
 
   res.json({
     agentPerformance,
@@ -265,14 +370,26 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
     dispositionBreakdown: dispositionBreakdown.map((d) => ({ disposition: d.disposition, count: d._count.disposition })),
     batchProgress,
     funnel: {
-      total: totalCompanies,
-      assigned: assignedContacts,
-      pending: funnelMap['PENDING'] ?? 0,
-      inProgress: funnelMap['IN_PROGRESS'] ?? 0,
-      interested: funnelMap['INTERESTED'] ?? 0,
-      converted: funnelMap['CONVERTED'] ?? 0,
-      notInterested: funnelMap['NOT_INTERESTED'] ?? 0,
-      doNotCall: funnelMap['DO_NOT_CALL'] ?? 0,
+      records: {
+        total: totalRecords,
+        assigned: assignedContacts,
+        pending: recordMap['PENDING'] ?? 0,
+        inProgress: recordMap['IN_PROGRESS'] ?? 0,
+        interested: recordMap['INTERESTED'] ?? 0,
+        converted: recordMap['CONVERTED'] ?? 0,
+        notInterested: recordMap['NOT_INTERESTED'] ?? 0,
+        doNotCall: recordMap['DO_NOT_CALL'] ?? 0,
+      },
+      companies: {
+        total: totalCompanies,
+        assigned: assignedContacts,
+        pending: companyMap['PENDING'] ?? 0,
+        inProgress: companyMap['IN_PROGRESS'] ?? 0,
+        interested: companyMap['INTERESTED'] ?? 0,
+        converted: companyMap['CONVERTED'] ?? 0,
+        notInterested: companyMap['NOT_INTERESTED'] ?? 0,
+        doNotCall: companyMap['DO_NOT_CALL'] ?? 0,
+      },
     },
   })
 })

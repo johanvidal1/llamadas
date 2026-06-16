@@ -2,6 +2,7 @@ import { Router, Response } from 'express'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { dispositionToStatus, recomputeCompanyStatus } from '../lib/contactStatus'
 
 const router = Router()
 
@@ -22,16 +23,6 @@ const callSchema = z.object({
   callbackDate: z.string().datetime().optional(),
   callbackNotes: z.string().optional(),
 })
-
-const dispositionToStatus: Record<string, string> = {
-  INTERESTED: 'INTERESTED',
-  NOT_INTERESTED: 'NOT_INTERESTED',
-  NO_ANSWER: 'IN_PROGRESS',
-  BUSY: 'IN_PROGRESS',
-  CALLBACK: 'IN_PROGRESS',
-  DO_NOT_CALL: 'DO_NOT_CALL',
-  OTHER: 'IN_PROGRESS',
-}
 
 // GET /api/calls
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -81,21 +72,42 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     }
   }
 
+  let contactId = data.contactId ?? null
+  if (!contactId) {
+    const companyContacts = await prisma.contact.findMany({
+      where: { companyId: data.clientId },
+      select: { id: true },
+    })
+    if (companyContacts.length === 1) {
+      contactId = companyContacts[0].id
+    }
+  }
+
+  const newStatus = dispositionToStatus[data.disposition]
+
   const callLog = await prisma.callLog.create({
     data: {
       companyId: data.clientId,
       agentId: req.user!.id,
-      contactId: data.contactId ?? null,
+      contactId,
       disposition: data.disposition,
       aclaracion: data.aclaracion,
       notes: data.notes,
     },
   })
 
-  await prisma.company.update({
-    where: { id: data.clientId },
-    data: { status: dispositionToStatus[data.disposition] },
-  })
+  if (contactId) {
+    await prisma.contact.update({
+      where: { id: contactId },
+      data: { status: newStatus },
+    })
+    await recomputeCompanyStatus(data.clientId)
+  } else {
+    await prisma.company.update({
+      where: { id: data.clientId },
+      data: { status: newStatus },
+    })
+  }
 
   if (data.callbackDate) {
     await prisma.callback.create({

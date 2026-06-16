@@ -104,6 +104,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     where: contactWhere,
     include: {
       assignment: { include: { agent: { select: { name: true, id: true } } } },
+      _count: { select: { callLogs: true } },
     },
     orderBy: { createdAt: 'asc' as const },
   }
@@ -154,6 +155,7 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
         where: contactWhere,
         include: {
           assignment: { include: { agent: { select: { name: true } } } },
+          _count: { select: { callLogs: true } },
         },
         orderBy: { createdAt: 'asc' },
       },

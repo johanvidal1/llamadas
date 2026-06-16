@@ -15,19 +15,27 @@ interface AgentPerf {
   id: string; name: string
   assigned: number; calledClients: number; totalCalls: number
   interested: number; converted: number; notInterested: number
+  interestedRecords: number; convertedRecords: number; notInterestedRecords: number; pendingRecords: number
+  interestedCompanies: number; convertedCompanies: number; notInterestedCompanies: number; pendingCompanies: number
   contactRate: number; conversionRate: number; avgCallsPerClient: number
   pendingCallbacks: number; overdueCallbacks: number
 }
 interface DayCount { date: string; count: number }
 interface DispCount { disposition: string; count: number }
 interface BatchProgress {
-  id: string; filename: string; createdAt: string; totalRecords: number
+  id: string; filename: string; createdAt: string; totalRecords: number; totalCompanies: number
   pending: number; inProgress: number; interested: number; interestedContactCount: number
   converted: number; notInterested: number; doNotCall: number; contacted: number; callCount: number
+  pendingRecords: number; inProgressRecords: number; interestedRecords: number
+  convertedRecords: number; notInterestedRecords: number; doNotCallRecords: number; contactedRecords: number
 }
-interface Funnel {
+interface FunnelSlice {
   total: number; assigned: number; pending: number; inProgress: number
   interested: number; converted: number; notInterested: number; doNotCall: number
+}
+interface Funnel {
+  records: FunnelSlice
+  companies: FunnelSlice
 }
 interface ReportsData {
   agentPerformance: AgentPerf[]
@@ -82,8 +90,8 @@ interface DrillDown { agentId: string; agentName: string; metric: MetricKey }
 const METRIC_LABELS: Record<MetricKey, string> = {
   contactRate: 'Tasa de contacto',
   conversionRate: 'Tasa de conversión',
-  avgCallsPerClient: 'Llamadas por cliente',
-  interested: 'Clientes interesados',
+  avgCallsPerClient: 'Llamadas por registro',
+  interested: 'Registros interesados',
   overdueCallbacks: 'Callbacks vencidos',
 }
 
@@ -110,7 +118,13 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
     ruc: string
     razonSocial?: string
     status: string
-    contacts: { id: string; nombre: string; telefono?: string }[]
+    contacts: Array<{
+      id: string
+      nombre: string
+      telefono?: string
+      status: string
+      _count?: { callLogs: number }
+    }>
     _count: { callLogs: number; callbacks: number }
   }> = clientsData?.clients ?? []
 
@@ -119,8 +133,8 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
       id: contact.id,
       name: contact.nombre,
       phone: contact.telefono ?? '',
-      status: company.status,
-      _count: company._count,
+      status: contact.status,
+      _count: { callLogs: contact._count?.callLogs ?? 0 },
     }))
   )
 
@@ -129,7 +143,6 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
     client: { id: string; name: string; phone: string }
   }> = callbacksData ?? []
 
-  // Derive lists per metric
   let tabALabel = '', tabBLabel = ''
   let tabAList: typeof allContacts = []
   let tabBList: typeof allContacts = []
@@ -147,7 +160,7 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
     tabBLabel = `Contactados sin conversión (${tabBList.length})`
   } else if (drill.metric === 'avgCallsPerClient') {
     tabAList = [...allContacts].sort((a, b) => b._count.callLogs - a._count.callLogs)
-    tabALabel = `Todos los contactos (${tabAList.length})`
+    tabALabel = `Todos los registros (${tabAList.length})`
   } else if (drill.metric === 'interested') {
     tabAList = allContacts.filter((c) => c.status === 'INTERESTED' || c.status === 'CONVERTED')
     tabALabel = `Interesados (${tabAList.length})`
@@ -166,7 +179,6 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
     <>
       <div className="fixed inset-0 bg-black/30 z-40" onClick={onClose} />
       <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-white shadow-2xl z-50 flex flex-col">
-        {/* Header */}
         <div className="flex items-center justify-between p-5 border-b bg-gray-50">
           <div>
             <p className="font-semibold text-gray-900">{drill.agentName}</p>
@@ -177,7 +189,6 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
           </button>
         </div>
 
-        {/* Tabs */}
         {hasTabs && (
           <div className="flex border-b border-gray-200 shrink-0">
             {([['a', tabALabel], ['b', tabBLabel]] as const).map(([key, label]) => (
@@ -194,7 +205,6 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
           </div>
         )}
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto">
           {isLoading && (
             <div className="flex items-center justify-center h-40 text-gray-400">
@@ -202,7 +212,6 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
             </div>
           )}
 
-          {/* Callbacks overdue list */}
           {isCallbackMetric && !isLoading && (
             <div className="divide-y divide-gray-100">
               {overdueList.length === 0
@@ -223,11 +232,10 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
             </div>
           )}
 
-          {/* Client list */}
           {!isCallbackMetric && !isLoading && (
             <div className="divide-y divide-gray-100">
               {activeList.length === 0
-                ? <p className="text-center text-gray-400 py-12 text-sm">Sin clientes en esta categoría</p>
+                ? <p className="text-center text-gray-400 py-12 text-sm">Sin registros en esta categoría</p>
                 : activeList.map((c, i) => (
                   <div key={c.id} className="flex items-center justify-between px-5 py-3 hover:bg-gray-50">
                     <div className="min-w-0 flex items-center gap-3">
@@ -282,7 +290,6 @@ export default function Reports() {
   const drill = (agentId: string, agentName: string, metric: MetricKey) =>
     setDrillDown({ agentId, agentName, metric })
 
-  // Load all agents from unfiltered report to populate selector
   const { data: allData } = useQuery<ReportsData>({
     queryKey: ['reports', 'all'],
     queryFn: () => getReports(),
@@ -313,10 +320,16 @@ export default function Reports() {
   const agents = allData?.agentPerformance ?? []
 
   const { funnel, callsByDay, dispositionBreakdown, batchProgress } = data
+  const records = funnel.records
+  const companies = funnel.companies
   const maxDay = Math.max(...callsByDay.map((d) => d.count), 1)
   const totalDisp = dispositionBreakdown.reduce((s, d) => s + d.count, 0)
-  const contactedPct = funnel.total > 0 ? Math.round((funnel.inProgress + funnel.interested + funnel.converted + funnel.notInterested + funnel.doNotCall) / funnel.total * 100) : 0
-  const interestedPct = funnel.total > 0 ? Math.round((funnel.interested + funnel.converted) / funnel.total * 100) : 0
+  const contactedPct = records.total > 0
+    ? Math.round((records.inProgress + records.interested + records.converted + records.notInterested + records.doNotCall) / records.total * 100)
+    : 0
+  const interestedPct = records.total > 0
+    ? Math.round((records.interested + records.converted) / records.total * 100)
+    : 0
 
   const SortIcon = ({ k }: { k: SortKey }) =>
     sortBy === k
@@ -331,7 +344,6 @@ export default function Reports() {
           <p className="text-gray-500 text-sm mt-1">Campaña de migración de operador — métricas de eficacia y efectividad</p>
         </div>
 
-        {/* Agent filter */}
         <div className="flex items-center gap-2 shrink-0">
           <Filter size={15} className="text-gray-400" />
           <select
@@ -358,45 +370,43 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* ── Funnel ── */}
+      {/* ── Funnel (records primary) ── */}
       <section>
-        <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Embudo de campaña</h2>
+        <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Embudo de campaña — Registros</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
-          <StatCard label="Total clientes" value={funnel.total} icon={Users} />
-          <StatCard label="Asignados" value={funnel.assigned} icon={UserCheck2} color="text-blue-700" sub="contactos" />
-          <StatCard label="Pendientes" value={funnel.pending} color="text-gray-600" />
-          <StatCard label="En progreso" value={funnel.inProgress} color="text-blue-600" />
-          <StatCard label="Interesados" value={funnel.interested} color="text-green-600" icon={Target} />
-          <StatCard label="Convertidos" value={funnel.converted} color="text-emerald-700" icon={Award} />
-          <StatCard label="No interesados" value={funnel.notInterested} color="text-red-500" />
+          <StatCard label="Total registros" value={records.total} icon={Users} />
+          <StatCard label="Asignados" value={records.assigned} icon={UserCheck2} color="text-blue-700" sub="contactos" />
+          <StatCard label="Pendientes" value={records.pending} color="text-gray-600" />
+          <StatCard label="En progreso" value={records.inProgress} color="text-blue-600" />
+          <StatCard label="Interesados" value={records.interested} color="text-green-600" icon={Target} />
+          <StatCard label="Convertidos" value={records.converted} color="text-emerald-700" icon={Award} />
+          <StatCard label="No interesados" value={records.notInterested} color="text-red-500" />
         </div>
-        {/* Funnel bar */}
         <div className="card p-4 mt-3 space-y-2">
           <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-            <span>Tasa de contacto</span><span className="font-bold text-blue-700">{contactedPct}%</span>
+            <span>Tasa de contacto (registros)</span><span className="font-bold text-blue-700">{contactedPct}%</span>
           </div>
           <div className="h-3 bg-gray-100 rounded-full overflow-hidden flex">
             {[
-              { pct: funnel.interested / funnel.total * 100, cls: 'bg-green-500' },
-              { pct: funnel.converted / funnel.total * 100, cls: 'bg-emerald-600' },
-              { pct: funnel.inProgress / funnel.total * 100, cls: 'bg-blue-400' },
-              { pct: funnel.notInterested / funnel.total * 100, cls: 'bg-red-300' },
-              { pct: funnel.doNotCall / funnel.total * 100, cls: 'bg-red-600' },
+              { pct: records.interested / (records.total || 1) * 100, cls: 'bg-green-500' },
+              { pct: records.converted / (records.total || 1) * 100, cls: 'bg-emerald-600' },
+              { pct: records.inProgress / (records.total || 1) * 100, cls: 'bg-blue-400' },
+              { pct: records.notInterested / (records.total || 1) * 100, cls: 'bg-red-300' },
+              { pct: records.doNotCall / (records.total || 1) * 100, cls: 'bg-red-600' },
             ].map((s, i) => (
               <div key={i} className={`h-full ${s.cls} transition-all`} style={{ width: `${s.pct}%` }} />
             ))}
           </div>
-          <div className="flex gap-4 flex-wrap text-xs text-gray-500">
-            {[
-              { cls: 'bg-green-500', label: 'Interesado' }, { cls: 'bg-emerald-600', label: 'Convertido' },
-              { cls: 'bg-blue-400', label: 'En progreso' }, { cls: 'bg-red-300', label: 'No interesado' },
-              { cls: 'bg-red-600', label: 'No llamar' }, { cls: 'bg-gray-200', label: 'Pendiente' },
-            ].map((s) => (
-              <span key={s.label} className="flex items-center gap-1">
-                <span className={`w-2.5 h-2.5 rounded-sm ${s.cls}`} />{s.label}
-              </span>
-            ))}
-          </div>
+        </div>
+
+        <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mt-5 mb-3">Por empresa (RUC)</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+          <StatCard label="Total empresas" value={companies.total} sub="RUC" />
+          <StatCard label="Pendientes" value={companies.pending} color="text-gray-500" sub="empresas" />
+          <StatCard label="En progreso" value={companies.inProgress} color="text-blue-500" sub="empresas" />
+          <StatCard label="Interesados" value={companies.interested} color="text-green-600" sub="empresas" />
+          <StatCard label="Convertidos" value={companies.converted} color="text-emerald-600" sub="empresas" />
+          <StatCard label="No interesados" value={companies.notInterested} color="text-red-400" sub="empresas" />
         </div>
       </section>
 
@@ -414,8 +424,10 @@ export default function Reports() {
                   { k: 'totalCalls' as SortKey, l: 'Llamadas' },
                   { k: 'contactRate' as SortKey, l: 'Tasa contacto' },
                   { k: 'conversionRate' as SortKey, l: 'Tasa conversión' },
-                  { k: 'avgCallsPerClient' as SortKey, l: 'Llamadas/cliente' },
-                  { k: 'interested' as SortKey, l: 'Interesados' },
+                  { k: 'avgCallsPerClient' as SortKey, l: 'Llamadas/reg.' },
+                  { k: 'interestedRecords' as SortKey, l: 'Int. reg.' },
+                  { k: 'interestedCompanies' as SortKey, l: 'Int. emp.' },
+                  { k: 'pendingRecords' as SortKey, l: 'Pend. reg.' },
                   { k: 'overdueCallbacks' as SortKey, l: 'Callbacks venc.' },
                 ].map(({ k, l }) => (
                   <th key={k} className="px-3 py-3 font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none" onClick={() => toggle(k)}>
@@ -447,7 +459,7 @@ export default function Reports() {
                   <td
                     className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors group"
                     onClick={() => drill(a.id, a.name, 'contactRate')}
-                    title="Ver detalle de clientes contactados"
+                    title="Ver detalle de registros contactados"
                   >
                     <span className={`text-sm font-semibold group-hover:underline ${a.contactRate >= 70 ? 'text-green-700' : a.contactRate >= 40 ? 'text-amber-600' : 'text-red-500'}`}>
                       {a.contactRate}%
@@ -457,7 +469,7 @@ export default function Reports() {
                   <td
                     className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors group"
                     onClick={() => drill(a.id, a.name, 'conversionRate')}
-                    title="Ver clientes interesados/convertidos"
+                    title="Ver registros interesados/convertidos"
                   >
                     <span className={`text-sm font-semibold group-hover:underline ${a.conversionRate >= 20 ? 'text-green-700' : a.conversionRate >= 10 ? 'text-amber-600' : 'text-red-500'}`}>
                       {a.conversionRate}%
@@ -467,19 +479,27 @@ export default function Reports() {
                   <td
                     className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors group"
                     onClick={() => drill(a.id, a.name, 'avgCallsPerClient')}
-                    title="Ver clientes por nº de llamadas"
+                    title="Ver registros por nº de llamadas"
                   >
                     <span className="text-gray-700 group-hover:underline">{a.avgCallsPerClient}</span>
                   </td>
                   <td
                     className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors group"
                     onClick={() => drill(a.id, a.name, 'interested')}
-                    title="Ver clientes interesados"
+                    title="Ver registros interesados"
                   >
                     <div className="flex flex-col items-end gap-1">
-                      <span className="text-green-700 font-semibold group-hover:underline">{a.interested}</span>
-                      <Bar pct={a.assigned > 0 ? (a.interested / a.assigned) * 100 : 0} color="bg-green-500" />
+                      <span className="text-green-700 font-semibold group-hover:underline">{a.interestedRecords}</span>
+                      <Bar pct={a.assigned > 0 ? (a.interestedRecords / a.assigned) * 100 : 0} color="bg-green-500" />
                     </div>
+                  </td>
+                  <td className="px-3 py-3 text-right text-green-600 text-xs">
+                    {a.interestedCompanies}
+                    <span className="text-gray-400 block leading-none">emp.</span>
+                  </td>
+                  <td className="px-3 py-3 text-right text-gray-500 text-xs">
+                    {a.pendingRecords}
+                    <span className="text-gray-400 block leading-none">reg.</span>
                   </td>
                   <td
                     className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors"
@@ -493,20 +513,16 @@ export default function Reports() {
                 </tr>
               ))}
               {sortedAgents.length === 0 && (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400 text-sm">Sin datos de agentes</td></tr>
+                <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-400 text-sm">Sin datos de agentes</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </section>
 
-      {/* ── Drill-down drawer ── */}
       {drillDown && <DrillDownDrawer drill={drillDown} onClose={() => setDrillDown(null)} />}
 
-      {/* ── Calls per day + Disposition side by side ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-        {/* Calls per day */}
         <section>
           <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
             <span className="flex items-center gap-2"><TrendingUp size={14} />Llamadas últimos 30 días</span>
@@ -533,7 +549,6 @@ export default function Reports() {
           </div>
         </section>
 
-        {/* Disposition breakdown */}
         <section>
           <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
             <span className="flex items-center gap-2"><Phone size={14} />Resultado de llamadas</span>
@@ -571,20 +586,21 @@ export default function Reports() {
               <tr>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Archivo</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Fecha</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600">Total</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600">Registros</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600">Empresas</th>
                 <th className="text-right px-3 py-3 font-medium text-gray-600">Llamadas</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600">Emp. contactadas</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600 border-l border-gray-200">Int. x contacto</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600">Int. x empresa</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600">Convertidos</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600">No interesados</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600">Reg. contactados</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600 border-l border-gray-200">Int. reg.</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600">Int. emp.</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600">Conv. reg.</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600">No int. reg.</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600 min-w-[160px]">Progreso</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {batchProgress.map((b) => {
-                const contactedPct = b.totalRecords > 0 ? (b.contacted / b.totalRecords) * 100 : 0
-                const intPct = b.totalRecords > 0 ? ((b.interested + b.converted) / b.totalRecords) * 100 : 0
+                const contactedRecordsPct = b.totalRecords > 0 ? (b.contactedRecords / b.totalRecords) * 100 : 0
+                const intRecordsPct = b.totalRecords > 0 ? ((b.interestedRecords + b.convertedRecords) / b.totalRecords) * 100 : 0
                 return (
                   <tr key={b.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 font-medium text-gray-900 max-w-[200px] truncate" title={b.filename}>
@@ -594,31 +610,31 @@ export default function Reports() {
                       {format(new Date(b.createdAt), "d MMM yyyy", { locale: es })}
                     </td>
                     <td className="px-3 py-3 text-right text-gray-700">{b.totalRecords}</td>
+                    <td className="px-3 py-3 text-right text-gray-500">{b.totalCompanies}</td>
                     <td className="px-3 py-3 text-right">
                       <span className="text-gray-700 font-medium">{b.callCount}</span>
                     </td>
                     <td className="px-3 py-3 text-right">
-                      <span className="text-blue-700 font-medium">{b.contacted}</span>
-                      <span className="text-gray-400 text-xs ml-1">({Math.round(contactedPct)}%)</span>
+                      <span className="text-blue-700 font-medium">{b.contactedRecords}</span>
+                      <span className="text-gray-400 text-xs ml-1">({Math.round(contactedRecordsPct)}%)</span>
                     </td>
                     <td className="px-3 py-3 text-right border-l border-gray-100">
-                      <span className="text-green-600 font-medium">{b.interestedContactCount}</span>
-                      <span className="text-gray-400 text-xs ml-1 block leading-none">llamadas</span>
+                      <span className="text-green-600 font-medium">{b.interestedRecords}</span>
                     </td>
                     <td className="px-3 py-3 text-right">
                       <span className="text-green-700 font-medium">{b.interested}</span>
                       <span className="text-gray-400 text-xs ml-1 block leading-none">empresas</span>
                     </td>
-                    <td className="px-3 py-3 text-right text-emerald-700 font-medium">{b.converted}</td>
-                    <td className="px-3 py-3 text-right text-red-500">{b.notInterested}</td>
+                    <td className="px-3 py-3 text-right text-emerald-700 font-medium">{b.convertedRecords}</td>
+                    <td className="px-3 py-3 text-right text-red-500">{b.notInterestedRecords}</td>
                     <td className="px-4 py-3">
                       <div className="space-y-1">
                         <div className="flex justify-between text-[10px] text-gray-400">
-                          <span>Contacto</span><span>{Math.round(contactedPct)}%</span>
+                          <span>Registros</span><span>{Math.round(contactedRecordsPct)}%</span>
                         </div>
                         <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden flex">
-                          <div className="bg-green-500 h-full" style={{ width: `${intPct}%` }} />
-                          <div className="bg-blue-400 h-full" style={{ width: `${Math.max(contactedPct - intPct, 0)}%` }} />
+                          <div className="bg-green-500 h-full" style={{ width: `${intRecordsPct}%` }} />
+                          <div className="bg-blue-400 h-full" style={{ width: `${Math.max(contactedRecordsPct - intRecordsPct, 0)}%` }} />
                         </div>
                       </div>
                     </td>
@@ -626,7 +642,7 @@ export default function Reports() {
                 )
               })}
               {batchProgress.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400 text-sm">Sin lotes importados</td></tr>
+                <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-400 text-sm">Sin lotes importados</td></tr>
               )}
             </tbody>
           </table>
@@ -636,5 +652,4 @@ export default function Reports() {
   )
 }
 
-// small icon alias to avoid reserved word collision
 const UserCheck2 = Users
