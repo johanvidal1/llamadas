@@ -10,6 +10,7 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
+    "db:baseline:prod": "bash scripts/baseline-production-migrations.sh",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
     "db:seed": "ts-node src/seed.ts"

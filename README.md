@@ -142,6 +142,68 @@ El proyecto usa migraciones versionadas en lugar de `db push` para despliegues s
 - En producción (Render), el deploy ejecuta `prisma migrate deploy` automáticamente.
 - **Nunca** uses `prisma migrate reset` ni `db push --force-reset` en producción.
 
+### Render: baseline migraciones (P3005)
+
+Si el deploy falla con:
+
+```
+Error P3005: The database schema is not empty (no migration baseline)
+```
+
+significa que la base de datos de producción ya tiene tablas (p. ej. por un `db push` anterior) pero **no** tiene historial en `_prisma_migrations`. Hay que hacer un baseline **una sola vez** antes de que `prisma migrate deploy` vuelva a funcionar.
+
+| Acción | Migraciones |
+|--------|-------------|
+| **Marcar como ya aplicadas** (`migrate resolve --applied`) | `20260615080248_init`, `20260615120000_assignment_by_contact` |
+| **Aplicar con deploy** | `20260615143000_import_batch_file_metadata`, `20260615150000_import_batch_source_row_count`, `20260616000000_import_batch_blocked` |
+
+#### Opción A — Render Shell (recomendado)
+
+1. En Render: **llamadas-db** → **Connect** → copia la **External Database URL**.
+2. Abre **Shell** del servicio **llamadas-backend** (o cualquier servicio con Node/npm en `backend/`).
+3. Ejecuta:
+
+```bash
+export DATABASE_URL="postgresql://crm_user:...@dpg-....oregon-postgres.render.com/llamadas_crm"
+cd backend   # si el shell arranca en la raíz del repo
+
+npx prisma migrate resolve --applied 20260615080248_init
+npx prisma migrate resolve --applied 20260615120000_assignment_by_contact
+npx prisma migrate deploy
+```
+
+O usa el script incluido:
+
+```bash
+export DATABASE_URL="postgresql://..."
+bash scripts/baseline-production-migrations.sh
+# equivalente npm: npm run db:baseline:prod
+```
+
+4. **Manual Deploy** de `llamadas-backend` (o espera al siguiente push). El `startCommand` normal (`migrate deploy && db seed && npm start`) debería pasar.
+
+#### Opción B — Local con External Database URL
+
+Desde tu máquina, apuntando a la BD externa de Render (no uses la URL interna del servicio):
+
+**Windows (PowerShell):**
+
+```powershell
+$env:DATABASE_URL = "postgresql://crm_user:...@dpg-....oregon-postgres.render.com/llamadas_crm"
+cd backend
+.\scripts\baseline-production-migrations.ps1
+```
+
+**Linux / macOS / Git Bash:**
+
+```bash
+export DATABASE_URL="postgresql://..."
+cd backend
+npm run db:baseline:prod
+```
+
+> ⚠️ Usa la **External Database URL** del dashboard de Render. No modifiques `render.yaml` ni el `startCommand` para esto: el baseline es un paso manual puntual.
+
 ---
 
 ## Estructura del proyecto
