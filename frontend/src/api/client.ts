@@ -87,10 +87,11 @@ export type AssignmentPreview = {
     expandContactIds: string[]
     shrinkContactIds: string[]
   } | null
-  conflict: {
-    hasConflict: boolean
-    otherAgentNames: string[]
-  }
+  conflictWarning: {
+    hasMixedAgents: boolean
+    assignedToOthers: number
+    agents: { id: string; name: string }[]
+  } | null
 }
 
 export const previewAssignment = (data: {

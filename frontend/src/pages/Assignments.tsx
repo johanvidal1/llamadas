@@ -280,7 +280,7 @@ export default function Assignments() {
       </div>
 
       {/* Boundary preview modal */}
-      {previewModal && !previewModal.completeBoundary && previewModal.boundaryCompany && previewModal.suggestions && (
+      {previewModal && !previewModal.completeBoundary && previewModal.suggestions && (
         <>
           <div
             className="fixed inset-0 bg-black/40 z-40"
@@ -293,10 +293,17 @@ export default function Assignments() {
                   <h2 className="text-lg font-semibold text-gray-900">Cierre de empresa incompleto</h2>
                   <p className="text-sm text-gray-500 mt-1">
                     La asignación termina en{' '}
-                    <strong>{previewModal.boundaryCompany.razonSocial || previewModal.boundaryCompany.ruc}</strong>
-                    {' '}(RUC {previewModal.boundaryCompany.ruc}): incluyes{' '}
-                    <strong>{previewModal.boundaryCompany.included}</strong> de{' '}
-                    <strong>{previewModal.boundaryCompany.total}</strong> contactos
+                    <strong>
+                      {previewModal.boundaryCompany?.razonSocial ||
+                        previewModal.boundaryCompany?.ruc ||
+                        'una empresa'}
+                    </strong>
+                    {previewModal.boundaryCompany?.ruc && (
+                      <> (RUC {previewModal.boundaryCompany.ruc})</>
+                    )}
+                    : incluyes{' '}
+                    <strong>{previewModal.boundaryCompany?.included ?? '?'}</strong> de{' '}
+                    <strong>{previewModal.boundaryCompany?.total ?? '?'}</strong> contactos
                   </p>
                 </div>
                 <button
@@ -309,13 +316,15 @@ export default function Assignments() {
                 </button>
               </div>
 
-              {previewModal.conflict.hasConflict && (
+              {previewModal.conflictWarning?.hasMixedAgents && (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800 flex items-start gap-2">
                   <AlertCircle size={16} className="shrink-0 mt-0.5" />
                   <p>
                     Esta empresa ya tiene contactos asignados a{' '}
-                    <strong>{previewModal.conflict.otherAgentNames.join(', ')}</strong>.
-                    Completar la empresa puede repartir contactos entre agentes.
+                    <strong>
+                      {previewModal.conflictWarning.agents.map((a) => a.name).join(', ')}
+                    </strong>
+                    . Completar la empresa puede repartir contactos entre agentes.
                   </p>
                 </div>
               )}
