@@ -1,6 +1,6 @@
 export const CONTACT = {
-  supportEmail: 'soporte@optickcloud.com',
-  salesEmail: 'ventas@optickcloud.com',
+  supportEmail: 'johanvidal1@gmail.com',
+  salesEmail: 'johanvidal1@gmail.com',
   whatsapp: '51953551094',
   whatsappDisplay: '+51 953 551 094',
   whatsappDefaultMessage: 'Hola, me interesa conocer Optick Cloud.',
