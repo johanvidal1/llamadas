@@ -10,6 +10,14 @@ export interface ParsedContact {
   telefono?: string
 }
 
+export interface ParsedMobileLine {
+  ruc: string
+  numeroTelefono?: string
+  estadoLinea?: string
+  plan?: string
+  estado?: string
+}
+
 export interface ParsedCompany {
   ruc: string
   razonSocial?: string
@@ -26,6 +34,7 @@ export interface ParsedCompany {
 export interface ParseResult {
   companies: ParsedCompany[]
   sourceRowCount: number
+  mobileLines: ParsedMobileLine[]
 }
 
 export function normalizePhone(raw: string): string {
@@ -74,6 +83,43 @@ const HEADER_ALIASES: Record<string, string> = {
   estado: 'estado',
   fecha_consulta: 'fecha_consulta',
   fecha: 'fecha_consulta',
+}
+
+const MOBILE_HEADER_ALIASES: Record<string, string> = {
+  ruc: 'ruc',
+  numero_telefono: 'numero_telefono',
+  numero_de_telefono: 'numero_telefono',
+  telefono: 'numero_telefono',
+  tel: 'numero_telefono',
+  phone: 'numero_telefono',
+  celular: 'numero_telefono',
+  movil: 'numero_telefono',
+  mobile: 'numero_telefono',
+  estado_linea: 'estado_linea',
+  estado_de_linea: 'estado_linea',
+  linea_estado: 'estado_linea',
+  plan: 'plan',
+  estado: 'estado_producto',
+  estado_producto: 'estado_producto',
+}
+
+function normalizeMobileRow(row: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(row)) {
+    const canonical = MOBILE_HEADER_ALIASES[normalizeHeader(key)]
+    if (canonical && value != null && String(value).trim() !== '') {
+      normalized[canonical] = value
+    }
+  }
+
+  const phoneRaw = String(normalized['numero_telefono'] ?? '').trim()
+  if (phoneRaw) {
+    normalized['numero_telefono'] = normalizePhone(phoneRaw)
+  } else {
+    delete normalized['numero_telefono']
+  }
+
+  return normalized
 }
 
 function normalizeRow(row: Record<string, unknown>): Record<string, unknown> {
@@ -165,6 +211,25 @@ function parseRows(rows: Record<string, unknown>[]): ParsedCompany[] {
   return Array.from(byRuc.values())
 }
 
+function parseMobileRows(rows: Record<string, unknown>[]): ParsedMobileLine[] {
+  const result: ParsedMobileLine[] = []
+
+  for (const row of rows) {
+    const ruc = String(row['ruc'] ?? '').trim()
+    if (!ruc) continue
+
+    const numeroTelefonoRaw = String(row['numero_telefono'] ?? '').trim()
+    const numeroTelefono = numeroTelefonoRaw ? normalizePhone(numeroTelefonoRaw) : undefined
+    const estadoLinea = String(row['estado_linea'] ?? '').trim() || undefined
+    const plan = String(row['plan'] ?? '').trim() || undefined
+    const estado = String(row['estado_producto'] ?? '').trim() || undefined
+
+    result.push({ ruc, numeroTelefono, estadoLinea, plan, estado })
+  }
+
+  return result
+}
+
 export class MissingContactosSheetError extends Error {
   constructor(public availableSheets: string[]) {
     super(
@@ -185,7 +250,20 @@ export async function parseExcel(buffer: Buffer): Promise<ParseResult> {
   const sheet = workbook.Sheets[sheetName]
   const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
   const rows = rawRows.map(normalizeRow)
-  return { companies: parseRows(rows), sourceRowCount: rawRows.length }
+
+  let mobileLines: ParsedMobileLine[] = []
+  const mobileSheetName = workbook.SheetNames.find(
+    (name) => name.trim().toLowerCase() === 'productosmovil'
+  )
+  if (mobileSheetName) {
+    const mobileSheet = workbook.Sheets[mobileSheetName]
+    const rawMobileRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(mobileSheet, {
+      defval: '',
+    })
+    mobileLines = parseMobileRows(rawMobileRows.map(normalizeMobileRow))
+  }
+
+  return { companies: parseRows(rows), sourceRowCount: rawRows.length, mobileLines }
 }
 
 export async function parseCsv(buffer: Buffer): Promise<ParseResult> {
@@ -199,6 +277,7 @@ export async function parseCsv(buffer: Buffer): Promise<ParseResult> {
         resolve({
           companies: parseRows(rows.map(normalizeRow)),
           sourceRowCount: rows.length,
+          mobileLines: [],
         })
       )
       .on('error', reject)

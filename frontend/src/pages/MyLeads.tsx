@@ -83,6 +83,7 @@ interface ClientDetail {
   contacts: { id: string; nombre: string; tipoContacto?: string; telefono?: string; email?: string; dni?: string }[]
   callLogs: CallLogEntry[]
   callbacks: { id: string; callLogId?: string; scheduledAt: string; notes?: string; completed: boolean }[]
+  mobileLines: { id: string; numeroTelefono?: string; estadoLinea?: string; plan?: string; estado?: string }[]
 }
 
 interface Callback {
@@ -902,6 +903,41 @@ export default function MyLeads() {
                           <Clock size={13} /> Primer libre
                         </button>
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Líneas móviles */}
+                  <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="bg-gray-100 border-b border-gray-200 px-4 py-2">
+                      <span className="text-sm font-semibold text-gray-600">Líneas móviles</span>
+                    </div>
+                    <div className="p-4">
+                      {detail.mobileLines.length === 0 ? (
+                        <p className="text-sm text-gray-400 italic">Sin líneas móviles registradas</p>
+                      ) : (
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-gray-200 text-left">
+                              <th className="pb-2 pr-3 font-medium text-gray-600">Número</th>
+                              <th className="pb-2 pr-3 font-medium text-gray-600">Estado línea</th>
+                              <th className="pb-2 pr-3 font-medium text-gray-600">Plan</th>
+                              <th className="pb-2 font-medium text-gray-600">Estado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {detail.mobileLines.map((line) => (
+                              <tr key={line.id} className="border-b border-gray-100 last:border-0">
+                                <td className="py-2 pr-3 font-mono text-gray-800">
+                                  {line.numeroTelefono || <span className="text-gray-400 italic font-sans">—</span>}
+                                </td>
+                                <td className="py-2 pr-3 text-gray-700">{line.estadoLinea || '—'}</td>
+                                <td className="py-2 pr-3 text-gray-700">{line.plan || '—'}</td>
+                                <td className="py-2 text-gray-700">{line.estado || '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
                     </div>
                   </div>
 

@@ -266,6 +266,29 @@ router.get('/:id/export', requireAuth, async (req: AuthRequest, res: Response) =
   const ws = XLSX.utils.json_to_sheet(rows)
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Contactos')
+
+  const companyWhere: Prisma.CompanyWhereInput = { importBatchId: batchId }
+  if (filterAgentId) {
+    companyWhere.contacts = { some: { assignment: { agentId: filterAgentId } } }
+  }
+
+  const mobileLines = await prisma.mobileLine.findMany({
+    where: { company: companyWhere },
+    orderBy: [{ company: { createdAt: 'asc' } }, { createdAt: 'asc' }],
+    include: { company: { select: { ruc: true } } },
+  })
+
+  const mobileRows = mobileLines.map((line) => ({
+    ruc: line.ruc,
+    numero_telefono: line.numeroTelefono ?? '',
+    estado_linea: line.estadoLinea ?? '',
+    plan: line.plan ?? '',
+    estado: line.estado ?? '',
+  }))
+
+  const mobileWs = XLSX.utils.json_to_sheet(mobileRows)
+  XLSX.utils.book_append_sheet(wb, mobileWs, 'productosmovil')
+
   const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
 
   const suffix = filterAgentId && !isAgent ? '-agente' : isAgent ? '-mis-registros' : '-actualizado'
@@ -386,7 +409,7 @@ router.post(
     }
 
     const parsed = parseResult.companies
-    const { sourceRowCount } = parseResult
+    const { sourceRowCount, mobileLines } = parseResult
 
     if (parsed.length === 0) {
       res.status(400).json({
@@ -413,9 +436,10 @@ router.post(
           },
         })
 
+        const rucToCompanyId = new Map<string, string>()
         for (const company of parsed) {
           const { contacts, name: _name, phone: _phone, email: _email, ...companyFields } = company
-          await tx.company.create({
+          const createdCompany = await tx.company.create({
             data: {
               ruc: companyFields.ruc,
               razonSocial: companyFields.razonSocial ?? null,
@@ -428,6 +452,31 @@ router.post(
                 contacts.length > 0 ? { create: toContactCreate(contacts) } : undefined,
             },
           })
+          rucToCompanyId.set(companyFields.ruc, createdCompany.id)
+        }
+
+        if (mobileLines.length > 0) {
+          await tx.mobileLine.deleteMany({ where: { importBatchId: created.id } })
+
+          const mobileLineData = mobileLines
+            .map((line) => {
+              const companyId = rucToCompanyId.get(line.ruc)
+              if (!companyId) return null
+              return {
+                companyId,
+                ruc: line.ruc,
+                numeroTelefono: line.numeroTelefono ?? null,
+                estadoLinea: line.estadoLinea ?? null,
+                plan: line.plan ?? null,
+                estado: line.estado ?? null,
+                importBatchId: created.id,
+              }
+            })
+            .filter((row): row is NonNullable<typeof row> => row !== null)
+
+          if (mobileLineData.length > 0) {
+            await tx.mobileLine.createMany({ data: mobileLineData })
+          }
         }
 
         return created
@@ -444,6 +493,7 @@ router.post(
       imported: parsed.length,
       withoutContacts,
       withoutPhone,
+      mobileLineCount: mobileLines.length,
     })
   }
 )

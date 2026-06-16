@@ -169,6 +169,9 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
         include: { agent: { select: { name: true } } },
         orderBy: { scheduledAt: 'asc' },
       },
+      mobileLines: {
+        orderBy: { createdAt: 'asc' },
+      },
       importBatch: { select: { id: true, filename: true, createdAt: true } },
     },
   })
