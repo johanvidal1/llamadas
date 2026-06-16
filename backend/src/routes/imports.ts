@@ -1,5 +1,6 @@
 import { Router, Response } from 'express'
 import multer from 'multer'
+import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
 import { parseExcel, parseCsv, ParsedCompany } from '../lib/parseFile'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
@@ -168,23 +169,10 @@ router.post(
 
 // DELETE /api/imports/:id
 router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const batchId = req.params.id
+
   const batch = await prisma.importBatch.findUnique({
-    where: { id: req.params.id },
-    include: {
-      _count: {
-        select: {
-          companies: {
-            where: {
-              OR: [
-                { contacts: { some: { assignment: { isNot: null } } } },
-                { callLogs: { some: {} } },
-                { callbacks: { some: {} } },
-              ],
-            },
-          },
-        },
-      },
-    },
+    where: { id: batchId },
   })
 
   if (!batch) {
@@ -192,19 +180,54 @@ router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
     return
   }
 
-  if (batch._count.companies > 0) {
+  const usedCount = await prisma.company.count({
+    where: {
+      importBatchId: batchId,
+      OR: [
+        { contacts: { some: { assignment: { is: {} } } } },
+        { callLogs: { some: {} } },
+        { callbacks: { some: {} } },
+      ],
+    },
+  })
+
+  if (usedCount > 0) {
     res.status(400).json({
-      error: `Este lote tiene ${batch._count.companies} registro(s) que ya fueron usados por agentes y no puede eliminarse.`,
+      error: `Este lote tiene ${usedCount} registro(s) que ya fueron usados por agentes y no puede eliminarse.`,
     })
     return
   }
 
-  await prisma.$transaction([
-    prisma.company.deleteMany({ where: { importBatchId: req.params.id } }),
-    prisma.importBatch.delete({ where: { id: req.params.id } }),
-  ])
+  try {
+    await prisma.$transaction(async (tx) => {
+      const companies = await tx.company.findMany({
+        where: { importBatchId: batchId },
+        select: { id: true },
+      })
+      const companyIds = companies.map((c) => c.id)
 
-  res.json({ success: true })
+      if (companyIds.length > 0) {
+        await tx.callback.deleteMany({ where: { companyId: { in: companyIds } } })
+        await tx.callLog.deleteMany({ where: { companyId: { in: companyIds } } })
+        await tx.company.deleteMany({ where: { importBatchId: batchId } })
+      }
+
+      await tx.importBatch.delete({ where: { id: batchId } })
+    })
+
+    res.json({ success: true })
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      (err.code === 'P2003' || err.code === 'P2014')
+    ) {
+      res.status(400).json({
+        error: 'No se puede eliminar la importación porque tiene registros relacionados en uso.',
+      })
+      return
+    }
+    throw err
+  }
 })
 
 export default router
