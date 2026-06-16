@@ -275,37 +275,40 @@ router.post(
       (c) => c.contacts.length === 0 || !c.contacts.some((ct) => ct.telefono)
     ).length
 
-    const batch = await prisma.$transaction(async (tx) => {
-      const created = await tx.importBatch.create({
-        data: {
-          filename,
-          displayName,
-          fileSizeBytes,
-          sourceRowCount,
-          totalRecords: parsed.length,
-          importedById: req.user!.id,
-        },
-      })
-
-      for (const company of parsed) {
-        const { contacts, name: _name, phone: _phone, email: _email, ...companyFields } = company
-        await tx.company.create({
+    const batch = await prisma.$transaction(
+      async (tx) => {
+        const created = await tx.importBatch.create({
           data: {
-            ruc: companyFields.ruc,
-            razonSocial: companyFields.razonSocial ?? null,
-            importStatus: companyFields.estado ?? null,
-            fechaConsulta: parseFechaConsulta(companyFields.fechaConsulta),
-            plan: companyFields.plan ?? null,
-            notes: companyFields.notes ?? null,
-            importBatchId: created.id,
-            contacts:
-              contacts.length > 0 ? { create: toContactCreate(contacts) } : undefined,
+            filename,
+            displayName,
+            fileSizeBytes,
+            sourceRowCount,
+            totalRecords: parsed.length,
+            importedById: req.user!.id,
           },
         })
-      }
 
-      return created
-    })
+        for (const company of parsed) {
+          const { contacts, name: _name, phone: _phone, email: _email, ...companyFields } = company
+          await tx.company.create({
+            data: {
+              ruc: companyFields.ruc,
+              razonSocial: companyFields.razonSocial ?? null,
+              importStatus: companyFields.estado ?? null,
+              fechaConsulta: parseFechaConsulta(companyFields.fechaConsulta),
+              plan: companyFields.plan ?? null,
+              notes: companyFields.notes ?? null,
+              importBatchId: created.id,
+              contacts:
+                contacts.length > 0 ? { create: toContactCreate(contacts) } : undefined,
+            },
+          })
+        }
+
+        return created
+      },
+      { timeout: 120_000, maxWait: 10_000 }
+    )
 
     res.status(201).json({
       id: batch.id,
