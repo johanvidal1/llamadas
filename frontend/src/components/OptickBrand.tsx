@@ -1,9 +1,28 @@
 type OptickBrandProps = {
-  variant: 'sidebar' | 'login'
+  variant: 'sidebar' | 'login' | 'contact'
   showSubtitle?: boolean
 }
 
 export default function OptickBrand({ variant, showSubtitle = true }: OptickBrandProps) {
+  if (variant === 'contact') {
+    return (
+      <div className="text-center">
+        <img
+          src="/logo-optick-3d.png"
+          alt="Optick Cloud"
+          className="w-24 h-24 sm:w-28 sm:h-28 mx-auto mb-5 object-contain drop-shadow-2xl"
+        />
+        <h1 className="text-3xl sm:text-4xl font-bold text-white tracking-tight">
+          Optick{' '}
+          <span className="font-semibold text-cyan-400/90">Cloud</span>
+        </h1>
+        {showSubtitle && (
+          <p className="text-slate-400 text-sm sm:text-base mt-2">CRM en la nube</p>
+        )}
+      </div>
+    )
+  }
+
   if (variant === 'sidebar') {
     return (
       <div className="flex items-center gap-2.5 min-w-0">

@@ -13,6 +13,7 @@ import {
   BarChart2,
   Menu,
   X,
+  Mail,
 } from 'lucide-react'
 import OptickBrand from './OptickBrand'
 
@@ -90,6 +91,18 @@ export default function Layout() {
               {label}
             </NavLink>
           ))}
+          <a
+            href="/contacto"
+            onClick={closeMenu}
+            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors mt-2 ${
+              isAdmin
+                ? 'text-green-200 hover:bg-green-800 hover:text-white'
+                : 'text-blue-200 hover:bg-blue-800 hover:text-white'
+            }`}
+          >
+            <Mail size={18} />
+            Contáctenos
+          </a>
         </nav>
 
         {/* User info */}

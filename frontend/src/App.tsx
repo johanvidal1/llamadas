@@ -10,6 +10,7 @@ import Agents from './pages/Agents'
 import Callbacks from './pages/Callbacks'
 import MyLeads from './pages/MyLeads'
 import Reports from './pages/Reports'
+import Contacto from './pages/Contacto'
 
 function ProtectedRoute({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
   const { user, isAdmin, isLoading } = useAuth()
@@ -40,6 +41,7 @@ export default function App() {
           path="/login"
           element={user ? <Navigate to="/" replace /> : <Login />}
         />
+        <Route path="/contacto" element={<Contacto />} />
         <Route
           path="/"
           element={

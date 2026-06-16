@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { login as apiLogin } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { LogIn } from 'lucide-react'
 import OptickBrand from '../components/OptickBrand'
+import { getWhatsAppUrl } from '../config/contact'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -76,6 +77,19 @@ export default function Login() {
 
         <p className="text-center text-xs text-gray-400 mt-8">
           Desarrollado por Optick Cloud © {new Date().getFullYear()}
+          {' · '}
+          <Link to="/contacto" className="text-teal-600 hover:text-teal-700 font-medium">
+            Contáctenos
+          </Link>
+          {' · '}
+          <a
+            href={getWhatsAppUrl()}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[#25D366] hover:text-[#20bd5a] font-medium"
+          >
+            WhatsApp
+          </a>
         </p>
       </div>
     </div>
