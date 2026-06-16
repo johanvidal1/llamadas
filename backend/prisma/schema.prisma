@@ -32,12 +32,16 @@ model User {
 }
 
 model ImportBatch {
-  id           String    @id @default(cuid())
-  filename     String
-  totalRecords Int
-  importedById String
-  importedBy   User      @relation(fields: [importedById], references: [id])
-  createdAt    DateTime  @default(now())
+  id              String    @id @default(cuid())
+  filename        String
+  displayName     String?
+  fileSizeBytes   Int?
+  sourceRowCount  Int?
+  totalRecords    Int
+  blocked         Boolean   @default(false)
+  importedById    String
+  importedBy    User      @relation(fields: [importedById], references: [id])
+  createdAt     DateTime  @default(now())
 
   companies Company[]
 }

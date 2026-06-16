@@ -1,20 +1,94 @@
 import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getImports, getImport, uploadImport, deleteImport } from '../api/client'
+import { getImports, getImport, uploadImport, deleteImport, patchImport } from '../api/client'
+import type { DuplicateFileWarning } from '../api/client'
 import toast from 'react-hot-toast'
 import {
   Upload, FileSpreadsheet, ChevronRight, Clock, Users, X,
-  Phone, Mail, UserCheck, UserX, Search, Trash2, AlertTriangle,
+  Phone, Mail, UserCheck, UserX, Search, Trash2, AlertTriangle, Building2, List, Ban, ShieldCheck,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { StatusBadge } from '../components/StatusBadge'
 
+function batchLabel(batch: { displayName?: string | null; filename: string }) {
+  return batch.displayName?.trim() || batch.filename
+}
+
+function formatFileSize(bytes: number | null | undefined) {
+  if (bytes == null) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function registroLabel(count: number) {
+  return `${count} registro${count !== 1 ? 's' : ''}`
+}
+
+function batchMetricsText(batch: {
+  sourceRowCount?: number | null
+  contactCount: number
+  companyCount: number
+}) {
+  const parts: string[] = []
+  if (batch.sourceRowCount != null) {
+    parts.push(registroLabel(batch.sourceRowCount))
+  }
+  parts.push(`${batch.contactCount} contacto${batch.contactCount !== 1 ? 's' : ''}`)
+  parts.push(`${batch.companyCount} RUC${batch.companyCount !== 1 ? 's' : ''}`)
+  return parts.join(' · ')
+}
+
+function duplicateWarningStyle(severity: DuplicateFileWarning['severity']) {
+  if (severity === 'filename_and_size') {
+    return { iconBg: 'bg-red-100', iconColor: 'text-red-600' }
+  }
+  if (severity === 'size_only') {
+    return { iconBg: 'bg-orange-100', iconColor: 'text-orange-600' }
+  }
+  return { iconBg: 'bg-amber-100', iconColor: 'text-amber-600' }
+}
+
+function duplicateWarningCopy(severity: DuplicateFileWarning['severity']) {
+  switch (severity) {
+    case 'filename_and_size':
+      return {
+        title: 'Archivo posiblemente duplicado',
+        subtitle: 'Mismo nombre y mismo tamaño que una importación anterior',
+        body: 'El archivo que intentas subir parece ser el mismo que ya importaste (mismo nombre y tamaño en bytes). Puedes continuar y crear un nuevo lote si lo deseas.',
+      }
+    case 'size_only':
+      return {
+        title: 'Archivo con mismo tamaño',
+        subtitle: 'Mismo peso en bytes que una importación anterior con otro nombre',
+        body: 'El archivo que intentas subir tiene el mismo tamaño que una importación previa con un nombre distinto (por ejemplo, una copia renombrada como "lista (1).xlsx"). Puede ser el mismo archivo. Puedes continuar y crear un nuevo lote si lo deseas.',
+      }
+    default:
+      return {
+        title: 'Nombre de archivo repetido',
+        subtitle: 'Ya existe una importación con este nombre de archivo',
+        body: 'Ya importaste un archivo con el mismo nombre. Si el contenido es distinto, puedes continuar como un nuevo lote.',
+      }
+  }
+}
+
 export default function Imports() {
   const [dragging, setDragging] = useState(false)
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null)
   const [drawerSearch, setDrawerSearch] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState<{ id: string; filename: string } | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; label: string } | null>(null)
+  const [confirmBlock, setConfirmBlock] = useState<{
+    id: string
+    label: string
+    blocked: boolean
+  } | null>(null)
+  const [duplicateWarning, setDuplicateWarning] = useState<{
+    file: File
+    severity: DuplicateFileWarning['severity']
+    existingBatch: DuplicateFileWarning['existingBatch']
+  } | null>(null)
+  const [duplicateDisplayName, setDuplicateDisplayName] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
   const qc = useQueryClient()
 
@@ -37,15 +111,46 @@ export default function Imports() {
       qc.invalidateQueries({ queryKey: ['imports'] })
     },
     onError: (err: { response?: { data?: { error?: string } } }) => {
-      toast.error(err?.response?.data?.error ?? 'Error al eliminar la importación')
+      toast.error(
+        err?.response?.data?.error ?? 'Error al eliminar la importación',
+        { duration: 5000 }
+      )
+      toast('Puedes bloquear el lote para que no se use en nuevas asignaciones.', { icon: 'ℹ️' })
       setConfirmDelete(null)
     },
   })
 
+  const blockMutation = useMutation({
+    mutationFn: ({ id, blocked }: { id: string; blocked: boolean }) =>
+      patchImport(id, { blocked }),
+    onSuccess: (_data, { blocked }) => {
+      toast.success(blocked ? 'Lote bloqueado' : 'Lote desbloqueado')
+      setConfirmBlock(null)
+      qc.invalidateQueries({ queryKey: ['imports'] })
+      qc.invalidateQueries({ queryKey: ['import'] })
+      qc.invalidateQueries({ queryKey: ['clients', 'unassigned'] })
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      toast.error(err?.response?.data?.error ?? 'Error al actualizar el lote')
+      setConfirmBlock(null)
+    },
+  })
+
   const mutation = useMutation({
-    mutationFn: (file: File) => uploadImport(file),
+    mutationFn: ({
+      file,
+      confirmDuplicate,
+      displayName,
+    }: {
+      file: File
+      confirmDuplicate?: boolean
+      displayName?: string
+    }) => uploadImport(file, { confirmDuplicate, displayName }),
     onSuccess: (data) => {
-      toast.success(`✅ Importados ${data.imported} registros de "${data.filename}"`)
+      setDuplicateWarning(null)
+      setDuplicateDisplayName('')
+      const label = data.displayName?.trim() || data.filename
+      toast.success(`✅ Importados ${data.imported} registros de "${label}"`)
       if (data.withoutPhone && data.withoutPhone > 0) {
         toast(`⚠️ ${data.withoutPhone} registro(s) sin teléfono`, { icon: '⚠️' })
       }
@@ -54,8 +159,30 @@ export default function Imports() {
       }
       qc.invalidateQueries({ queryKey: ['imports'] })
     },
-    onError: (err: { response?: { data?: { error?: string } } }) => {
-      toast.error(err?.response?.data?.error ?? 'Error al importar el archivo')
+    onError: (
+      err: {
+        response?: {
+          status?: number
+          data?: Partial<DuplicateFileWarning> & { error?: string }
+        }
+      },
+      variables
+    ) => {
+      const data = err?.response?.data
+      if (
+        err?.response?.status === 409 &&
+        data?.error === 'duplicate_file_warning' &&
+        data.severity &&
+        data.existingBatch
+      ) {
+        setDuplicateWarning({
+          file: variables.file,
+          severity: data.severity,
+          existingBatch: data.existingBatch,
+        })
+        return
+      }
+      toast.error(data?.error ?? 'Error al importar el archivo')
     },
   })
 
@@ -64,7 +191,17 @@ export default function Imports() {
       toast.error('Solo se permiten archivos Excel (.xlsx, .xls) o CSV (.csv)')
       return
     }
-    mutation.mutate(file)
+    setDuplicateDisplayName('')
+    mutation.mutate({ file })
+  }
+
+  const handleConfirmDuplicate = () => {
+    if (!duplicateWarning) return
+    mutation.mutate({
+      file: duplicateWarning.file,
+      confirmDuplicate: true,
+      displayName: duplicateDisplayName || undefined,
+    })
   }
 
   const handleDrop = (e: React.DragEvent) => {
@@ -120,13 +257,20 @@ export default function Imports() {
             <p className="font-medium text-gray-700">
               Arrastra tu archivo aquí, o <span className="text-blue-600">haz clic para seleccionar</span>
             </p>
-            <p className="text-sm text-gray-400 mt-1">Excel (.xlsx, .xls) · CSV (.csv) · Máximo 20 MB</p>
+            <p className="text-sm text-gray-400 mt-1">
+              Excel (.xlsx, .xls) con hoja &quot;Contactos&quot; · CSV (.csv) · Máximo 20 MB
+            </p>
           </>
         )}
       </div>
 
       {/* Columns hint */}
       <div className="card p-5">
+        <p className="text-sm text-gray-600 mb-3">
+          Los archivos <strong>Excel</strong> deben incluir una hoja llamada{' '}
+          <strong>Contactos</strong> con los datos (no se usa la primera hoja). Los{' '}
+          <strong>CSV</strong> no requieren hoja; la primera fila son los encabezados.
+        </p>
         <p className="text-sm font-semibold text-gray-700 mb-2">
           📋 Columnas reconocidas automáticamente:
         </p>
@@ -164,10 +308,15 @@ export default function Imports() {
               (batch: {
                 id: string
                 filename: string
+                displayName?: string | null
+                fileSizeBytes?: number | null
+                sourceRowCount?: number | null
                 totalRecords: number
+                companyCount: number
+                contactCount: number
+                blocked?: boolean
                 createdAt: string
                 importedBy: { name: string }
-                _count: { companies: number }
               }) => (
                 <div key={batch.id}
                   className="card p-5 flex items-center justify-between hover:shadow-md hover:border-blue-200 transition-all">
@@ -176,12 +325,35 @@ export default function Imports() {
                       <FileSpreadsheet size={20} className="text-green-600" />
                     </div>
                     <div>
-                      <p className="font-medium text-gray-900">{batch.filename}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-gray-900">{batchLabel(batch)}</p>
+                        {batch.blocked && (
+                          <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-red-100 text-red-700">
+                            Bloqueado
+                          </span>
+                        )}
+                      </div>
+                      {batch.displayName?.trim() && batch.displayName.trim() !== batch.filename && (
+                        <p className="text-xs text-gray-400 truncate max-w-md">{batch.filename}</p>
+                      )}
                       <div className="flex items-center gap-3 text-xs text-gray-400 mt-0.5">
+                        {batch.sourceRowCount != null && (
+                          <span className="flex items-center gap-1">
+                            <List size={12} />
+                            {registroLabel(batch.sourceRowCount)}
+                          </span>
+                        )}
                         <span className="flex items-center gap-1">
                           <Users size={12} />
-                          {batch._count.companies} registros
+                          {batch.contactCount} contacto{batch.contactCount !== 1 ? 's' : ''}
                         </span>
+                        <span className="flex items-center gap-1">
+                          <Building2 size={12} />
+                          {batch.companyCount} RUC{batch.companyCount !== 1 ? 's' : ''}
+                        </span>
+                        {batch.fileSizeBytes != null && (
+                          <span>{formatFileSize(batch.fileSizeBytes)}</span>
+                        )}
                         <span className="flex items-center gap-1">
                           <Clock size={12} />
                           {format(new Date(batch.createdAt), "d MMM yyyy 'a las' HH:mm", { locale: es })}
@@ -192,6 +364,24 @@ export default function Imports() {
                   </div>
                   <div className="flex items-center gap-2">
                     <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setConfirmBlock({
+                          id: batch.id,
+                          label: batchLabel(batch),
+                          blocked: !batch.blocked,
+                        })
+                      }}
+                      className={`p-2 rounded-lg transition-colors ${
+                        batch.blocked
+                          ? 'hover:bg-green-50 text-red-500 hover:text-green-600'
+                          : 'hover:bg-amber-50 text-gray-400 hover:text-amber-600'
+                      }`}
+                      title={batch.blocked ? 'Desbloquear lote' : 'Bloquear lote'}
+                    >
+                      {batch.blocked ? <ShieldCheck size={16} /> : <Ban size={16} />}
+                    </button>
+                    <button
                       onClick={() => { setSelectedBatchId(batch.id); setDrawerSearch('') }}
                       className="p-2 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"
                       title="Ver detalle"
@@ -199,7 +389,7 @@ export default function Imports() {
                       <ChevronRight size={16} />
                     </button>
                     <button
-                      onClick={(e) => { e.stopPropagation(); setConfirmDelete({ id: batch.id, filename: batch.filename }) }}
+                      onClick={(e) => { e.stopPropagation(); setConfirmDelete({ id: batch.id, label: batchLabel(batch) }) }}
                       className="p-2 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
                       title="Eliminar importación"
                     >
@@ -212,6 +402,138 @@ export default function Imports() {
           </div>
         )}
       </div>
+
+    {/* ── Duplicate file warning modal ── */}
+    {duplicateWarning && (() => {
+      const { iconBg, iconColor } = duplicateWarningStyle(duplicateWarning.severity)
+      const { title, subtitle, body } = duplicateWarningCopy(duplicateWarning.severity)
+      return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${iconBg}`}>
+              <AlertTriangle size={20} className={iconColor} />
+            </div>
+            <div>
+              <h3 className="font-semibold text-gray-900">{title}</h3>
+              <p className="text-sm text-gray-500">{subtitle}</p>
+            </div>
+          </div>
+
+          <p className="text-sm text-gray-700 mb-3">{body}</p>
+
+          <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm mb-4 space-y-1">
+            <p className="font-medium text-gray-900 truncate">{duplicateWarning.file.name}</p>
+            <p className="text-xs text-gray-500">
+              Tamaño del archivo: {formatFileSize(duplicateWarning.file.size)}
+            </p>
+            <div className="border-t border-gray-200 pt-2 mt-2">
+              <p className="text-xs font-semibold text-gray-600 mb-1">Importación anterior:</p>
+              <p className="text-xs text-gray-700 truncate">{duplicateWarning.existingBatch.filename}</p>
+              <p className="text-xs text-gray-500">
+                {format(new Date(duplicateWarning.existingBatch.createdAt), "d MMM yyyy 'a las' HH:mm", { locale: es })}
+                {' · '}
+                {batchMetricsText(duplicateWarning.existingBatch)}
+                {' · '}
+                {formatFileSize(duplicateWarning.existingBatch.fileSizeBytes)}
+              </p>
+            </div>
+          </div>
+
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Etiqueta del lote (opcional)
+          </label>
+          <input
+            type="text"
+            value={duplicateDisplayName}
+            onChange={(e) => setDuplicateDisplayName(e.target.value)}
+            placeholder={duplicateWarning.file.name.replace(/\.[^.]+$/, '')}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-6 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+          />
+
+          <div className="flex gap-3 justify-end">
+            <button
+              onClick={() => { setDuplicateWarning(null); setDuplicateDisplayName('') }}
+              disabled={mutation.isPending}
+              className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleConfirmDuplicate}
+              disabled={mutation.isPending}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+            >
+              {mutation.isPending ? 'Importando...' : 'Importar como nuevo lote'}
+            </button>
+          </div>
+        </div>
+      </div>
+      )
+    })()}
+
+    {/* ── Confirm block/unblock modal ── */}
+    {confirmBlock && (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
+              confirmBlock.blocked ? 'bg-amber-100' : 'bg-green-100'
+            }`}>
+              {confirmBlock.blocked ? (
+                <Ban size={20} className="text-amber-600" />
+              ) : (
+                <ShieldCheck size={20} className="text-green-600" />
+              )}
+            </div>
+            <div>
+              <h3 className="font-semibold text-gray-900">
+                {confirmBlock.blocked ? 'Bloquear importación' : 'Desbloquear importación'}
+              </h3>
+              <p className="text-sm text-gray-500">
+                {confirmBlock.blocked
+                  ? 'No se usará en nuevas asignaciones'
+                  : 'Volverá a estar disponible para asignar'}
+              </p>
+            </div>
+          </div>
+          <p className="font-medium text-gray-900 bg-gray-50 rounded-lg px-3 py-2 text-sm mb-4 truncate">
+            {confirmBlock.label}
+          </p>
+          <p className="text-xs text-gray-500 mb-6">
+            {confirmBlock.blocked
+              ? 'Las asignaciones, llamadas y contactos existentes no se modifican. Solo impide nuevas asignaciones desde este lote.'
+              : 'El lote volverá a aparecer en el selector de asignaciones.'}
+          </p>
+          <div className="flex gap-3 justify-end">
+            <button
+              onClick={() => setConfirmBlock(null)}
+              disabled={blockMutation.isPending}
+              className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={() =>
+                blockMutation.mutate({ id: confirmBlock.id, blocked: confirmBlock.blocked })
+              }
+              disabled={blockMutation.isPending}
+              className={`px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors disabled:opacity-50 ${
+                confirmBlock.blocked
+                  ? 'bg-amber-600 hover:bg-amber-700'
+                  : 'bg-green-600 hover:bg-green-700'
+              }`}
+            >
+              {blockMutation.isPending
+                ? 'Guardando...'
+                : confirmBlock.blocked
+                  ? 'Sí, bloquear'
+                  : 'Sí, desbloquear'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* ── Confirm delete modal ── */}
     {confirmDelete && (
@@ -230,7 +552,7 @@ export default function Imports() {
             ¿Estás seguro que deseas eliminar el archivo:
           </p>
           <p className="font-medium text-gray-900 bg-gray-50 rounded-lg px-3 py-2 text-sm mb-4 truncate">
-            {confirmDelete.filename}
+            {confirmDelete.label}
           </p>
           <p className="text-xs text-gray-500 mb-6">
             Solo se puede eliminar si ningún agente ha utilizado los registros de este lote (sin asignaciones ni llamadas registradas).
@@ -270,11 +592,19 @@ export default function Imports() {
           <div className="bg-blue-700 text-white px-6 py-4 flex items-center justify-between shrink-0">
             <div className="min-w-0">
               <p className="font-semibold text-base truncate">
-                {batchDetail?.filename ?? 'Cargando...'}
+                {batchDetail ? batchLabel(batchDetail) : 'Cargando...'}
+                {batchDetail?.blocked && (
+                  <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-red-500/30 text-red-100 align-middle">
+                    Bloqueado
+                  </span>
+                )}
               </p>
+              {batchDetail?.displayName?.trim() && batchDetail.displayName.trim() !== batchDetail.filename && (
+                <p className="text-blue-300 text-xs truncate">{batchDetail.filename}</p>
+              )}
               {batchDetail && (
                 <p className="text-blue-200 text-xs mt-0.5">
-                  {batchDetail._count.companies} empresas ·{' '}
+                  {batchMetricsText(batchDetail)} ·{' '}
                   {format(new Date(batchDetail.createdAt), "d MMM yyyy HH:mm", { locale: es })} ·{' '}
                   por {batchDetail.importedBy.name}
                 </p>
@@ -301,7 +631,7 @@ export default function Imports() {
             return (
               <div className="grid grid-cols-4 divide-x divide-gray-200 border-b border-gray-200 shrink-0">
                 {[
-                  { label: 'Total', value: batchDetail._count.companies, color: 'text-gray-900' },
+                  { label: 'Total', value: batchDetail.companyCount, color: 'text-gray-900' },
                   { label: 'Asignados', value: assigned, color: 'text-blue-600' },
                   { label: 'Pendientes', value: pending, color: 'text-amber-600' },
                   { label: 'Interesados', value: interested, color: 'text-green-600' },
@@ -422,9 +752,9 @@ export default function Imports() {
                 </table>
               )
             })()}
-            {batchDetail && batchDetail._count.companies > 200 && (
+            {batchDetail && batchDetail.companyCount > 200 && (
               <p className="text-xs text-gray-400 text-center py-3">
-                Mostrando las primeras 200 de {batchDetail._count.companies} registros
+                Mostrando las primeras 200 de {batchDetail.companyCount} registros
               </p>
             )}
           </div>

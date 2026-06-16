@@ -1,8 +1,10 @@
+import path from 'path'
 import { Router, Response } from 'express'
 import multer from 'multer'
+import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
-import { parseExcel, parseCsv, ParsedCompany } from '../lib/parseFile'
+import { parseExcel, parseCsv, ParsedCompany, ParseResult, MissingContactosSheetError } from '../lib/parseFile'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
 
 function parseFechaConsulta(raw?: string): Date | null {
@@ -55,16 +57,101 @@ const upload = multer({
   },
 })
 
+function normalizeFilename(name: string): string {
+  return path
+    .basename(name)
+    .trim()
+    .replace(/\s*\(\d+\)(?=\.[^.]+$)/, '')
+    .toLowerCase()
+}
+
+function parseConfirmDuplicate(value: unknown): boolean {
+  return value === true || value === 'true' || value === '1'
+}
+
+async function getBatchCounts(batchId: string) {
+  const [companyCount, contactCount] = await Promise.all([
+    prisma.company.count({ where: { importBatchId: batchId } }),
+    prisma.contact.count({ where: { company: { importBatchId: batchId } } }),
+  ])
+  return { companyCount, contactCount }
+}
+
+async function findDuplicateBatch(filename: string, fileSizeBytes: number) {
+  const normalized = normalizeFilename(filename)
+  const batches = await prisma.importBatch.findMany({
+    select: {
+      id: true,
+      filename: true,
+      fileSizeBytes: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  })
+
+  const filenameMatch = batches.find((batch) => normalizeFilename(batch.filename) === normalized)
+  if (filenameMatch) {
+    const counts = await getBatchCounts(filenameMatch.id)
+    const severity =
+      filenameMatch.fileSizeBytes != null && filenameMatch.fileSizeBytes === fileSizeBytes
+        ? ('filename_and_size' as const)
+        : ('filename' as const)
+
+    return {
+      severity,
+      existingBatch: {
+        id: filenameMatch.id,
+        filename: filenameMatch.filename,
+        fileSizeBytes: filenameMatch.fileSizeBytes,
+        createdAt: filenameMatch.createdAt,
+        ...counts,
+      },
+    }
+  }
+
+  if (fileSizeBytes > 0) {
+    const sizeMatch = batches.find(
+      (batch) =>
+        batch.fileSizeBytes != null &&
+        batch.fileSizeBytes > 0 &&
+        batch.fileSizeBytes === fileSizeBytes &&
+        normalizeFilename(batch.filename) !== normalized
+    )
+    if (sizeMatch) {
+      const counts = await getBatchCounts(sizeMatch.id)
+      return {
+        severity: 'size_only' as const,
+        existingBatch: {
+          id: sizeMatch.id,
+          filename: sizeMatch.filename,
+          fileSizeBytes: sizeMatch.fileSizeBytes,
+          createdAt: sizeMatch.createdAt,
+          ...counts,
+        },
+      }
+    }
+  }
+
+  return null
+}
+
 // GET /api/imports
 router.get('/', requireAdmin, async (_req: AuthRequest, res: Response) => {
   const batches = await prisma.importBatch.findMany({
     include: {
       importedBy: { select: { name: true } },
-      _count: { select: { companies: true } },
     },
     orderBy: { createdAt: 'desc' },
   })
-  res.json(batches)
+
+  const batchesWithCounts = await Promise.all(
+    batches.map(async (batch) => {
+      const counts = await getBatchCounts(batch.id)
+      return { ...batch, ...counts }
+    })
+  )
+
+  res.json(batchesWithCounts)
 })
 
 // GET /api/imports/:id
@@ -84,14 +171,44 @@ router.get('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
         orderBy: { createdAt: 'asc' },
         take: 200,
       },
-      _count: { select: { companies: true } },
     },
   })
   if (!batch) {
     res.status(404).json({ error: 'Importación no encontrada' })
     return
   }
-  res.json(batch)
+
+  const counts = await getBatchCounts(batch.id)
+  res.json({ ...batch, ...counts })
+})
+
+const patchImportSchema = z.object({
+  blocked: z.boolean(),
+})
+
+// PATCH /api/imports/:id
+router.patch('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const { blocked } = patchImportSchema.parse(req.body)
+
+  const batch = await prisma.importBatch.findUnique({
+    where: { id: req.params.id },
+  })
+
+  if (!batch) {
+    res.status(404).json({ error: 'Importación no encontrada' })
+    return
+  }
+
+  const updated = await prisma.importBatch.update({
+    where: { id: req.params.id },
+    data: { blocked },
+    include: {
+      importedBy: { select: { name: true } },
+    },
+  })
+
+  const counts = await getBatchCounts(updated.id)
+  res.json({ ...updated, ...counts })
 })
 
 // POST /api/imports
@@ -107,13 +224,44 @@ router.post(
 
     const buffer = req.file.buffer
     const filename = req.file.originalname
-    let parsed
+    const fileSizeBytes = req.file.size || buffer.length
+    const confirmDuplicate = parseConfirmDuplicate(req.body?.confirmDuplicate)
+    const displayNameRaw = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : ''
+    const displayName = displayNameRaw || null
 
-    if (filename.match(/\.csv$/i)) {
-      parsed = await parseCsv(buffer)
-    } else {
-      parsed = await parseExcel(buffer)
+    if (!confirmDuplicate) {
+      const duplicate = await findDuplicateBatch(filename, fileSizeBytes)
+      if (duplicate) {
+        res.status(409).json({
+          error: 'duplicate_file_warning',
+          severity: duplicate.severity,
+          existingBatch: duplicate.existingBatch,
+        })
+        return
+      }
     }
+
+    let parseResult: ParseResult
+
+    try {
+      if (filename.match(/\.csv$/i)) {
+        parseResult = await parseCsv(buffer)
+      } else {
+        parseResult = await parseExcel(buffer)
+      }
+    } catch (err) {
+      if (err instanceof MissingContactosSheetError) {
+        res.status(400).json({
+          error: err.message,
+          availableSheets: err.availableSheets,
+        })
+        return
+      }
+      throw err
+    }
+
+    const parsed = parseResult.companies
+    const { sourceRowCount } = parseResult
 
     if (parsed.length === 0) {
       res.status(400).json({
@@ -131,6 +279,9 @@ router.post(
       const created = await tx.importBatch.create({
         data: {
           filename,
+          displayName,
+          fileSizeBytes,
+          sourceRowCount,
           totalRecords: parsed.length,
           importedById: req.user!.id,
         },
@@ -159,7 +310,9 @@ router.post(
     res.status(201).json({
       id: batch.id,
       filename: batch.filename,
+      displayName: batch.displayName,
       totalRecords: batch.totalRecords,
+      sourceRowCount: batch.sourceRowCount,
       imported: parsed.length,
       withoutContacts,
       withoutPhone,

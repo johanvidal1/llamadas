@@ -1,5 +1,22 @@
 import { prisma } from './prisma'
 
+export class BatchBlockedError extends Error {
+  constructor() {
+    super('Este lote está bloqueado y no puede usarse para nuevas asignaciones')
+    this.name = 'BatchBlockedError'
+  }
+}
+
+export async function assertBatchNotBlocked(batchId: string): Promise<void> {
+  const batch = await prisma.importBatch.findUnique({
+    where: { id: batchId },
+    select: { blocked: true },
+  })
+  if (batch?.blocked) {
+    throw new BatchBlockedError()
+  }
+}
+
 export type OrderedContact = {
   id: string
   companyId: string
@@ -16,6 +33,10 @@ export async function getUnassignedContactsOrdered(
   batchId?: string,
   limit?: number
 ): Promise<OrderedContact[]> {
+  if (batchId) {
+    await assertBatchNotBlocked(batchId)
+  }
+
   let assignedIds: string[] = []
   if (batchId) {
     const batchContacts = await prisma.contact.findMany({
@@ -37,7 +58,9 @@ export async function getUnassignedContactsOrdered(
 
   return prisma.contact.findMany({
     where: {
-      ...(batchId ? { company: { importBatchId: batchId } } : {}),
+      ...(batchId
+        ? { company: { importBatchId: batchId } }
+        : { company: { importBatch: { blocked: false } } }),
       ...(assignedIds.length > 0 ? { id: { notIn: assignedIds } } : {}),
     },
     select: {

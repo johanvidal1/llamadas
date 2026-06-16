@@ -23,6 +23,11 @@ export interface ParsedCompany {
   contacts: ParsedContact[]
 }
 
+export interface ParseResult {
+  companies: ParsedCompany[]
+  sourceRowCount: number
+}
+
 function normalizePhone(raw: string): string {
   return raw.replace(/\s+/g, '').replace(/^\+51/, '').trim()
 }
@@ -135,17 +140,8 @@ function parseRows(rows: Record<string, unknown>[]): ParsedCompany[] {
     if (estado && !company.estado) company.estado = estado
     if (fechaConsulta && !company.fechaConsulta) company.fechaConsulta = fechaConsulta
 
-    // Only add contact if has nombre and/or telefono
     if (nombre || telefono) {
-      // Deduplicate: same nombre (case-insensitive) + same telefono
-      const isDuplicate = company.contacts.some(
-        (c) =>
-          c.nombre.toLowerCase() === nombre.toLowerCase() &&
-          (c.telefono ?? '') === (telefono ?? '')
-      )
-      if (!isDuplicate) {
-        company.contacts.push({ nombre, tipoContacto, dni, email, telefono })
-      }
+      company.contacts.push({ nombre, tipoContacto, dni, email, telefono })
     }
   }
 
@@ -160,23 +156,42 @@ function parseRows(rows: Record<string, unknown>[]): ParsedCompany[] {
   return Array.from(byRuc.values())
 }
 
-export async function parseExcel(buffer: Buffer): Promise<ParsedCompany[]> {
+export class MissingContactosSheetError extends Error {
+  constructor(public availableSheets: string[]) {
+    super(
+      `No se encontró la hoja "Contactos". Hojas disponibles: ${availableSheets.join(', ') || '(ninguna)'}`
+    )
+    this.name = 'MissingContactosSheetError'
+  }
+}
+
+export async function parseExcel(buffer: Buffer): Promise<ParseResult> {
   const workbook = XLSX.read(buffer, { type: 'buffer' })
-  const sheetName = workbook.SheetNames[0]
+  const sheetName = workbook.SheetNames.find(
+    (name) => name.trim().toLowerCase() === 'contactos'
+  )
+  if (!sheetName) {
+    throw new MissingContactosSheetError(workbook.SheetNames)
+  }
   const sheet = workbook.Sheets[sheetName]
   const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
   const rows = rawRows.flatMap(normalizeRow)
-  return parseRows(rows)
+  return { companies: parseRows(rows), sourceRowCount: rawRows.length }
 }
 
-export async function parseCsv(buffer: Buffer): Promise<ParsedCompany[]> {
+export async function parseCsv(buffer: Buffer): Promise<ParseResult> {
   return new Promise((resolve, reject) => {
     const rows: Record<string, unknown>[] = []
     const stream = Readable.from(buffer)
     stream
       .pipe(csvParser())
       .on('data', (row: Record<string, unknown>) => rows.push(row))
-      .on('end', () => resolve(parseRows(rows.flatMap(normalizeRow))))
+      .on('end', () =>
+        resolve({
+          companies: parseRows(rows.flatMap(normalizeRow)),
+          sourceRowCount: rows.length,
+        })
+      )
       .on('error', reject)
   })
 }

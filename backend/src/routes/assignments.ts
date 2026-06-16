@@ -1,7 +1,7 @@
 import { Router, Response } from 'express'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma'
-import { getUnassignedContactsOrdered } from '../lib/assignmentOrder'
+import { getUnassignedContactsOrdered, BatchBlockedError } from '../lib/assignmentOrder'
 import { buildAssignmentPreview } from '../lib/assignmentPreview'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
 
@@ -62,8 +62,16 @@ router.post('/preview', requireAdmin, async (req: AuthRequest, res: Response) =>
     return
   }
 
-  const preview = await buildAssignmentPreview(agentId, batchId, count)
-  res.json(preview)
+  try {
+    const preview = await buildAssignmentPreview(agentId, batchId, count)
+    res.json(preview)
+  } catch (err) {
+    if (err instanceof BatchBlockedError) {
+      res.status(400).json({ error: err.message })
+      return
+    }
+    throw err
+  }
 })
 
 // POST /api/assignments
@@ -90,12 +98,33 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     const assignedIds = new Set(assigned.map((a) => a.contactId))
     idsToAssign = contactIds.filter((id) => !assignedIds.has(id))
   } else {
-    const unassigned = await getUnassignedContactsOrdered(batchId, count ?? undefined)
-    idsToAssign = unassigned.map((c) => c.id)
+    try {
+      const unassigned = await getUnassignedContactsOrdered(batchId, count ?? undefined)
+      idsToAssign = unassigned.map((c) => c.id)
+    } catch (err) {
+      if (err instanceof BatchBlockedError) {
+        res.status(400).json({ error: err.message })
+        return
+      }
+      throw err
+    }
   }
 
   if (idsToAssign.length === 0) {
     res.status(400).json({ error: 'No hay contactos disponibles para asignar' })
+    return
+  }
+
+  const fromBlocked = await prisma.contact.count({
+    where: {
+      id: { in: idsToAssign },
+      company: { importBatch: { blocked: true } },
+    },
+  })
+  if (fromBlocked > 0) {
+    res.status(400).json({
+      error: 'Uno o más contactos pertenecen a un lote bloqueado',
+    })
     return
   }
 

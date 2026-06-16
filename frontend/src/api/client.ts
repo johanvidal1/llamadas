@@ -48,10 +48,38 @@ export const deleteUser = (id: string) => api.delete(`/users/${id}`).then((r) =>
 // ─── Imports ──────────────────────────────────────────────
 export const getImports = () => api.get('/imports').then((r) => r.data)
 export const getImport = (id: string) => api.get(`/imports/${id}`).then((r) => r.data)
+export const patchImport = (id: string, data: { blocked: boolean }) =>
+  api.patch(`/imports/${id}`, data).then((r) => r.data)
 export const deleteImport = (id: string) => api.delete(`/imports/${id}`).then((r) => r.data)
-export const uploadImport = (file: File) => {
+
+export type UploadImportOptions = {
+  confirmDuplicate?: boolean
+  displayName?: string
+}
+
+export type DuplicateFileWarning = {
+  error: 'duplicate_file_warning'
+  severity: 'filename' | 'filename_and_size' | 'size_only'
+  existingBatch: {
+    id: string
+    filename: string
+    fileSizeBytes: number | null
+    createdAt: string
+    sourceRowCount?: number | null
+    companyCount: number
+    contactCount: number
+  }
+}
+
+export const uploadImport = (file: File, options?: UploadImportOptions) => {
   const form = new FormData()
   form.append('file', file)
+  if (options?.confirmDuplicate) {
+    form.append('confirmDuplicate', 'true')
+  }
+  if (options?.displayName?.trim()) {
+    form.append('displayName', options.displayName.trim())
+  }
   return api.post('/imports', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then((r) => r.data)
@@ -100,6 +128,11 @@ export const previewAssignment = (data: {
   count?: number
 }) => api.post<AssignmentPreview>('/assignments/preview', data).then((r) => r.data)
 
+export type AssignmentResult = {
+  assigned: number
+  skipped: number
+}
+
 export const createAssignment = (data: {
   agentId: string
   batchId?: string
@@ -107,7 +140,7 @@ export const createAssignment = (data: {
   clientIds?: string[]
   contactIds?: string[]
 }) =>
-  api.post('/assignments', data).then((r) => r.data)
+  api.post<AssignmentResult>('/assignments', data).then((r) => r.data)
 
 export const deleteAssignment = (id: string) =>
   api.delete(`/assignments/${id}`).then((r) => r.data)

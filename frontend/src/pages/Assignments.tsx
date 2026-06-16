@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getUsers,
@@ -7,6 +7,7 @@ import {
   createAssignment,
   previewAssignment,
   type AssignmentPreview,
+  type AssignmentResult,
 } from '../api/client'
 import toast from 'react-hot-toast'
 import { UserCheck, Users, AlertCircle, X, Package, ChevronDown, ChevronRight } from 'lucide-react'
@@ -14,13 +15,24 @@ import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { StatusBadge, STATUS_CONFIG } from '../components/StatusBadge'
 
+function batchLabel(batch: { displayName?: string | null; filename: string }) {
+  return batch.displayName?.trim() || batch.filename
+}
+
 export default function Assignments() {
   const [agentId, setAgentId] = useState('')
   const [batchId, setBatchId] = useState('')
   const [count, setCount] = useState<number | ''>('')
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewModal, setPreviewModal] = useState<AssignmentPreview | null>(null)
+  const [pendingAssignCount, setPendingAssignCount] = useState<number | null>(null)
+  const [lastAssignment, setLastAssignment] = useState<{
+    count: number
+    agentName: string
+  } | null>(null)
   const qc = useQueryClient()
+
+  type AssignVars = Parameters<typeof createAssignment>[0] & { expectedCount?: number }
 
   // Drawer state — agent detail
   const [drawerAgentId, setDrawerAgentId] = useState<string | null>(null)
@@ -32,6 +44,18 @@ export default function Assignments() {
 
   const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: getUsers })
   const { data: imports = [] } = useQuery({ queryKey: ['imports'], queryFn: getImports })
+
+  const assignableImports = imports.filter(
+    (b: { blocked?: boolean }) => !b.blocked
+  )
+
+  useEffect(() => {
+    if (!batchId) return
+    const selected = imports.find((b: { id: string; blocked?: boolean }) => b.id === batchId)
+    if (selected?.blocked) {
+      setBatchId('')
+    }
+  }, [imports, batchId])
 
   // Query companies with assigned contacts for the selected agent in the drawer
   const { data: drawerClientsData, isLoading: loadingDrawer } = useQuery({
@@ -107,14 +131,33 @@ export default function Assignments() {
   const unassignedTotal = unassignedData?.total ?? 0
 
   const mutation = useMutation({
-    mutationFn: createAssignment,
-    onSuccess: (data) => {
-      toast.success(`✅ ${data.assigned} contactos asignados`)
+    mutationFn: ({ expectedCount: _, ...vars }: AssignVars) => createAssignment(vars),
+    onSuccess: (data: AssignmentResult, variables: AssignVars) => {
+      const agentName =
+        agents.find((a: { id: string; name: string }) => a.id === variables.agentId)?.name ?? ''
+      setLastAssignment({ count: data.assigned, agentName })
+      if (variables.expectedCount != null) {
+        setCount(data.assigned)
+      }
+      setPendingAssignCount(null)
       setPreviewModal(null)
+
+      const unassignedKey = ['clients', 'unassigned', batchId]
+      qc.setQueryData(
+        unassignedKey,
+        (old: { total?: number } | undefined) => {
+          if (old?.total == null) return old
+          return { ...old, total: Math.max(0, old.total - data.assigned) }
+        }
+      )
+      qc.invalidateQueries({ queryKey: unassignedKey })
       qc.invalidateQueries({ queryKey: ['clients'] })
       qc.invalidateQueries({ queryKey: ['users'] })
+
+      toast.success(`✅ ${data.assigned} contactos asignados`)
     },
     onError: (err: { response?: { data?: { error?: string } } }) => {
+      setPendingAssignCount(null)
       toast.error(err?.response?.data?.error ?? 'Error al asignar contactos')
     },
   })
@@ -125,8 +168,10 @@ export default function Assignments() {
     ...opts,
   })
 
-  const runAssign = (opts?: { count?: number; contactIds?: string[] }) => {
-    mutation.mutate(assignPayload(opts))
+  const runAssign = (opts?: { count?: number; contactIds?: string[]; expectedCount?: number }) => {
+    const { expectedCount, ...payloadOpts } = opts ?? {}
+    if (expectedCount != null) setPendingAssignCount(expectedCount)
+    mutation.mutate({ ...assignPayload(payloadOpts), expectedCount })
   }
 
   const handleAssign = async () => {
@@ -135,6 +180,7 @@ export default function Assignments() {
       return
     }
     setPreviewLoading(true)
+    setLastAssignment(null)
     try {
       const preview = await previewAssignment({
         agentId,
@@ -146,7 +192,10 @@ export default function Assignments() {
         return
       }
       if (preview.completeBoundary) {
-        runAssign({ contactIds: preview.contactIds })
+        runAssign({
+          contactIds: preview.contactIds,
+          expectedCount: preview.contactIds.length,
+        })
         return
       }
       setPreviewModal(preview)
@@ -163,17 +212,30 @@ export default function Assignments() {
   const handlePreviewChoice = (choice: 'expand' | 'shrink' | 'as_requested') => {
     if (!previewModal?.suggestions) return
     if (choice === 'expand') {
-      runAssign({ contactIds: previewModal.suggestions.expandContactIds })
+      runAssign({
+        contactIds: previewModal.suggestions.expandContactIds,
+        expectedCount: previewModal.suggestions.expandTo,
+      })
     } else if (choice === 'shrink') {
-      runAssign({ contactIds: previewModal.suggestions.shrinkContactIds })
+      runAssign({
+        contactIds: previewModal.suggestions.shrinkContactIds,
+        expectedCount: previewModal.suggestions.shrinkTo,
+      })
     } else {
-      runAssign({ contactIds: previewModal.contactIds })
+      runAssign({
+        contactIds: previewModal.contactIds,
+        expectedCount: previewModal.contactIds.length,
+      })
     }
   }
 
   const selectedAgent = agents.find(
     (a: { id: string }) => a.id === agentId
   ) as { name: string } | undefined
+
+  const nextAssignCount =
+    pendingAssignCount ??
+    (count === '' ? unassignedTotal : Math.min(count, unassignedTotal))
 
   return (
     <div className="p-8 space-y-8">
@@ -213,10 +275,15 @@ export default function Assignments() {
               onChange={(e) => setBatchId(e.target.value)}
             >
               <option value="">Todos los archivos</option>
-              {imports.map(
-                (b: { id: string; filename: string; totalRecords: number }) => (
+              {assignableImports.map(
+                (b: {
+                  id: string
+                  filename: string
+                  displayName?: string | null
+                  totalRecords: number
+                }) => (
                   <option key={b.id} value={b.id}>
-                    {b.filename} ({b.totalRecords} registros)
+                    {batchLabel(b)} ({b.totalRecords} registros)
                   </option>
                 )
               )}
@@ -247,11 +314,26 @@ export default function Assignments() {
               <span className="font-bold">{unassignedTotal}</span>
               {batchId && ' en esta importación'}
             </p>
-            {selectedAgent && (count === '' || count > 0) && (
+            {lastAssignment && (
+              <p className="text-green-700 mt-1">
+                Última asignación:{' '}
+                <strong>{lastAssignment.count}</strong> contactos a{' '}
+                <strong>{lastAssignment.agentName}</strong>
+              </p>
+            )}
+            {selectedAgent && (count === '' || count > 0) && unassignedTotal > 0 && (
               <p className="text-blue-600 mt-1">
-                Se asignarán hasta{' '}
-                <strong>{count === '' ? unassignedTotal : Math.min(count, unassignedTotal)}</strong>{' '}
-                contactos a <strong>{selectedAgent.name}</strong>
+                {pendingAssignCount != null ? (
+                  <>
+                    Se asignarán <strong>{nextAssignCount}</strong> contactos a{' '}
+                    <strong>{selectedAgent.name}</strong>
+                  </>
+                ) : (
+                  <>
+                    Se asignarán hasta <strong>{nextAssignCount}</strong> contactos a{' '}
+                    <strong>{selectedAgent.name}</strong>
+                  </>
+                )}
               </p>
             )}
           </div>

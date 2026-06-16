@@ -36,7 +36,19 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const isAgent = req.user!.role === 'AGENT'
 
   if (unassigned === 'true' && !isAgent) {
-    const contactWhere = batchId ? { company: { importBatchId: batchId } } : {}
+    let contactWhere: Record<string, unknown> = { company: { importBatch: { blocked: false } } }
+
+    if (batchId) {
+      const batch = await prisma.importBatch.findUnique({
+        where: { id: batchId },
+        select: { blocked: true },
+      })
+      if (!batch || batch.blocked) {
+        res.json({ clients: [], total: 0, page: Number(page), limit: take })
+        return
+      }
+      contactWhere = { company: { importBatchId: batchId } }
+    }
 
     let assignedCount: number
     if (batchId) {
