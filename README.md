@@ -204,6 +204,35 @@ npm run db:baseline:prod
 
 > ⚠️ Usa la **External Database URL** del dashboard de Render. El `startCommand` ya incluye reintento automático de baseline; los scripts `baseline-production-migrations` son respaldo manual si hace falta.
 
+### Fix: Assignment.contactId missing in prod
+
+If the API fails with `The column Assignment.contactId does not exist` (often after `migrate resolve --applied` on `20260615120000_assignment_by_contact` without running its SQL), use the idempotent fix script **before** resolving that migration again.
+
+| Script | Uso |
+|--------|-----|
+| `backend/scripts/fix-assignment-contact-id-prod.sh` | Render Shell / Linux |
+| `backend/scripts/fix-assignment-contact-id-prod.ps1` | Windows (PowerShell) |
+
+1. Set `DATABASE_URL` to the Render **External Database URL** (never commit credentials).
+2. From `backend/`:
+
+**Render Shell:**
+```bash
+export DATABASE_URL="postgresql://crm_user:...@dpg-....oregon-postgres.render.com/llamadas_crm"
+bash scripts/fix-assignment-contact-id-prod.sh
+```
+
+**Windows:**
+```powershell
+$env:DATABASE_URL = "postgresql://crm_user:...@dpg-....oregon-postgres.render.com/llamadas_crm"
+cd backend
+.\scripts\fix-assignment-contact-id-prod.ps1
+```
+
+The script checks `information_schema` for `Assignment.contactId`. If missing and `companyId` still exists, it runs `prisma/migrations/20260615120000_assignment_by_contact/migration.sql`, then `prisma migrate deploy` and `migrate status`. If `contactId` already exists, it exits successfully without changes.
+
+`migrate-deploy-prod.sh` will **not** mark `assignment_by_contact` as applied unless `contactId` is present, so this mismatch should not recur after the fix.
+
 ---
 
 ## Estructura del proyecto

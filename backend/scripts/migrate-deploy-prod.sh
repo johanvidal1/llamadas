@@ -19,14 +19,38 @@ BASELINE_MIGRATIONS=(
   "20260615120000_assignment_by_contact"
 )
 
+ASSIGNMENT_BY_CONTACT_MIGRATION="20260615120000_assignment_by_contact"
+
 log() {
   echo "[migrate-deploy-prod] $*"
+}
+
+assignment_has_contact_id() {
+  node -e "
+const { PrismaClient } = require('@prisma/client');
+(async () => {
+  const p = new PrismaClient();
+  const rows = await p.\$queryRawUnsafe(
+    \"SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'Assignment' AND column_name = 'contactId' LIMIT 1\"
+  );
+  process.exit(rows.length > 0 ? 0 : 1);
+})().catch(() => process.exit(1));
+" 2>/dev/null
 }
 
 resolve_applied_if_needed() {
   local migration=$1
   local output=""
   local exit_code=0
+
+  if [[ "$migration" == "$ASSIGNMENT_BY_CONTACT_MIGRATION" ]]; then
+    if ! assignment_has_contact_id; then
+      log "ERROR: $ASSIGNMENT_BY_CONTACT_MIGRATION is pending in history but Assignment.contactId is missing."
+      log "Do NOT resolve --applied. Run: bash scripts/fix-assignment-contact-id-prod.sh"
+      return 1
+    fi
+    log "Assignment.contactId present — safe to resolve $ASSIGNMENT_BY_CONTACT_MIGRATION if needed."
+  fi
 
   output="$(npx prisma migrate resolve --applied "$migration" 2>&1)" || exit_code=$?
 
