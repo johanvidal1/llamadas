@@ -210,11 +210,25 @@ function clampAgendadosSplit(pct: number) {
   return Math.min(AGENDADOS_SPLIT_MAX, Math.max(AGENDADOS_SPLIT_MIN, pct))
 }
 
+function useIsLg() {
+  const [isLg, setIsLg] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches
+  )
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const handler = (e: MediaQueryListEvent) => setIsLg(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+  return isLg
+}
+
 // ─── Main Component ────────────────────────────────────────────────────────────
 
 export default function MyLeads() {
   const qc = useQueryClient()
   const { user, isAdmin } = useAuth()
+  const isLg = useIsLg()
 
   // ── View toggle (persisted)
   const [viewMode, setViewMode] = useState<'detail' | 'grid' | 'list'>(
@@ -241,6 +255,7 @@ export default function MyLeads() {
   // ── Agendados sidebar tab
   const [cbTab, setCbTab] = useState<'own' | 'team'>('own')
   const [historialScope, setHistorialScope] = useState<'contact' | 'company'>('contact')
+  const [mobilePanelTab, setMobilePanelTab] = useState<'agendados' | 'historial'>('agendados')
 
   // ── Agendados / Historial vertical split (persisted)
   const [agendadosSplitPct, setAgendadosSplitPct] = useState(() => {
@@ -662,8 +677,8 @@ export default function MyLeads() {
     <div className="flex flex-col h-full overflow-hidden">
 
       {/* ══════════════════════ SHARED TOP BAR ══════════════════════ */}
-      <div className="bg-blue-800 text-white px-6 py-3 flex items-center justify-between shrink-0 gap-4">
-        <div className="flex items-center gap-4 min-w-0 text-sm">
+      <div className="bg-blue-800 text-white px-3 lg:px-6 py-3 flex flex-wrap items-center justify-between shrink-0 gap-2 lg:gap-4">
+        <div className="flex items-center gap-2 lg:gap-4 min-w-0 text-sm flex-wrap">
           <span className="font-semibold truncate shrink-0">Migración de Operador</span>
 
           {/* Batch selector */}
@@ -721,7 +736,7 @@ export default function MyLeads() {
           )}
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2 lg:gap-3 shrink-0 flex-wrap">
           {/* ── View toggle ── */}
           <div className="flex bg-blue-700 rounded-lg p-0.5 gap-0.5">
             <button
@@ -784,9 +799,9 @@ export default function MyLeads() {
 
       {/* ══════════════════════ DETAIL VIEW ══════════════════════════ */}
       {viewMode === 'detail' && (
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-col lg:flex-row flex-1 overflow-hidden min-h-0">
           {/* ── Left: Form (scrollable) ── */}
-          <div className="flex-1 overflow-y-auto bg-gray-50 p-4">
+          <div className="flex-1 overflow-y-auto bg-gray-50 p-3 lg:p-4 min-h-0">
             {/* Loading state */}
             {loadingList && (
               <div className="flex items-center justify-center h-full text-gray-400">
@@ -830,9 +845,9 @@ export default function MyLeads() {
                       </p>
                     </div>
                   )}
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     <ReadField label="RUC" value={detail.ruc} />
-                    <div className="col-span-2">
+                    <div className="col-span-full sm:col-span-2">
                       <ReadField label="Razón Social" value={detail.razonSocial} />
                     </div>
                   </div>
@@ -882,7 +897,7 @@ export default function MyLeads() {
                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
                           Contacto {safeContactIdx + 1} de {displayContacts.length}
                         </p>
-                        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                           <ContactPhoneField telefono={editTelefono} onChange={setEditTelefono} />
                           <EditField label="Email" value={editEmail} onChange={setEditEmail} placeholder="correo@ejemplo.com" />
                           <EditField label="DNI" value={editDni} onChange={setEditDni} placeholder="Documento" />
@@ -897,7 +912,7 @@ export default function MyLeads() {
                   {/* Resultado de esta llamada */}
                   <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-3">
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Resultado de esta llamada</p>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="flex flex-col gap-0.5">
                         <label className="text-xs text-gray-500 font-medium">Respuesta</label>
                         <select
@@ -943,7 +958,7 @@ export default function MyLeads() {
                         : <span className="text-xs text-gray-400">(opcional)</span>}
                     </div>
                     <div className="p-4 space-y-3">
-                      <div className="grid grid-cols-3 gap-3 items-end">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
                         <div className="flex flex-col gap-0.5">
                           <label className="text-xs text-gray-500 font-medium">Fecha</label>
                           <input type="date" className="border border-gray-300 rounded px-3 py-1.5 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-full"
@@ -967,11 +982,11 @@ export default function MyLeads() {
                     <div className="bg-gray-100 border-b border-gray-200 px-4 py-2">
                       <span className="text-sm font-semibold text-gray-600">Líneas móviles</span>
                     </div>
-                    <div className="p-4">
+                    <div className="p-4 overflow-x-auto">
                       {detail.mobileLines.length === 0 ? (
                         <p className="text-sm text-gray-400 italic">Sin líneas móviles registradas</p>
                       ) : (
-                        <table className="w-full text-sm">
+                        <table className="w-full text-sm min-w-[320px]">
                           <thead>
                             <tr className="border-b border-gray-200 text-left">
                               <th className="pb-2 pr-3 font-medium text-gray-600">Número</th>
@@ -999,23 +1014,23 @@ export default function MyLeads() {
 
                 </div>
 
-                <div className="flex items-center gap-3 pb-6 flex-wrap">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 pb-6">
                   <button onClick={() => saveMutation.mutate(false)} disabled={saveMutation.isPending}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+                    className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
                     <Save size={15} />
                     {saveMutation.isPending ? 'Guardando...' : 'Guardar resultado'}
                   </button>
                   <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || isLast}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+                    className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
                     Guardar y siguiente <ChevronRight size={15} />
                   </button>
-                  <div className="flex gap-2 ml-auto">
+                  <div className="flex gap-2 sm:ml-auto">
                     <button onClick={navigateWithSave(goPrev)} disabled={isFirst}
-                      className="flex items-center gap-1 px-4 py-2.5 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg text-sm font-medium disabled:opacity-40">
+                      className="flex items-center justify-center gap-1 px-4 py-2.5 min-h-[44px] flex-1 sm:flex-none border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg text-sm font-medium disabled:opacity-40">
                       <ChevronLeft size={15} /> Anterior
                     </button>
                     <button onClick={navigateWithSave(goNext)} disabled={isLast}
-                      className="flex items-center gap-1 px-4 py-2.5 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg text-sm font-medium disabled:opacity-40">
+                      className="flex items-center justify-center gap-1 px-4 py-2.5 min-h-[44px] flex-1 sm:flex-none border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg text-sm font-medium disabled:opacity-40">
                       Siguiente <ChevronRight size={15} />
                     </button>
                   </div>
@@ -1025,11 +1040,48 @@ export default function MyLeads() {
           </div>
 
           {/* ── Right panel: Agendados + Historial ── */}
-          <div ref={rightPanelRef} className="w-72 shrink-0 border-l border-gray-200 flex flex-col bg-white overflow-hidden min-h-0">
+          <div
+            ref={rightPanelRef}
+            className="flex flex-col bg-white overflow-hidden min-h-0 border-t border-gray-200 flex-1 max-h-[45vh] lg:max-h-none lg:w-72 lg:shrink-0 lg:border-l lg:border-t-0 lg:flex-none"
+          >
+            <div className="lg:hidden flex border-b border-gray-200 bg-gray-50 shrink-0">
+              <button
+                type="button"
+                onClick={() => setMobilePanelTab('agendados')}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-colors min-h-[44px] ${
+                  mobilePanelTab === 'agendados'
+                    ? 'text-blue-700 border-b-2 border-blue-600 bg-white'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <CalendarClock size={14} />
+                Agendados
+                {overdueCount > 0 && <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{overdueCount}</span>}
+                {todayCount > 0 && <span className="bg-amber-400 text-amber-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">{todayCount}</span>}
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobilePanelTab('historial')}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-colors min-h-[44px] ${
+                  mobilePanelTab === 'historial'
+                    ? 'text-blue-700 border-b-2 border-blue-600 bg-white'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <History size={14} />
+                Historial
+                <span className="text-[10px] text-gray-400">({detail?.callLogs.length ?? 0})</span>
+              </button>
+            </div>
 
             {/* ── AGENDADOS ── altura ajustable con scroll interno */}
-            <div className="shrink-0 flex flex-col overflow-hidden min-h-0" style={{ height: `${agendadosSplitPct}%` }}>
-              <div className="bg-blue-600 text-white px-4 py-2.5 flex items-center justify-between shrink-0">
+            <div
+              className={`flex flex-col overflow-hidden min-h-0 shrink-0 ${
+                mobilePanelTab === 'agendados' ? 'flex-1 flex' : 'hidden'
+              } lg:flex lg:shrink-0 lg:flex-none`}
+              style={isLg ? { height: `${agendadosSplitPct}%` } : undefined}
+            >
+              <div className="bg-blue-600 text-white px-4 py-2.5 items-center justify-between shrink-0 hidden lg:flex">
                 <div className="flex items-center gap-2">
                   <CalendarClock size={14} />
                   <span className="font-semibold text-sm">Agendados</span>
@@ -1110,13 +1162,17 @@ export default function MyLeads() {
               aria-orientation="horizontal"
               aria-valuenow={agendadosSplitPct}
               onMouseDown={handleSplitMouseDown}
-              className="shrink-0 h-1.5 cursor-row-resize bg-gray-100 hover:bg-blue-100 border-y border-gray-200 flex items-center justify-center group"
+              className="hidden lg:flex shrink-0 h-1.5 cursor-row-resize bg-gray-100 hover:bg-blue-100 border-y border-gray-200 items-center justify-center group"
             >
               <div className="w-10 h-0.5 bg-gray-300 group-hover:bg-blue-400 rounded-full" />
             </div>
 
             {/* ── 3. HISTORIAL DE LLAMADAS ── flex-1, scroll, más recientes primero */}
-            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+            <div
+              className={`min-h-0 overflow-hidden flex flex-col ${
+                mobilePanelTab === 'historial' ? 'flex-1 flex' : 'hidden'
+              } lg:flex-1 lg:flex`}
+            >
               <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200 shrink-0">
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1">
                   <History size={10} /> Historial de llamadas
@@ -1226,7 +1282,7 @@ export default function MyLeads() {
 
       {/* ══════════════════════ GRID / KANBAN VIEW ═══════════════════ */}
       {viewMode === 'grid' && (
-        <div className="flex-1 overflow-y-auto bg-gray-50 p-6 space-y-5">
+        <div className="flex-1 overflow-y-auto bg-gray-50 p-4 lg:p-6 space-y-5">
           {/* Search + filters */}
           <div className="flex flex-wrap gap-3">
             <div className="relative flex-1 min-w-[200px]">
@@ -1283,7 +1339,13 @@ export default function MyLeads() {
                       {c.contacts?.[0] && (
                         <div className="flex items-center gap-1 text-xs text-gray-600 mt-0.5">
                           <Phone size={11} className="text-gray-400 shrink-0" />
-                          <span className="font-mono">{c.contacts[0].telefono ?? '—'}</span>
+                          {c.contacts[0].telefono ? (
+                            <a href={`tel:${c.contacts[0].telefono}`} className="font-mono hover:text-blue-600">
+                              {c.contacts[0].telefono}
+                            </a>
+                          ) : (
+                            <span className="font-mono">—</span>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1355,7 +1417,7 @@ export default function MyLeads() {
           return matchStatus && matchSearch
         })
         return (
-          <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          <div className="flex-1 overflow-y-auto p-4 lg:p-5 space-y-4">
             {/* Filters */}
             <div className="flex flex-wrap gap-3">
               <div className="relative flex-1 min-w-[220px]">
@@ -1387,7 +1449,7 @@ export default function MyLeads() {
             </div>
 
             {/* Table */}
-            <div className="card overflow-hidden">
+            <div className="card overflow-x-auto">
               {loadingList ? (
                 <div className="p-8 text-center text-gray-400 text-sm">Cargando...</div>
               ) : listFiltered.length === 0 ? (
@@ -1441,7 +1503,13 @@ export default function MyLeads() {
                               <p className="text-xs text-gray-400">{(c as ClientSummary).contacts[0].nombre}</p>
                             )}
                           </td>
-                          <td className="px-4 py-2.5 text-gray-600 font-mono text-xs">{(c as ClientSummary).contacts?.[0]?.telefono ?? '—'}</td>
+                          <td className="px-4 py-2.5 text-gray-600 font-mono text-xs">
+                            {(c as ClientSummary).contacts?.[0]?.telefono ? (
+                              <a href={`tel:${(c as ClientSummary).contacts![0].telefono}`} className="hover:text-blue-600">
+                                {(c as ClientSummary).contacts![0].telefono}
+                              </a>
+                            ) : '—'}
+                          </td>
                           {!selectedBatchId && (
                             <td className="px-4 py-2.5 text-xs text-gray-500">
                               {c.importBatch

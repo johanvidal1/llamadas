@@ -70,7 +70,7 @@ export default function Dashboard() {
 
   if (isLoading) {
     return (
-      <div className="p-8">
+      <div className="p-4 md:p-8">
         <div className="animate-pulse space-y-4">
           <div className="h-8 bg-gray-200 rounded w-64" />
           <div className="grid grid-cols-4 gap-4">
@@ -84,7 +84,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-4 md:p-8 space-y-8">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>

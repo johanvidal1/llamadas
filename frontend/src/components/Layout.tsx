@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import {
@@ -10,6 +11,8 @@ import {
   LogOut,
   Phone,
   BarChart2,
+  Menu,
+  X,
 } from 'lucide-react'
 import OptickBrand from './OptickBrand'
 
@@ -32,30 +35,49 @@ const agentNav = [
 export default function Layout() {
   const { user, isAdmin, logout } = useAuth()
   const navigate = useNavigate()
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const navItems = isAdmin ? adminNav : agentNav
+  const sidebarBg = isAdmin ? 'bg-green-900' : 'bg-blue-900'
 
   const handleLogout = () => {
+    setMenuOpen(false)
     logout()
     navigate('/login')
   }
 
+  const closeMenu = () => setMenuOpen(false)
+
   return (
     <div className="flex h-screen bg-gray-50">
-      {/* Sidebar */}
-      <aside className={`w-44 flex flex-col shadow-xl ${isAdmin ? 'bg-green-900' : 'bg-blue-900'}`}>
+      {/* Mobile backdrop */}
+      {menuOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={closeMenu}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Sidebar — overlay drawer on mobile, static on lg+ */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-44 flex flex-col shadow-xl transform transition-transform duration-200 ease-in-out lg:static lg:translate-x-0 lg:z-auto ${sidebarBg} ${
+          menuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+        }`}
+      >
         {/* Logo */}
         <div className={`px-4 py-5 border-b ${isAdmin ? 'border-green-800 bg-green-950/40' : 'border-blue-800 bg-blue-950/40'}`}>
           <OptickBrand variant="sidebar" />
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 px-3 py-4 space-y-1">
+        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {navItems.map(({ to, icon: Icon, label, end }) => (
             <NavLink
               key={to}
               to={to}
               end={end}
+              onClick={closeMenu}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   isActive
@@ -91,10 +113,27 @@ export default function Layout() {
         </div>
       </aside>
 
-      {/* Main content */}
-      <main className="flex-1 overflow-auto">
-        <Outlet />
-      </main>
+      {/* Main content column */}
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+        {/* Mobile header bar */}
+        <header
+          className={`lg:hidden flex items-center gap-3 px-3 py-3 shrink-0 pt-[max(0.75rem,env(safe-area-inset-top))] ${sidebarBg}`}
+        >
+          <button
+            type="button"
+            onClick={() => setMenuOpen((o) => !o)}
+            className="p-2 -ml-1 text-white rounded-lg hover:bg-white/10 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+            aria-label={menuOpen ? 'Cerrar menú' : 'Abrir menú'}
+          >
+            {menuOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+          <span className="text-white text-sm font-semibold truncate">Llamadas CRM</span>
+        </header>
+
+        <main className="flex-1 overflow-auto min-h-0 pb-[env(safe-area-inset-bottom)]">
+          <Outlet />
+        </main>
+      </div>
     </div>
   )
 }

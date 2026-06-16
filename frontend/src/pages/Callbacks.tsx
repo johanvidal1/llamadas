@@ -63,7 +63,7 @@ export default function Callbacks() {
   const overdueCount = pending.filter((c) => isPast(new Date(c.scheduledAt)) && !isToday(new Date(c.scheduledAt))).length
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-4 md:p-8 space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Agenda de Callbacks</h1>
         <p className="text-gray-500 text-sm mt-1">
@@ -111,7 +111,7 @@ export default function Callbacks() {
             return (
               <div
                 key={cb.id}
-                className={`card p-5 flex items-center justify-between gap-4 ${
+                className={`card p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
                   isPastDate ? 'border-red-200 bg-red-50/30' : ''
                 }`}
               >
@@ -123,7 +123,9 @@ export default function Callbacks() {
                     <p className="font-medium text-gray-900">{cb.company.razonSocial || cb.company.ruc}</p>
                     <p className="text-sm text-gray-500">
                       {cb.company.contacts?.[0]?.nombre ?? '—'}
-                      {cb.company.contacts?.[0]?.telefono ? ` · ${cb.company.contacts[0].telefono}` : ''}
+                      {cb.company.contacts?.[0]?.telefono ? (
+                        <> · <a href={`tel:${cb.company.contacts[0].telefono}`} className="hover:text-blue-600 font-mono">{cb.company.contacts[0].telefono}</a></>
+                      ) : null}
                     </p>
                     {cb.notes && (
                       <p className="text-xs text-gray-400 mt-0.5 truncate">{cb.notes}</p>
@@ -134,7 +136,7 @@ export default function Callbacks() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
                   <div className="text-right">
                     <span className={`badge ${classes}`}>{label}</span>
                     <p className="text-xs text-gray-400 mt-1">
@@ -148,7 +150,7 @@ export default function Callbacks() {
                       }
                     }}
                     disabled={completeMutation.isPending}
-                    className="btn-success py-1.5 px-3"
+                    className="btn-success py-2 px-3 min-h-[44px]"
                     title="Marcar como completado"
                   >
                     <CheckCircle2 size={15} />
