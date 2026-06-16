@@ -37,16 +37,18 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
 
   if (unassigned === 'true' && !isAgent) {
     let contactWhere: Record<string, unknown> = { company: { importBatch: { blocked: false } } }
+    let sourceRowCount: number | null = null
 
     if (batchId) {
       const batch = await prisma.importBatch.findUnique({
         where: { id: batchId },
-        select: { blocked: true },
+        select: { blocked: true, sourceRowCount: true },
       })
       if (!batch || batch.blocked) {
         res.json({ clients: [], total: 0, page: Number(page), limit: take })
         return
       }
+      sourceRowCount = batch.sourceRowCount
       contactWhere = { company: { importBatchId: batchId } }
     }
 
@@ -70,7 +72,13 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     const totalContacts = await prisma.contact.count({ where: contactWhere })
     const total = totalContacts - assignedCount
 
-    res.json({ clients: [], total, page: Number(page), limit: take })
+    res.json({
+      clients: [],
+      total,
+      page: Number(page),
+      limit: take,
+      ...(batchId ? { sourceRowCount } : {}),
+    })
     return
   }
 

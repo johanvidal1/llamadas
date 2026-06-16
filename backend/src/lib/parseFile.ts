@@ -72,7 +72,7 @@ const HEADER_ALIASES: Record<string, string> = {
   fecha: 'fecha_consulta',
 }
 
-function normalizeRow(row: Record<string, unknown>): Record<string, unknown>[] {
+function normalizeRow(row: Record<string, unknown>): Record<string, unknown> {
   const normalized: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(row)) {
     const canonical = HEADER_ALIASES[normalizeHeader(key)]
@@ -88,15 +88,15 @@ function normalizeRow(row: Record<string, unknown>): Record<string, unknown>[] {
 
   delete normalized['telefono2']
 
-  const rows: Record<string, unknown>[] = [normalized]
-  if (telefono2 && telefono2 !== telefono) {
-    rows.push({
-      ...normalized,
-      telefono: telefono2,
-    })
+  // One Excel row → one contact: keep primary telefono, fall back to telefono2
+  const mergedPhone = telefono || telefono2
+  if (mergedPhone) {
+    normalized['telefono'] = mergedPhone
+  } else {
+    delete normalized['telefono']
   }
 
-  return rows
+  return normalized
 }
 
 function parseRows(rows: Record<string, unknown>[]): ParsedCompany[] {
@@ -140,9 +140,14 @@ function parseRows(rows: Record<string, unknown>[]): ParsedCompany[] {
     if (estado && !company.estado) company.estado = estado
     if (fechaConsulta && !company.fechaConsulta) company.fechaConsulta = fechaConsulta
 
-    if (nombre || telefono) {
-      company.contacts.push({ nombre, tipoContacto, dni, email, telefono })
-    }
+    // Every row with RUC yields one assignable contact (even RUC-only rows)
+    company.contacts.push({
+      nombre: nombre || 'Sin nombre',
+      tipoContacto,
+      dni,
+      email,
+      telefono,
+    })
   }
 
   // Set primary phone/email from first contact that has one
@@ -175,7 +180,7 @@ export async function parseExcel(buffer: Buffer): Promise<ParseResult> {
   }
   const sheet = workbook.Sheets[sheetName]
   const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
-  const rows = rawRows.flatMap(normalizeRow)
+  const rows = rawRows.map(normalizeRow)
   return { companies: parseRows(rows), sourceRowCount: rawRows.length }
 }
 
@@ -188,7 +193,7 @@ export async function parseCsv(buffer: Buffer): Promise<ParseResult> {
       .on('data', (row: Record<string, unknown>) => rows.push(row))
       .on('end', () =>
         resolve({
-          companies: parseRows(rows.flatMap(normalizeRow)),
+          companies: parseRows(rows.map(normalizeRow)),
           sourceRowCount: rows.length,
         })
       )

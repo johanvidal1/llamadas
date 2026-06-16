@@ -447,10 +447,10 @@ export default function MyLeads() {
               onChange={(e) => switchBatch(e.target.value)}
               className="bg-blue-700 border border-blue-500 text-white text-xs rounded px-2 py-1 focus:outline-none focus:border-blue-300 max-w-[220px] truncate"
             >
-              <option value="">Todos los lotes ({allContactCount})</option>
+              <option value="">Todos los lotes ({allContactCount} registros)</option>
               {batches.map((b, i) => (
                 <option key={b.id} value={b.id}>
-                  {i === 0 ? '★ ' : ''}{b.filename.replace(/\.[^.]+$/, '')} ({countContacts(allClients.filter(c => c.importBatch?.id === b.id))})
+                  {i === 0 ? '★ ' : ''}{b.filename.replace(/\.[^.]+$/, '')} ({countContacts(allClients.filter(c => c.importBatch?.id === b.id))} registros)
                 </option>
               ))}
             </select>
@@ -458,7 +458,7 @@ export default function MyLeads() {
 
           {viewMode === 'detail' && detail && (
             <div className="flex items-center gap-2 shrink-0">
-              <span className="text-blue-300 text-xs">Contacto {globalPosition} / {flatTotal}:</span>
+              <span className="text-blue-300 text-xs">Registro {globalPosition} / {flatTotal}:</span>
               <StatusBadge status={detail.status} />
             </div>
           )}

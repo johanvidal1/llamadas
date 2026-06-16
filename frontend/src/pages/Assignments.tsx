@@ -117,7 +117,7 @@ export default function Assignments() {
     (u: { role: string; active: boolean }) => u.role === 'AGENT' && u.active
   )
 
-  // Count of unassigned contacts in selected batch
+  // Count of unassigned registros (contacts) in selected batch
   const { data: unassignedData } = useQuery({
     queryKey: ['clients', 'unassigned', batchId],
     queryFn: () =>
@@ -154,11 +154,11 @@ export default function Assignments() {
       qc.invalidateQueries({ queryKey: ['clients'] })
       qc.invalidateQueries({ queryKey: ['users'] })
 
-      toast.success(`✅ ${data.assigned} contactos asignados`)
+      toast.success(`✅ ${data.assigned} registros asignados`)
     },
     onError: (err: { response?: { data?: { error?: string } } }) => {
       setPendingAssignCount(null)
-      toast.error(err?.response?.data?.error ?? 'Error al asignar contactos')
+      toast.error(err?.response?.data?.error ?? 'Error al asignar registros')
     },
   })
 
@@ -188,7 +188,7 @@ export default function Assignments() {
         count: count === '' ? undefined : count,
       })
       if (preview.contactIds.length === 0) {
-        toast.error('No hay contactos disponibles para asignar')
+        toast.error('No hay registros disponibles para asignar')
         return
       }
       if (preview.completeBoundary) {
@@ -280,10 +280,11 @@ export default function Assignments() {
                   id: string
                   filename: string
                   displayName?: string | null
-                  totalRecords: number
+                  sourceRowCount?: number | null
+                  contactCount: number
                 }) => (
                   <option key={b.id} value={b.id}>
-                    {batchLabel(b)} ({b.totalRecords} registros)
+                    {batchLabel(b)} ({b.sourceRowCount ?? b.contactCount} registros)
                   </option>
                 )
               )}
@@ -292,7 +293,7 @@ export default function Assignments() {
 
           {/* Count */}
           <div>
-            <label className="label">Cantidad de contactos</label>
+            <label className="label">Cantidad de registros</label>
             <input
               type="number"
               className="input"
@@ -310,14 +311,14 @@ export default function Assignments() {
           <AlertCircle size={18} className="text-blue-500 shrink-0 mt-0.5" />
           <div className="text-sm">
             <p className="text-blue-800 font-medium">
-              Contactos sin asignar disponibles:{' '}
+              Registros sin asignar disponibles:{' '}
               <span className="font-bold">{unassignedTotal}</span>
               {batchId && ' en esta importación'}
             </p>
             {lastAssignment && (
               <p className="text-green-700 mt-1">
                 Última asignación:{' '}
-                <strong>{lastAssignment.count}</strong> contactos a{' '}
+                <strong>{lastAssignment.count}</strong> registros a{' '}
                 <strong>{lastAssignment.agentName}</strong>
               </p>
             )}
@@ -325,12 +326,12 @@ export default function Assignments() {
               <p className="text-blue-600 mt-1">
                 {pendingAssignCount != null ? (
                   <>
-                    Se asignarán <strong>{nextAssignCount}</strong> contactos a{' '}
+                    Se asignarán <strong>{nextAssignCount}</strong> registros a{' '}
                     <strong>{selectedAgent.name}</strong>
                   </>
                 ) : (
                   <>
-                    Se asignarán hasta <strong>{nextAssignCount}</strong> contactos a{' '}
+                    Se asignarán hasta <strong>{nextAssignCount}</strong> registros a{' '}
                     <strong>{selectedAgent.name}</strong>
                   </>
                 )}
@@ -350,12 +351,12 @@ export default function Assignments() {
               ? 'Verificando...'
               : mutation.isPending
                 ? 'Asignando...'
-                : 'Asignar contactos'}
+                : 'Asignar registros'}
           </button>
           {unassignedTotal === 0 && (
             <p className="text-sm text-amber-600 flex items-center gap-1">
               <AlertCircle size={14} />
-              No hay contactos disponibles para asignar
+              No hay registros disponibles para asignar
             </p>
           )}
         </div>
@@ -385,7 +386,7 @@ export default function Assignments() {
                     )}
                     : incluyes{' '}
                     <strong>{previewModal.boundaryCompany?.included ?? '?'}</strong> de{' '}
-                    <strong>{previewModal.boundaryCompany?.total ?? '?'}</strong> contactos
+                    <strong>{previewModal.boundaryCompany?.total ?? '?'}</strong> registros
                   </p>
                 </div>
                 <button
@@ -418,7 +419,7 @@ export default function Assignments() {
                   onClick={() => handlePreviewChoice('expand')}
                   className="btn-primary justify-center"
                 >
-                  Completar empresa ({previewModal.suggestions.expandTo} contactos, +
+                  Completar empresa ({previewModal.suggestions.expandTo} registros, +
                   {previewModal.suggestions.expandAdd})
                 </button>
                 <button
@@ -427,7 +428,7 @@ export default function Assignments() {
                   onClick={() => handlePreviewChoice('shrink')}
                   className="btn-secondary justify-center"
                 >
-                  Solo empresas cerradas ({previewModal.suggestions.shrinkTo} contactos, -
+                  Solo empresas cerradas ({previewModal.suggestions.shrinkTo} registros, -
                   {previewModal.suggestions.shrinkRemove})
                 </button>
                 <button
