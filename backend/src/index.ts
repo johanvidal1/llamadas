@@ -19,16 +19,46 @@ import { errorHandler } from './middleware/error'
 const app = express()
 const PORT = process.env.PORT || 3001
 
-const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
+function normalizeOrigin(url: string): string {
+  return url.trim().replace(/\/+$/, '')
+}
+
+const parsedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
   .split(',')
-  .map((o) => o.trim())
+  .map((o) => normalizeOrigin(o))
   .filter(Boolean)
+
+const allowedOrigins = [...parsedOrigins]
+
+// Safety net on Render when FRONTEND_URL is missing or has a trailing-slash typo.
+const PRODUCTION_FRONTEND_ORIGIN = 'https://llamadas-frontend.onrender.com'
+if (
+  process.env.NODE_ENV === 'production' &&
+  !allowedOrigins.includes(normalizeOrigin(PRODUCTION_FRONTEND_ORIGIN))
+) {
+  allowedOrigins.push(normalizeOrigin(PRODUCTION_FRONTEND_ORIGIN))
+}
+
+const localhostOnly = parsedOrigins.every(
+  (o) => o.includes('localhost') || o.includes('127.0.0.1')
+)
+if (process.env.NODE_ENV === 'production' && localhostOnly) {
+  console.warn(
+    'FRONTEND_URL should include https://llamadas-frontend.onrender.com'
+  )
+}
+
+console.log(`CORS allowed origins: [${allowedOrigins.join(', ')}]`)
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin) {
         callback(null, true)
+        return
+      }
+      if (allowedOrigins.includes(normalizeOrigin(origin))) {
+        callback(null, origin)
       } else {
         callback(new Error('Not allowed by CORS'))
       }
