@@ -414,13 +414,12 @@ export default function Reports() {
         </div>
 
         <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mt-5 mb-3">Por empresa (RUC)</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           <StatCard label="Total empresas" value={companies.total} sub="RUC" />
           <StatCard label="Pendientes" value={companies.pending} color="text-gray-500" sub="empresas" />
           <StatCard label="En progreso" value={companies.inProgress} color="text-blue-500" sub="empresas" />
           <StatCard label="Interesados" value={companies.interested} color="text-green-600" sub="empresas" />
           <StatCard label="Convertidos" value={companies.converted} color="text-emerald-600" sub="empresas" />
-          <StatCard label="No interesados" value={companies.notInterested} color="text-red-400" sub="empresas" />
         </div>
       </section>
 

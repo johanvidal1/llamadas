@@ -40,6 +40,8 @@ const STATUS_LABELS: Record<string, string> = {
   DO_NOT_CALL: 'No llamar',
 }
 
+const COMPANY_STATUS_EXCLUDE = new Set(['NOT_INTERESTED', 'DO_NOT_CALL'])
+
 export default function Dashboard() {
   const { isAdmin, user } = useAuth()
   const [selectedBatchId, setSelectedBatchId] = useState<string | undefined>(undefined)
@@ -183,13 +185,16 @@ export default function Dashboard() {
           <h2 className="font-semibold text-gray-900 mb-1">Por empresa (RUC)</h2>
           <p className="text-xs text-gray-400 mb-4">Estado agregado por empresa</p>
           <div className="space-y-3">
-            {Object.entries(stats?.companiesByStatus ?? stats?.clientsByStatus ?? {}).map(([status, count]) => (
+            {Object.entries(stats?.companiesByStatus ?? stats?.clientsByStatus ?? {})
+              .filter(([status]) => !COMPANY_STATUS_EXCLUDE.has(status))
+              .map(([status, count]) => (
               <div key={status} className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">{STATUS_LABELS[status] ?? status}</span>
                 <span className="text-sm font-semibold text-gray-500">{count as number}</span>
               </div>
             ))}
-            {Object.keys(stats?.companiesByStatus ?? stats?.clientsByStatus ?? {}).length === 0 && (
+            {Object.entries(stats?.companiesByStatus ?? stats?.clientsByStatus ?? {})
+              .filter(([status]) => !COMPANY_STATUS_EXCLUDE.has(status)).length === 0 && (
               <p className="text-sm text-gray-400 text-center py-4">Sin datos todavía</p>
             )}
           </div>
