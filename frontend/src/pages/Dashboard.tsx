@@ -4,6 +4,8 @@ import { getDashboardStats, getAgentStats, getMyBatches } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { Users, Phone, CalendarClock, TrendingUp, PhoneCall, Layers, RefreshCw } from 'lucide-react'
 import { DispositionBadge } from '../components/StatusBadge'
+import { StatusHelpPopover } from '../components/StatusHelpPopover'
+import { isStatusHelpKey } from '../config/statusHelp'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -169,8 +171,11 @@ export default function Dashboard() {
           <p className="text-xs text-gray-400 mb-4">Por contacto (cada fila del Excel)</p>
           <div className="space-y-3">
             {Object.entries(stats?.contactsByStatus ?? {}).map(([status, count]) => (
-              <div key={status} className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">{STATUS_LABELS[status] ?? status}</span>
+              <div key={status} className="flex items-center justify-between group/row">
+                <div className="text-sm text-gray-600 flex items-center gap-1">
+                  {STATUS_LABELS[status] ?? status}
+                  {isStatusHelpKey(status) && <StatusHelpPopover helpKey={status} />}
+                </div>
                 <span className="text-sm font-semibold text-gray-900">{count as number}</span>
               </div>
             ))}
@@ -183,13 +188,16 @@ export default function Dashboard() {
         {/* Company status breakdown (supplementary) */}
         <div className="card p-6">
           <h2 className="font-semibold text-gray-900 mb-1">Por empresa (RUC)</h2>
-          <p className="text-xs text-gray-400 mb-4">Estado agregado por empresa</p>
+          <p className="text-xs text-gray-400 mb-4">Estado agregado por RUC (derivado de contactos)</p>
           <div className="space-y-3">
             {Object.entries(stats?.companiesByStatus ?? stats?.clientsByStatus ?? {})
               .filter(([status]) => !COMPANY_STATUS_EXCLUDE.has(status))
               .map(([status, count]) => (
-              <div key={status} className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">{STATUS_LABELS[status] ?? status}</span>
+              <div key={status} className="flex items-center justify-between group/row">
+                <div className="text-sm text-gray-600 flex items-center gap-1">
+                  {STATUS_LABELS[status] ?? status}
+                  {isStatusHelpKey(status) && <StatusHelpPopover helpKey={status} companyLevel />}
+                </div>
                 <span className="text-sm font-semibold text-gray-500">{count as number}</span>
               </div>
             ))}

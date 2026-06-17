@@ -8,6 +8,8 @@ import {
   Award, AlertCircle, ChevronUp, ChevronDown, Package, Filter, X, RefreshCw,
 } from 'lucide-react'
 import { StatusBadge } from '../components/StatusBadge'
+import { StatusHelpPopover } from '../components/StatusHelpPopover'
+import type { StatusHelpKey } from '../config/statusHelp'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,15 +68,19 @@ function Bar({ pct, color = 'bg-blue-500' }: { pct: number; color?: string }) {
   )
 }
 
-function StatCard({ label, value, sub, color = 'text-gray-900', icon: Icon }: {
+function StatCard({ label, value, sub, color = 'text-gray-900', icon: Icon, statusHelpKey, companyLevel }: {
   label: string; value: string | number; sub?: string; color?: string; icon?: React.ElementType
+  statusHelpKey?: StatusHelpKey; companyLevel?: boolean
 }) {
   return (
-    <div className="card p-4 flex items-start gap-3">
+    <div className="card p-4 flex items-start gap-3 overflow-visible">
       {Icon && <div className="w-9 h-9 bg-gray-100 rounded-lg flex items-center justify-center shrink-0"><Icon size={17} className="text-gray-600" /></div>}
       <div className="min-w-0">
         <p className={`text-2xl font-bold ${color}`}>{value}</p>
-        <p className="text-xs text-gray-500 leading-tight">{label}</p>
+        <div className="text-xs text-gray-500 leading-tight inline-flex items-center gap-1 min-h-[2rem]">
+          <span>{label}</span>
+          {statusHelpKey && <StatusHelpPopover helpKey={statusHelpKey} companyLevel={companyLevel} />}
+        </div>
         {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
       </div>
     </div>
@@ -387,14 +393,14 @@ export default function Reports() {
       {/* ── Funnel (records primary) ── */}
       <section>
         <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Embudo de campaña — Registros</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
           <StatCard label="Total registros" value={records.total} icon={Users} />
           <StatCard label="Asignados" value={records.assigned} icon={UserCheck2} color="text-blue-700" sub="contactos" />
-          <StatCard label="Pendientes" value={records.pending} color="text-gray-600" />
-          <StatCard label="En progreso" value={records.inProgress} color="text-blue-600" />
-          <StatCard label="Interesados" value={records.interested} color="text-green-600" icon={Target} />
-          <StatCard label="Convertidos" value={records.converted} color="text-emerald-700" icon={Award} />
-          <StatCard label="No interesados" value={records.notInterested} color="text-red-500" />
+          <StatCard label="Pendientes" value={records.pending} color="text-gray-600" statusHelpKey="PENDING" />
+          <StatCard label="En progreso" value={records.inProgress} color="text-blue-600" statusHelpKey="IN_PROGRESS" />
+          <StatCard label="Interesados" value={records.interested} color="text-green-600" icon={Target} statusHelpKey="INTERESTED" />
+          <StatCard label="Convertidos" value={records.converted} color="text-emerald-700" icon={Award} statusHelpKey="CONVERTED" />
+          <StatCard label="No interesados" value={records.notInterested} color="text-red-500" statusHelpKey="NOT_INTERESTED" />
         </div>
         <div className="card p-4 mt-3 space-y-2">
           <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
@@ -414,12 +420,13 @@ export default function Reports() {
         </div>
 
         <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mt-5 mb-3">Por empresa (RUC)</h2>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        <p className="text-xs text-gray-400 -mt-2 mb-3">Estado agregado por RUC (derivado de contactos)</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           <StatCard label="Total empresas" value={companies.total} sub="RUC" />
-          <StatCard label="Pendientes" value={companies.pending} color="text-gray-500" sub="empresas" />
-          <StatCard label="En progreso" value={companies.inProgress} color="text-blue-500" sub="empresas" />
-          <StatCard label="Interesados" value={companies.interested} color="text-green-600" sub="empresas" />
-          <StatCard label="Convertidos" value={companies.converted} color="text-emerald-600" sub="empresas" />
+          <StatCard label="Pendientes" value={companies.pending} color="text-gray-500" sub="empresas" statusHelpKey="PENDING" companyLevel />
+          <StatCard label="En progreso" value={companies.inProgress} color="text-blue-500" sub="empresas" statusHelpKey="IN_PROGRESS" companyLevel />
+          <StatCard label="Interesados" value={companies.interested} color="text-green-600" sub="empresas" statusHelpKey="INTERESTED" companyLevel />
+          <StatCard label="Convertidos" value={companies.converted} color="text-emerald-600" sub="empresas" statusHelpKey="CONVERTED" companyLevel />
         </div>
       </section>
 

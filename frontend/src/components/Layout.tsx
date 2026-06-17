@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import {
   LayoutDashboard,
@@ -91,22 +91,23 @@ export default function Layout() {
               {label}
             </NavLink>
           ))}
-          <a
-            href="/contacto"
-            onClick={closeMenu}
-            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors mt-2 ${
-              isAdmin
-                ? 'text-green-200 hover:bg-green-800 hover:text-white'
-                : 'text-blue-200 hover:bg-blue-800 hover:text-white'
-            }`}
-          >
-            <Mail size={18} />
-            Contáctenos
-          </a>
         </nav>
 
         {/* User info */}
         <div className={`p-4 border-t ${isAdmin ? 'border-green-800' : 'border-blue-800'}`}>
+          <Link
+            to="/contacto"
+            state={{ from: 'app' }}
+            onClick={closeMenu}
+            className={`flex items-center gap-2 px-3 py-2 mb-3 rounded-lg text-xs transition-colors ${
+              isAdmin
+                ? 'text-green-300/80 hover:text-white hover:bg-green-800/50'
+                : 'text-blue-300/80 hover:text-white hover:bg-blue-800/50'
+            }`}
+          >
+            <Mail size={14} />
+            Contáctenos
+          </Link>
           <div className="flex items-center gap-3 mb-3">
             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold ${isAdmin ? 'bg-green-600' : 'bg-blue-600'}`}>
               {user?.name.charAt(0).toUpperCase()}

@@ -78,7 +78,7 @@ export default function Login() {
         <p className="text-center text-xs text-gray-400 mt-8">
           Desarrollado por Optick Cloud © {new Date().getFullYear()}
           {' · '}
-          <Link to="/contacto" className="text-teal-600 hover:text-teal-700 font-medium">
+          <Link to="/contacto" state={{ from: 'login' }} className="text-teal-600 hover:text-teal-700 font-medium">
             Contáctenos
           </Link>
           {' · '}

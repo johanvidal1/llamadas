@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
   Mail,
@@ -9,13 +9,19 @@ import {
   Send,
   Headphones,
   Briefcase,
+  ArrowLeft,
 } from 'lucide-react'
 import OptickBrand from '../components/OptickBrand'
+import { useAuth } from '../contexts/AuthContext'
+import { submitContactForm } from '../api/client'
 import {
   CONTACT,
   SUBJECT_OPTIONS,
+  buildContactMailBody,
+  buildContactMailtoUrl,
   getEmailForSubject,
   getWhatsAppUrl,
+  openMailto,
   type ContactSubject,
 } from '../config/contact'
 
@@ -35,24 +41,102 @@ function WhatsAppIcon({ size = 20, className }: { size?: number; className?: str
 }
 
 export default function Contacto() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { user } = useAuth()
+  const fromApp = (location.state as { from?: string } | null)?.from === 'app'
+  const canGoBack = typeof window.history.state?.idx === 'number' && window.history.state.idx > 0
+
+  const goToPanel = Boolean(user) || fromApp
+  const backLabel = goToPanel
+    ? 'Volver al panel'
+    : canGoBack
+      ? 'Volver'
+      : 'Volver al inicio de sesión'
+
+  const handleBack = () => {
+    if (goToPanel) {
+      navigate('/')
+    } else if (canGoBack) {
+      navigate(-1)
+    } else {
+      navigate('/login')
+    }
+  }
+
   const [nombre, setNombre] = useState('')
   const [empresa, setEmpresa] = useState('')
   const [email, setEmail] = useState('')
   const [asunto, setAsunto] = useState<ContactSubject>('comercial')
   const [mensaje, setMensaje] = useState('')
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-
+  const fallbackToMailto = async () => {
     const subjectLabel = SUBJECT_OPTIONS.find((o) => o.value === asunto)?.label ?? asunto
     const to = getEmailForSubject(asunto)
-    const mailSubject = encodeURIComponent(`[Optick Cloud] ${subjectLabel}`)
-    const body = encodeURIComponent(
-      `Nombre: ${nombre}\nEmpresa: ${empresa || '—'}\nEmail: ${email}\nAsunto: ${subjectLabel}\n\nMensaje:\n${mensaje}`,
-    )
+    const bodyText = buildContactMailBody({ nombre, empresa, email, subjectLabel, mensaje })
+    const mailtoUrl = buildContactMailtoUrl({ to, subjectLabel, body: bodyText })
 
-    toast.success('Abriendo tu cliente de correo…')
-    window.location.href = `mailto:${to}?subject=${mailSubject}&body=${body}`
+    openMailto(mailtoUrl)
+
+    const clipboardText = `Para: ${to}\nAsunto: [Optick Cloud] ${subjectLabel}\n\n${bodyText}`
+
+    try {
+      await navigator.clipboard.writeText(clipboardText)
+      toast.success(
+        `Abriendo tu cliente de correo. Si no se abre, el mensaje ya está en el portapapeles — envíalo a ${to}`,
+        { duration: 6000 },
+      )
+    } catch {
+      toast(
+        (t) => (
+          <span>
+            Si no se abrió tu correo, escribe a{' '}
+            <a
+              href={`mailto:${to}`}
+              className="underline text-cyan-300"
+              onClick={() => toast.dismiss(t.id)}
+            >
+              {to}
+            </a>{' '}
+            o usa WhatsApp.
+          </span>
+        ),
+        { duration: 8000 },
+      )
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    try {
+      const result = await submitContactForm({
+        nombre: nombre.trim(),
+        empresa: empresa.trim() || undefined,
+        email: email.trim(),
+        asunto,
+        mensaje: mensaje.trim(),
+      })
+
+      if (result.ok) {
+        toast.success('Mensaje enviado correctamente')
+        setNombre('')
+        setEmpresa('')
+        setEmail('')
+        setMensaje('')
+        setAsunto('comercial')
+        return
+      }
+
+      if (result.smtpNotConfigured) {
+        await fallbackToMailto()
+        return
+      }
+
+      toast.error(result.error)
+    } catch {
+      await fallbackToMailto()
+    }
   }
 
   const contactCards = [
@@ -100,6 +184,15 @@ export default function Contacto() {
       </div>
 
       <div className="relative max-w-5xl mx-auto px-4 py-10 sm:py-16">
+        <button
+          type="button"
+          onClick={handleBack}
+          className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors mb-6"
+        >
+          <ArrowLeft size={16} aria-hidden="true" />
+          {backLabel}
+        </button>
+
         <header className="text-center mb-10 sm:mb-14">
           <OptickBrand variant="contact" />
           <p className="mt-6 max-w-2xl mx-auto text-slate-400 text-sm sm:text-base leading-relaxed">
@@ -250,13 +343,20 @@ export default function Contacto() {
               />
             </div>
 
-            <button
-              type="submit"
-              className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-6 py-3 rounded-lg bg-cyan-500/90 hover:bg-cyan-400 text-slate-950 font-semibold text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-400/50 focus:ring-offset-2 focus:ring-offset-slate-950"
-            >
-              <Send size={18} />
-              Enviar mensaje
-            </button>
+            <div className="flex flex-col gap-3">
+              <button
+                type="submit"
+                className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-6 py-3 rounded-lg bg-cyan-500/90 hover:bg-cyan-400 text-slate-950 font-semibold text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-400/50 focus:ring-offset-2 focus:ring-offset-slate-950"
+              >
+                <Send size={18} />
+                Enviar mensaje
+              </button>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Enviaremos tu mensaje por correo a{' '}
+                <span className="text-slate-300 font-medium">{getEmailForSubject(asunto)}</span>.
+                Si el servidor no tiene correo configurado, se abrirá tu cliente de correo o se copiará al portapapeles.
+              </p>
+            </div>
           </form>
         </div>
 

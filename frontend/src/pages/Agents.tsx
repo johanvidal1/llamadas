@@ -246,6 +246,7 @@ export default function Agents() {
   const [showReset, setShowReset] = useState(false)
   const [resetConfirmText, setResetConfirmText] = useState('')
   const [showInactive, setShowInactive] = useState(false)
+  const [showDangerZone, setShowDangerZone] = useState(false)
   const qc = useQueryClient()
 
   const { data: resetPreview } = useQuery({
@@ -532,26 +533,40 @@ export default function Agents() {
       {/* ── Zone peligrosa (solo admin) ── */}
       {isAdmin && (
         <>
-          <div className="border border-red-200 rounded-xl p-5 bg-red-50 space-y-3">
-            <div className="flex items-center gap-2">
-              <AlertTriangle size={16} className="text-red-600" />
-              <h2 className="font-semibold text-red-800 text-sm">Zona peligrosa</h2>
-            </div>
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <p className="text-sm font-medium text-red-700">Resetear campaña</p>
-                <p className="text-xs text-red-500 mt-0.5">
-                  Elimina todos los clientes, importaciones, asignaciones, llamadas y callbacks.<br />
-                  Los usuarios (agentes y admin) <strong>no se borran</strong>.
-                </p>
+          <div className="card overflow-hidden border-gray-200">
+            <button
+              type="button"
+              onClick={() => setShowDangerZone((v) => !v)}
+              className="w-full px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                {showDangerZone ? (
+                  <ChevronDown size={16} className="text-gray-500" />
+                ) : (
+                  <ChevronRight size={16} className="text-gray-500" />
+                )}
+                <h2 className="font-semibold text-gray-600">Zona peligrosa</h2>
               </div>
-              <button
-                onClick={() => setShowReset(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors shrink-0"
-              >
-                <Trash2 size={15} /> Resetear campaña
-              </button>
-            </div>
+            </button>
+            {showDangerZone && (
+              <div className="p-5 bg-red-50 space-y-3">
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div>
+                    <p className="text-sm font-medium text-red-700">Resetear campaña</p>
+                    <p className="text-xs text-red-500 mt-0.5">
+                      Elimina todos los clientes, importaciones, asignaciones, llamadas y callbacks.<br />
+                      Los usuarios (agentes y admin) <strong>no se borran</strong>.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowReset(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors shrink-0"
+                  >
+                    <Trash2 size={15} /> Resetear campaña
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* ── Reset confirmation modal ── */}
