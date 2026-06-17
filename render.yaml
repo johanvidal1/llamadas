@@ -28,7 +28,7 @@ services:
       - key: JWT_SECRET
         generateValue: true   # Render genera un valor seguro automáticamente
       - key: FRONTEND_URL
-        sync: false           # Se configura manualmente en el dashboard de Render
+        sync: false           # ej. https://llamadas-frontend.onrender.com (coma para varios orígenes)
 
   # ── Frontend (React / Vite → Static Site) ───────────────────────────────────
   - type: web
