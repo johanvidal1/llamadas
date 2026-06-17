@@ -8,6 +8,7 @@ export interface AuthRequest extends Request {
     email: string
     role: string
     name: string
+    isSuperAdmin: boolean
   }
 }
 
@@ -28,13 +29,19 @@ async function authenticateRequest(req: AuthRequest, res: Response): Promise<boo
     }
     const user = await prisma.user.findUnique({
       where: { id: payload.id },
-      select: { id: true, email: true, role: true, name: true, active: true },
+      select: { id: true, email: true, role: true, name: true, active: true, isSuperAdmin: true },
     })
     if (!user || !user.active) {
       res.status(401).json({ error: 'Sesión inválida. Inicia sesión nuevamente.' })
       return false
     }
-    req.user = { id: user.id, email: user.email, role: user.role, name: user.name }
+    req.user = {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      name: user.name,
+      isSuperAdmin: user.isSuperAdmin,
+    }
     return true
   } catch {
     res.status(401).json({ error: 'Token inválido o expirado' })

@@ -39,10 +39,28 @@ export const login = (email: string, password: string) =>
 export const getMe = () => api.get('/auth/me').then((r) => r.data)
 
 // ─── Users ────────────────────────────────────────────────
-export const getUsers = () => api.get('/users').then((r) => r.data)
+export type AppUser = {
+  id: string
+  name: string
+  email: string
+  role: 'ADMIN' | 'AGENT'
+  isSuperAdmin?: boolean
+  active: boolean
+  createdAt?: string
+  _count: {
+    assignments: number
+    callLogs: number
+    callbacks: number
+    imports: number
+  }
+}
+
+export const getUsers = () => api.get<AppUser[]>('/users').then((r) => r.data)
 export const createUser = (data: object) => api.post('/users', data).then((r) => r.data)
 export const updateUser = (id: string, data: object) =>
   api.put(`/users/${id}`, data).then((r) => r.data)
+export const deactivateUser = (id: string) => updateUser(id, { active: false })
+export const reactivateUser = (id: string) => updateUser(id, { active: true })
 export const deleteUser = (id: string) => api.delete(`/users/${id}`).then((r) => r.data)
 
 // ─── Imports ──────────────────────────────────────────────

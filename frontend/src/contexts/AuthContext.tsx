@@ -6,6 +6,7 @@ interface User {
   name: string
   email: string
   role: 'ADMIN' | 'AGENT'
+  isSuperAdmin?: boolean
 }
 
 interface AuthContextValue {

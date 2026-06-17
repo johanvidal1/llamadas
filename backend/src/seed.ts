@@ -21,6 +21,7 @@ async function main() {
       email: 'admin@llamadas.com',
       password,
       role: 'ADMIN',
+      isSuperAdmin: true,
     },
   })
 
