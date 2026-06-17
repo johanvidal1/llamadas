@@ -8,6 +8,7 @@ import {
   assertRegularAdminLimit,
   canManageUser,
   isAdminUser,
+  isSuperAdminOrOwner,
   loadActor,
   MAX_AGENTS,
   MAX_REGULAR_ADMINS,
@@ -21,6 +22,7 @@ const userSelect = {
   email: true,
   role: true,
   isSuperAdmin: true,
+  isSystemOwner: true,
   active: true,
   createdAt: true,
 } as const
@@ -41,8 +43,10 @@ const updateUserSchema = z.object({
 })
 
 // GET /api/users — list all users
-router.get('/', requireAdmin, async (_req: AuthRequest, res: Response) => {
+router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const actor = await loadActor(req.user!.id)
   const users = await prisma.user.findMany({
+    where: actor?.isSystemOwner ? undefined : { isSystemOwner: false },
     select: {
       ...userSelect,
       _count: {
@@ -88,6 +92,7 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
       password: hashed,
       role: data.role,
       isSuperAdmin: false,
+      isSystemOwner: false,
     },
     select: userSelect,
   })
@@ -107,10 +112,15 @@ router.put('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
 
   const target = await prisma.user.findUnique({
     where: { id: targetId },
-    select: { id: true, role: true, isSuperAdmin: true, active: true },
+    select: { id: true, role: true, isSuperAdmin: true, isSystemOwner: true, active: true },
   })
   if (!target) {
     res.status(404).json({ error: 'Usuario no encontrado' })
+    return
+  }
+
+  if (target.isSystemOwner && !actor.isSystemOwner) {
+    res.status(403).json({ error: 'No tienes permiso para modificar al propietario del sistema' })
     return
   }
 
@@ -121,7 +131,7 @@ router.put('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
 
   const targetIsAdmin = isAdminUser(target)
 
-  if (targetIsAdmin && !actor.isSuperAdmin) {
+  if (targetIsAdmin && !isSuperAdminOrOwner(actor)) {
     if (data.active !== undefined && data.active !== target.active) {
       res.status(403).json({ error: 'Solo el super admin puede activar o desactivar administradores' })
       return
@@ -141,7 +151,7 @@ router.put('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
     }
   }
 
-  if (data.role === 'AGENT' && targetIsAdmin && !actor.isSuperAdmin) {
+  if (data.role === 'AGENT' && targetIsAdmin && !isSuperAdminOrOwner(actor)) {
     res.status(403).json({ error: 'Solo el super admin puede cambiar el rol de administradores' })
     return
   }
@@ -157,7 +167,15 @@ router.put('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
   const user = await prisma.user.update({
     where: { id: targetId },
     data: updateData,
-    select: { id: true, name: true, email: true, role: true, isSuperAdmin: true, active: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      isSuperAdmin: true,
+      isSystemOwner: true,
+      active: true,
+    },
   })
   res.json(user)
 })
@@ -183,6 +201,7 @@ router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
       id: true,
       role: true,
       isSuperAdmin: true,
+      isSystemOwner: true,
       active: true,
       _count: {
         select: { assignments: true, callLogs: true, callbacks: true, imports: true },
@@ -195,12 +214,17 @@ router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
     return
   }
 
-  if (target.isSuperAdmin) {
-    res.status(403).json({ error: 'No se puede eliminar al super administrador' })
+  if (target.isSystemOwner) {
+    res.status(403).json({ error: 'No se puede eliminar al propietario del sistema' })
     return
   }
 
-  if (isAdminUser(target) && !actor.isSuperAdmin) {
+  if (target.isSuperAdmin && !actor.isSystemOwner) {
+    res.status(403).json({ error: 'Solo el propietario del sistema puede eliminar al super administrador' })
+    return
+  }
+
+  if (isAdminUser(target) && !isSuperAdminOrOwner(actor)) {
     res.status(403).json({ error: 'Solo el super admin puede eliminar administradores' })
     return
   }

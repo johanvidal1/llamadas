@@ -7,22 +7,48 @@ export interface UserActor {
   id: string
   role: string
   isSuperAdmin: boolean
+  isSystemOwner: boolean
 }
 
 export interface UserTarget {
   id: string
   role: string
   isSuperAdmin: boolean
+  isSystemOwner: boolean
 }
 
-export function isAdminUser(user: { role: string; isSuperAdmin?: boolean }): boolean {
-  return user.role === 'ADMIN' || user.isSuperAdmin === true
+export function isSystemOwnerUser(user: { isSystemOwner?: boolean }): boolean {
+  return user.isSystemOwner === true
 }
 
-/** Super admin can manage anyone; regular admin only AGENT targets. */
+export function isSuperAdminOrOwner(user: {
+  isSuperAdmin?: boolean
+  isSystemOwner?: boolean
+}): boolean {
+  return user.isSystemOwner === true || user.isSuperAdmin === true
+}
+
+export function isAdminUser(user: {
+  role: string
+  isSuperAdmin?: boolean
+  isSystemOwner?: boolean
+}): boolean {
+  return user.role === 'ADMIN' || user.isSuperAdmin === true || user.isSystemOwner === true
+}
+
+/** System owner can manage anyone; super admin cannot touch owner; regular admin only AGENT targets. */
 export function canManageUser(actor: UserActor, target: UserTarget): boolean {
+  if (target.isSystemOwner && !actor.isSystemOwner) return false
+  if (actor.isSystemOwner) return true
   if (actor.isSuperAdmin) return true
-  if (actor.role === 'ADMIN' && target.role === 'AGENT' && !target.isSuperAdmin) return true
+  if (
+    actor.role === 'ADMIN' &&
+    target.role === 'AGENT' &&
+    !target.isSuperAdmin &&
+    !target.isSystemOwner
+  ) {
+    return true
+  }
   return false
 }
 
@@ -35,6 +61,7 @@ export async function countRegularAdmins(excludeUserId?: string): Promise<number
     where: {
       role: 'ADMIN',
       isSuperAdmin: false,
+      isSystemOwner: false,
       ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
     },
   })
@@ -57,6 +84,6 @@ export async function assertRegularAdminLimit(excludeUserId?: string): Promise<v
 export async function loadActor(actorId: string): Promise<UserActor | null> {
   return prisma.user.findUnique({
     where: { id: actorId },
-    select: { id: true, role: true, isSuperAdmin: true },
+    select: { id: true, role: true, isSuperAdmin: true, isSystemOwner: true },
   })
 }

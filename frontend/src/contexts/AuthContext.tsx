@@ -7,6 +7,7 @@ interface User {
   email: string
   role: 'ADMIN' | 'AGENT'
   isSuperAdmin?: boolean
+  isSystemOwner?: boolean
 }
 
 interface AuthContextValue {

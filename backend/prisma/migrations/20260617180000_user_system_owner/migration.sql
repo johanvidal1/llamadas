@@ -1,0 +1,1 @@
+ALTER TABLE "User" ADD COLUMN "isSystemOwner" BOOLEAN NOT NULL DEFAULT false;

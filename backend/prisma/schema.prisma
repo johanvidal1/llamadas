@@ -23,6 +23,7 @@ model User {
   password  String
   role          String   @default("AGENT")
   isSuperAdmin  Boolean  @default(false)
+  isSystemOwner Boolean  @default(false)
   active        Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

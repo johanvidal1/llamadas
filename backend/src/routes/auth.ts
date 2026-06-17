@@ -42,6 +42,7 @@ router.post('/login', async (req: Request, res: Response) => {
       email: user.email,
       role: user.role,
       isSuperAdmin: user.isSuperAdmin,
+      isSystemOwner: user.isSystemOwner,
     },
   })
 })
@@ -50,7 +51,15 @@ router.post('/login', async (req: Request, res: Response) => {
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user!.id },
-    select: { id: true, name: true, email: true, role: true, isSuperAdmin: true, active: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      isSuperAdmin: true,
+      isSystemOwner: true,
+      active: true,
+    },
   })
   if (!user) {
     res.status(404).json({ error: 'Usuario no encontrado' })

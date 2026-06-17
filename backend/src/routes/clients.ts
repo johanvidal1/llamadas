@@ -161,7 +161,7 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
       },
       callLogs: {
         include: {
-          agent: { select: { name: true } },
+          agent: { select: { id: true, name: true } },
           contact: { select: { id: true, nombre: true, tipoContacto: true } },
           callback: true,
         },

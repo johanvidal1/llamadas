@@ -37,3 +37,28 @@ export async function recomputeCompanyStatus(companyId: string): Promise<void> {
     data: { status },
   })
 }
+
+/** Set contact.status from its latest call log, then refresh company status. */
+export async function recomputeContactStatus(contactId: string): Promise<void> {
+  const contact = await prisma.contact.findUnique({
+    where: { id: contactId },
+    select: { companyId: true },
+  })
+  if (!contact) return
+
+  const latestLog = await prisma.callLog.findFirst({
+    where: { contactId },
+    orderBy: { calledAt: 'desc' },
+    select: { disposition: true },
+  })
+
+  const status = latestLog
+    ? (dispositionToStatus[latestLog.disposition] ?? 'IN_PROGRESS')
+    : 'PENDING'
+
+  await prisma.contact.update({
+    where: { id: contactId },
+    data: { status },
+  })
+  await recomputeCompanyStatus(contact.companyId)
+}

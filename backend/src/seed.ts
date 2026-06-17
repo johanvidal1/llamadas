@@ -2,7 +2,7 @@ import 'dotenv/config'
 import bcrypt from 'bcryptjs'
 import { prisma } from './lib/prisma'
 
-async function main() {
+async function seedDefaultAdmin() {
   console.log('🌱 Creando usuario administrador...')
 
   const existing = await prisma.user.findUnique({
@@ -22,6 +22,7 @@ async function main() {
       password,
       role: 'ADMIN',
       isSuperAdmin: true,
+      isSystemOwner: false,
     },
   })
 
@@ -29,6 +30,62 @@ async function main() {
   console.log('   Email:', admin.email)
   console.log('   Contraseña: Admin123!')
   console.log('   ⚠️  Cambia la contraseña después del primer inicio de sesión')
+}
+
+async function seedSystemOwner() {
+  const email = process.env.SYSTEM_OWNER_EMAIL?.trim().toLowerCase()
+  if (!email) {
+    console.log('ℹ️  SYSTEM_OWNER_EMAIL no definido — omitiendo propietario del sistema')
+    return
+  }
+
+  console.log('🌱 Configurando propietario del sistema...')
+
+  await prisma.user.updateMany({
+    where: { isSystemOwner: true, email: { not: email } },
+    data: { isSystemOwner: false },
+  })
+
+  const existing = await prisma.user.findUnique({ where: { email } })
+
+  if (existing) {
+    await prisma.user.update({
+      where: { id: existing.id },
+      data: {
+        role: 'ADMIN',
+        isSuperAdmin: true,
+        isSystemOwner: true,
+      },
+    })
+    console.log('✅ Propietario del sistema promovido:', email)
+    return
+  }
+
+  const passwordPlain = process.env.SYSTEM_OWNER_PASSWORD
+  if (!passwordPlain) {
+    throw new Error(
+      'SYSTEM_OWNER_PASSWORD es requerido para crear un nuevo propietario del sistema'
+    )
+  }
+
+  const password = await bcrypt.hash(passwordPlain, 12)
+  const owner = await prisma.user.create({
+    data: {
+      name: 'System Owner',
+      email,
+      password,
+      role: 'ADMIN',
+      isSuperAdmin: true,
+      isSystemOwner: true,
+    },
+  })
+
+  console.log('✅ Propietario del sistema creado:', owner.email)
+}
+
+async function main() {
+  await seedDefaultAdmin()
+  await seedSystemOwner()
 }
 
 main()

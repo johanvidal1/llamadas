@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getClients, getClient, logCall, updateClient, updateContact, getCallbacks, downloadImportExport } from '../api/client'
+import { getClients, getClient, logCall, updateCall, updateClient, updateContact, getCallbacks, downloadImportExport } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
 import {
@@ -19,6 +19,7 @@ import {
   List,
   AlignJustify,
   Copy,
+  CheckCircle2,
 } from 'lucide-react'
 import CallModal from '../components/CallModal'
 import { format, isPast, isToday } from 'date-fns'
@@ -61,12 +62,22 @@ interface ClientSummary {
 
 interface CallLogEntry {
   id: string
+  agentId: string
   disposition: string
   aclaracion?: string
   notes?: string
   calledAt: string
-  agent: { name: string }
+  agent: { id: string; name: string }
   contact?: { id: string; nombre: string; tipoContacto?: string }
+}
+
+interface CallLogSnapshot {
+  disposition: string
+  aclaracion?: string
+  notes?: string
+  schedDate: string
+  schedTime: string
+  schedNotes?: string
 }
 
 interface ClientDetail {
@@ -87,6 +98,7 @@ interface ClientDetail {
 
 interface Callback {
   id: string
+  callLogId?: string
   scheduledAt: string
   notes?: string
   company: { id: string; ruc: string; razonSocial?: string; contacts: { nombre: string; telefono?: string }[] }
@@ -109,6 +121,22 @@ function contactNameParts(nombre?: string) {
     primerNombre: parts[0] ?? '',
     segundoNombre: parts[1] ?? '',
     tercerNombre: parts[2] ?? '',
+  }
+}
+
+function snapshotFromLog(
+  log: CallLogEntry,
+  callbacks: ClientDetail['callbacks']
+): CallLogSnapshot {
+  const linkedCb = callbacks?.find((c) => c.callLogId === log.id)
+  const schedAt = linkedCb ? new Date(linkedCb.scheduledAt) : null
+  return {
+    disposition: log.disposition,
+    aclaracion: log.aclaracion,
+    notes: log.notes,
+    schedDate: schedAt ? format(schedAt, 'yyyy-MM-dd') : '',
+    schedTime: schedAt ? format(schedAt, 'HH:mm') : '09:00',
+    schedNotes: linkedCb?.notes,
   }
 }
 
@@ -306,17 +334,18 @@ export default function MyLeads() {
     }
   }, [])
 
-  // ── Persist last visited client per user
-  const lastClientKey = `myLeads-lastClient-${user?.id ?? 'anon'}`
-
   const [currentIndex, setCurrentIndex] = useState(0)
   const [activeContactIdx, setActiveContactIdx] = useState(0)
   const [editPlan, setEditPlan] = useState('')
+  const [editingCallLogId, setEditingCallLogId] = useState<string | null>(null)
+  const [previousSnapshot, setPreviousSnapshot] = useState<CallLogSnapshot | null>(null)
   const [disposition, setDisposition] = useState('')
   const [aclaracion, setAclaracion] = useState('')
   const [callNotes, setCallNotes] = useState('')
   const [schedDate, setSchedDate] = useState('')
-  const [schedTime, setSchedTime] = useState('09:00')
+  const [schedTime, setSchedTime] = useState('')
+  const pendingCallLogIdRef = useRef<string | null>(null)
+  const pendingContactIdRef = useRef<string | null>(null)
   const [editTelefono, setEditTelefono] = useState('')
   const [editEmail, setEditEmail] = useState('')
   const [editDni, setEditDni] = useState('')
@@ -370,22 +399,6 @@ export default function MyLeads() {
   const total = clients.length
   const currentClient = clients[currentIndex]
 
-  // Restore last position when clients load (only on initial load, index still 0)
-  useEffect(() => {
-    if (clients.length === 0) return
-    const savedId = localStorage.getItem(lastClientKey)
-    if (!savedId) return
-    const idx = clients.findIndex((c) => c.id === savedId)
-    if (idx > 0) setCurrentIndex(idx) // only jump if not already at that position
-  }, [clients.length, lastClientKey]) // run when clients list changes size (i.e. first load)
-
-  // Persist current client ID on every navigation
-  useEffect(() => {
-    if (currentClient?.id) {
-      localStorage.setItem(lastClientKey, currentClient.id)
-    }
-  }, [currentClient?.id, lastClientKey])
-
   // Load detail for current client
   const { data: clientDetail, isFetching: loadingDetail } = useQuery({
     queryKey: ['client-detail', currentClient?.id],
@@ -415,12 +428,7 @@ export default function MyLeads() {
   })
   const callbackList = agendados as Callback[]
 
-  // Reset contact tab immediately when navigating to another company
-  useEffect(() => {
-    setActiveContactIdx(0)
-  }, [currentClient?.id])
-
-  // Clamp contact index when contact count changes
+  // Clamp contact index when contact count changes (only if out of bounds)
   useEffect(() => {
     if (!displayContacts.length) return
     setActiveContactIdx((idx) =>
@@ -428,28 +436,74 @@ export default function MyLeads() {
     )
   }, [detail?.id, displayContacts.length])
 
-  // Sync editable fields when company changes
+  // Sync company fields when company changes
   useEffect(() => {
     if (detail) {
       setEditPlan(detail.plan ?? '')
       setHistorialScope('contact')
-      setDisposition('')
-      setAclaracion('')
-      setCallNotes('')
-      setSchedDate('')
-      setSchedTime('09:00')
     }
   }, [detail?.id])
 
-  // Reset call form when switching contact tab within same company
-  useEffect(() => {
+  const clearEditableCallFields = useCallback(() => {
     setDisposition('')
     setAclaracion('')
     setCallNotes('')
     setSchedDate('')
-    setSchedTime('09:00')
-    setHistorialScope('contact')
-  }, [activeContactIdx])
+    setSchedTime('')
+  }, [])
+
+  const hydrateFromSnapshot = useCallback((snapshot: CallLogSnapshot) => {
+    setDisposition(snapshot.disposition)
+    setAclaracion(snapshot.aclaracion ?? '')
+    setCallNotes(snapshot.notes ?? '')
+    setSchedDate(snapshot.schedDate ?? '')
+    setSchedTime(snapshot.schedTime || '09:00')
+  }, [])
+
+  // Hydrate call log view/edit state when contact or detail changes
+  useEffect(() => {
+    if (!detail || !user?.id) return
+
+    let contactIdx = activeContactIdx
+    if (pendingContactIdRef.current) {
+      const cIdx = displayContacts.findIndex((c) => c.id === pendingContactIdRef.current)
+      if (cIdx >= 0) {
+        contactIdx = cIdx
+        setActiveContactIdx(cIdx)
+      }
+      pendingContactIdRef.current = null
+    }
+
+    const idx = Math.min(contactIdx, Math.max(0, displayContacts.length - 1))
+    const contact = displayContacts[idx]
+    if (!contact?.id || contact.id.startsWith('summary-')) {
+      setEditingCallLogId(null)
+      setPreviousSnapshot(null)
+      clearEditableCallFields()
+      return
+    }
+
+    let targetLog: CallLogEntry | undefined
+    if (pendingCallLogIdRef.current) {
+      targetLog = detail.callLogs.find((l) => l.id === pendingCallLogIdRef.current)
+      pendingCallLogIdRef.current = null
+    } else {
+      targetLog = [...detail.callLogs]
+        .filter((l) => l.contact?.id === contact.id && l.agentId === user.id)
+        .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())[0]
+    }
+
+    if (targetLog) {
+      const snapshot = snapshotFromLog(targetLog, detail.callbacks)
+      setEditingCallLogId(targetLog.id)
+      setPreviousSnapshot(snapshot)
+      hydrateFromSnapshot(snapshot)
+    } else {
+      setEditingCallLogId(null)
+      setPreviousSnapshot(null)
+      clearEditableCallFields()
+    }
+  }, [detail, activeContactIdx, user?.id, clearEditableCallFields, hydrateFromSnapshot, displayContacts])
 
   const saveActiveContactIfDirty = useCallback(async () => {
     if (!displayContacts.length) return
@@ -567,7 +621,12 @@ export default function MyLeads() {
     setGridPage(1)
   }
 
-  const goToClientById = (clientId: string) => {
+  const goToClientById = (
+    clientId: string,
+    opts?: { callLogId?: string; contactId?: string }
+  ) => {
+    if (opts?.callLogId) pendingCallLogIdRef.current = opts.callLogId
+    if (opts?.contactId) pendingContactIdRef.current = opts.contactId
     const idx = clients.findIndex((c) => c.id === clientId)
     if (idx >= 0) goTo(idx)
     else toast('Este cliente no está en tu lista visible', { icon: 'ℹ️' })
@@ -580,18 +639,44 @@ export default function MyLeads() {
       await updateClient(currentClient.id, {
         plan: editPlan || undefined,
       })
-      if (disposition) {
-        if (disposition === 'CALLBACK' && !schedDate)
+
+      const callbackDateIso = schedDate
+        ? new Date(`${schedDate}T${schedTime || '09:00'}:00`).toISOString()
+        : undefined
+
+      if (editingCallLogId) {
+        const snap = previousSnapshot
+        const snapSchedTime = snap?.schedTime || '09:00'
+        const hasDispositionChange = snap ? disposition !== snap.disposition : !!disposition
+        const hasAclaracionChange = snap ? aclaracion !== (snap.aclaracion ?? '') : !!aclaracion
+        const hasNotesChange = snap ? callNotes !== (snap.notes ?? '') : !!callNotes
+        const hasSchedDateChange = snap ? schedDate !== (snap.schedDate ?? '') : !!schedDate
+        const hasSchedTimeChange = snap ? schedTime !== snapSchedTime : !!schedTime
+        const hasCallUpdate = hasDispositionChange || hasAclaracionChange || hasNotesChange
+        const hasSchedUpdate = hasSchedDateChange || hasSchedTimeChange
+        if (!hasCallUpdate && !hasSchedUpdate) {
+          throw new Error('Ingresa al menos un campo para actualizar el registro')
+        }
+        if (disposition === 'CALLBACK' && !schedDate) {
           throw new Error('Selecciona la fecha para el callback')
+        }
+        await updateCall(editingCallLogId, {
+          ...(hasDispositionChange ? { disposition } : {}),
+          ...(hasAclaracionChange ? { aclaracion: aclaracion || undefined } : {}),
+          ...(hasNotesChange ? { notes: callNotes || undefined } : {}),
+          ...(hasSchedUpdate ? { callbackDate: callbackDateIso } : {}),
+        })
+      } else if (disposition) {
+        if (disposition === 'CALLBACK' && !schedDate) {
+          throw new Error('Selecciona la fecha para el callback')
+        }
         await logCall({
           clientId: currentClient.id,
           contactId: activeContact?.id || undefined,
           disposition,
           aclaracion: aclaracion || undefined,
           notes: callNotes || undefined,
-          callbackDate: schedDate
-            ? new Date(`${schedDate}T${schedTime}:00`).toISOString()
-            : undefined,
+          callbackDate: schedDate ? callbackDateIso : undefined,
         })
       } else if (schedDate) {
         await logCall({
@@ -599,7 +684,7 @@ export default function MyLeads() {
           contactId: activeContact?.id || undefined,
           disposition: 'CALLBACK',
           notes: callNotes || undefined,
-          callbackDate: new Date(`${schedDate}T${schedTime}:00`).toISOString(),
+          callbackDate: callbackDateIso,
         })
       }
       return autoNext
@@ -619,7 +704,8 @@ export default function MyLeads() {
 
   const gridClients = gridData?.clients ?? []
   const gridTotal = gridData?.total ?? 0
-  const aclaracionList = disposition ? ACLARACION_OPTIONS[disposition] ?? [] : []
+  const effectiveDisposition = disposition
+  const aclaracionList = effectiveDisposition ? ACLARACION_OPTIONS[effectiveDisposition] ?? [] : []
 
   // Split callbacks: own = current user; team = all (admin only)
   const ownCallbacks = callbackList.filter((c) => c.agent.id === user?.id)
@@ -715,22 +801,6 @@ export default function MyLeads() {
               <StatusBadge status={detail.status} />
             </div>
           )}
-          {viewMode === 'detail' && clients.length > 0 && (() => {
-            const savedId = localStorage.getItem(lastClientKey)
-            const savedIdx = savedId ? clients.findIndex((c) => c.id === savedId) : -1
-            if (savedIdx > 0 && savedIdx !== currentIndex) {
-              return (
-                <button
-                  onClick={() => setCurrentIndex(savedIdx)}
-                  title={`Ir al último registro visitado (${savedIdx + 1} de ${total})`}
-                  className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-white text-xs font-medium rounded transition-colors shrink-0"
-                >
-                  ↩ Retomar #{savedIdx + 1}
-                </button>
-              )
-            }
-            return null
-          })()}
           {viewMode === 'grid' && (
             <span className="text-blue-300 text-xs shrink-0">{gridData?.total ?? 0} clientes</span>
           )}
@@ -910,15 +980,22 @@ export default function MyLeads() {
                 <div className="flex flex-col gap-3 flex-1">
 
                   {/* Resultado de esta llamada */}
-                  <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-3">
+                  <div className={`border border-gray-200 rounded-lg p-4 space-y-3 ${previousSnapshot ? 'bg-slate-50 border-l-4 border-l-blue-500' : 'bg-white'}`}>
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Resultado de esta llamada</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="flex flex-col gap-0.5">
                         <label className="text-xs text-gray-500 font-medium">Respuesta</label>
                         <select
-                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
                           value={disposition}
-                          onChange={(e) => { setDisposition(e.target.value); setAclaracion(''); if (e.target.value === 'NOT_INTERESTED' || e.target.value === 'DO_NOT_CALL') { setSchedDate('') } }}
+                          onChange={(e) => {
+                            setDisposition(e.target.value)
+                            setAclaracion('')
+                            if (e.target.value === 'NOT_INTERESTED' || e.target.value === 'DO_NOT_CALL') {
+                              setSchedDate('')
+                              setSchedTime('')
+                            }
+                          }}
                         >
                           {RESPUESTA_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
@@ -926,10 +1003,10 @@ export default function MyLeads() {
                       <div className="flex flex-col gap-0.5">
                         <label className="text-xs text-gray-500 font-medium">Aclaración</label>
                         <select
-                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none disabled:bg-gray-100 disabled:text-gray-400"
+                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none disabled:bg-gray-100 disabled:text-gray-400"
                           value={aclaracion}
                           onChange={(e) => setAclaracion(e.target.value)}
-                          disabled={!disposition || aclaracionList.length === 0}
+                          disabled={!effectiveDisposition || aclaracionList.length === 0}
                         >
                           <option value="">— Seleccionar —</option>
                           {aclaracionList.map((a) => <option key={a} value={a}>{a}</option>)}
@@ -940,7 +1017,7 @@ export default function MyLeads() {
                       <label className="text-xs text-gray-500 font-medium">Notas de la llamada</label>
                       <textarea
                         rows={3}
-                        className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none resize-none"
+                        className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none resize-none"
                         placeholder="Comentarios adicionales de esta llamada..."
                         value={callNotes}
                         onChange={(e) => setCallNotes(e.target.value)}
@@ -948,12 +1025,23 @@ export default function MyLeads() {
                     </div>
                   </div>
 
+                  {previousSnapshot && (
+                    <div className="relative flex items-center gap-3 py-1 px-1 -my-0.5" aria-hidden>
+                      <div className="h-0.5 flex-1 rounded-full bg-gradient-to-r from-transparent via-blue-500/80 to-blue-500/40" />
+                      <span className="flex items-center gap-1.5 shrink-0 text-xs font-medium text-blue-600">
+                        <CheckCircle2 size={12} className="text-blue-500" />
+                        Registro guardado
+                      </span>
+                      <div className="h-0.5 flex-1 rounded-full bg-gradient-to-l from-transparent via-blue-500/80 to-blue-500/40" />
+                    </div>
+                  )}
+
                   {/* Agendar */}
-                  <div className={`bg-white border border-gray-200 rounded-lg overflow-hidden transition-opacity ${disposition === 'NOT_INTERESTED' || disposition === 'DO_NOT_CALL' ? 'opacity-40 pointer-events-none select-none' : ''}`}>
+                  <div className={`border border-gray-200 rounded-lg overflow-hidden transition-opacity ${effectiveDisposition === 'NOT_INTERESTED' || effectiveDisposition === 'DO_NOT_CALL' ? 'opacity-40 pointer-events-none select-none' : ''} ${previousSnapshot ? 'bg-amber-50' : 'bg-white'}`}>
                     <div className="bg-gray-100 border-b border-gray-200 px-4 py-2 flex items-center gap-2">
                       <CalendarClock size={14} className="text-gray-500" />
                       <span className="text-sm font-semibold text-gray-600">Agendar</span>
-                      {disposition === 'CALLBACK'
+                      {effectiveDisposition === 'CALLBACK'
                         ? <span className="badge bg-blue-100 text-blue-700 ml-1">Requerido</span>
                         : <span className="text-xs text-gray-400">(opcional)</span>}
                     </div>
@@ -961,16 +1049,33 @@ export default function MyLeads() {
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
                         <div className="flex flex-col gap-0.5">
                           <label className="text-xs text-gray-500 font-medium">Fecha</label>
-                          <input type="date" className="border border-gray-300 rounded px-3 py-1.5 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-full"
-                            value={schedDate} min={new Date().toISOString().split('T')[0]} onChange={(e) => setSchedDate(e.target.value)} />
+                          <input
+                            type="date"
+                            className="border border-gray-300 rounded px-3 py-1.5 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-full"
+                            value={schedDate}
+                            min={new Date().toISOString().split('T')[0]}
+                            onChange={(e) => setSchedDate(e.target.value)}
+                          />
                         </div>
                         <div className="flex flex-col gap-0.5">
                           <label className="text-xs text-gray-500 font-medium">Hora</label>
-                          <input type="time" className="border border-gray-300 rounded px-3 py-1.5 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-full"
-                            value={schedTime} onChange={(e) => setSchedTime(e.target.value)} />
+                          <input
+                            type="time"
+                            className="border border-gray-300 rounded px-3 py-1.5 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-full"
+                            value={schedTime}
+                            onChange={(e) => setSchedTime(e.target.value)}
+                          />
                         </div>
-                        <button type="button" onClick={() => { const d = new Date(); d.setDate(d.getDate() + 1); setSchedDate(d.toISOString().split('T')[0]); setSchedTime('09:00') }}
-                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50 transition-colors h-[34px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const d = new Date()
+                            d.setDate(d.getDate() + 1)
+                            setSchedDate(d.toISOString().split('T')[0])
+                            setSchedTime('09:00')
+                          }}
+                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50 transition-colors h-[34px] bg-white"
+                        >
                           <Clock size={13} /> Primer libre
                         </button>
                       </div>
@@ -1018,7 +1123,7 @@ export default function MyLeads() {
                   <button onClick={() => saveMutation.mutate(false)} disabled={saveMutation.isPending}
                     className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
                     <Save size={15} />
-                    {saveMutation.isPending ? 'Guardando...' : 'Guardar resultado'}
+                    {saveMutation.isPending ? 'Guardando...' : editingCallLogId ? 'Guardar actualización' : 'Guardar resultado'}
                   </button>
                   <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || isLast}
                     className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
@@ -1128,7 +1233,10 @@ export default function MyLeads() {
                   activeList.map((cb) => {
                     const isCurrent = cb.company.id === currentClient?.id
                     return (
-                      <button key={cb.id} onClick={() => goToClientById(cb.company.id)}
+                      <button key={cb.id} onClick={() => goToClientById(cb.company.id, {
+                        callLogId: cb.callLogId,
+                        contactId: cb.callLog?.contact?.id,
+                      })}
                         className={`w-full text-left px-2.5 py-2 rounded border text-xs transition-all ${callbackColor(cb.scheduledAt)} ${isCurrent ? 'ring-2 ring-blue-400' : ''}`}>
                         <p className="font-semibold truncate leading-tight">{cb.company.razonSocial || cb.company.ruc}</p>
                         <p className="opacity-70 truncate text-[10px]">

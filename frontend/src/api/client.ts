@@ -84,6 +84,7 @@ export type AppUser = {
   email: string
   role: 'ADMIN' | 'AGENT'
   isSuperAdmin?: boolean
+  isSystemOwner?: boolean
   active: boolean
   createdAt?: string
   _count: {
@@ -228,6 +229,8 @@ export const deleteAssignment = (id: string) =>
 export const getCalls = (params?: object) =>
   api.get('/calls', { params }).then((r) => r.data)
 export const logCall = (data: object) => api.post('/calls', data).then((r) => r.data)
+export const updateCall = (id: string, data: object) =>
+  api.put(`/calls/${id}`, data).then((r) => r.data)
 
 // ─── Callbacks ────────────────────────────────────────────
 export const getCallbacks = (params?: object) =>

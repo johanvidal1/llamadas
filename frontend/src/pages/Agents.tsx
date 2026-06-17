@@ -49,20 +49,22 @@ function hasHistory(u: AppUser) {
 const MAX_AGENTS = 25
 const MAX_REGULAR_ADMINS = 1
 
-function roleLabel(u: AppUser) {
+function roleLabel(u: AppUser, currentUserIsSystemOwner = false) {
+  if (u.isSystemOwner && currentUserIsSystemOwner) return 'Owner'
   if (u.isSuperAdmin) return 'Super admin'
   if (u.role === 'ADMIN') return 'Admin'
   return 'Agente'
 }
 
-function roleBadgeClass(u: AppUser) {
+function roleBadgeClass(u: AppUser, currentUserIsSystemOwner = false) {
+  if (u.isSystemOwner && currentUserIsSystemOwner) return 'bg-rose-100 text-rose-800'
   if (u.isSuperAdmin) return 'bg-amber-100 text-amber-800'
   if (u.role === 'ADMIN') return 'bg-purple-100 text-purple-700'
   return 'bg-blue-100 text-blue-700'
 }
 
 function isAdminUser(u: AppUser) {
-  return u.role === 'ADMIN' || u.isSuperAdmin === true
+  return u.role === 'ADMIN' || u.isSuperAdmin === true || u.isSystemOwner === true
 }
 
 function deleteDisabledReason(u: AppUser) {
@@ -81,7 +83,8 @@ function UserTable({
   onReactivate,
   onDelete,
   currentUserId,
-  isSuperAdmin = false,
+  isSuperAdminOrOwner = false,
+  currentUserIsSystemOwner = false,
   muted = false,
 }: {
   users: AppUser[]
@@ -90,7 +93,8 @@ function UserTable({
   onReactivate?: (u: AppUser) => void
   onDelete: (u: AppUser) => void
   currentUserId?: string
-  isSuperAdmin?: boolean
+  isSuperAdminOrOwner?: boolean
+  currentUserIsSystemOwner?: boolean
   muted?: boolean
 }) {
   if (users.length === 0) {
@@ -113,21 +117,24 @@ function UserTable({
       <tbody className="divide-y divide-gray-100">
         {users.map((u) => {
           const adminTarget = isAdminUser(u)
-          const canManageAdmin = !adminTarget || isSuperAdmin
+          const canManageAdmin = !adminTarget || isSuperAdminOrOwner
           const canDelete =
             canManageAdmin &&
-            !u.isSuperAdmin &&
+            !u.isSystemOwner &&
+            !(u.isSuperAdmin && !currentUserIsSystemOwner) &&
             !hasHistory(u) &&
             u.id !== currentUserId
-          const deleteTooltip = u.isSuperAdmin
-            ? 'No se puede eliminar al super administrador'
-            : !canManageAdmin
-              ? 'Solo el super admin puede eliminar administradores'
-              : u.id === currentUserId
-                ? 'No puedes eliminar tu propia cuenta'
-                : hasHistory(u)
-                  ? deleteDisabledReason(u)
-                  : 'Eliminar permanentemente'
+          const deleteTooltip = u.isSystemOwner
+            ? 'No se puede eliminar al propietario del sistema'
+            : u.isSuperAdmin && !currentUserIsSystemOwner
+              ? 'Solo el propietario del sistema puede eliminar al super administrador'
+              : !canManageAdmin
+                ? 'Solo el super admin puede eliminar administradores'
+                : u.id === currentUserId
+                  ? 'No puedes eliminar tu propia cuenta'
+                  : hasHistory(u)
+                    ? deleteDisabledReason(u)
+                    : 'Eliminar permanentemente'
           const deactivateTooltip = !canManageAdmin
             ? 'Solo el super admin puede desactivar administradores'
             : u.id === currentUserId
@@ -152,13 +159,13 @@ function UserTable({
                 </div>
               </td>
               <td className="px-4 py-3">
-                <span className={`badge ${roleBadgeClass(u)}`}>
-                  {u.role === 'ADMIN' || u.isSuperAdmin ? (
+                <span className={`badge ${roleBadgeClass(u, currentUserIsSystemOwner)}`}>
+                  {u.role === 'ADMIN' || u.isSuperAdmin || (u.isSystemOwner && currentUserIsSystemOwner) ? (
                     <Shield size={11} className="inline mr-1" />
                   ) : (
                     <Phone size={11} className="inline mr-1" />
                   )}
-                  {roleLabel(u)}
+                  {roleLabel(u, currentUserIsSystemOwner)}
                 </span>
               </td>
               <td className="px-4 py-3 text-center">{u._count.assignments}</td>
@@ -240,6 +247,8 @@ export default function Agents() {
   const { user } = useAuth()
   const isAdmin = user?.role === 'ADMIN'
   const isSuperAdmin = user?.isSuperAdmin === true
+  const isSystemOwner = user?.isSystemOwner === true
+  const isSuperAdminOrOwner = isSystemOwner || isSuperAdmin
   const [showForm, setShowForm] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm)
@@ -268,16 +277,20 @@ export default function Agents() {
 
   const { data: users = [], isLoading } = useQuery({ queryKey: ['users'], queryFn: getUsers })
 
-  const agentCount = users.filter((u) => u.role === 'AGENT').length
-  const regularAdminCount = users.filter((u) => u.role === 'ADMIN' && !u.isSuperAdmin).length
-  const editingUser = editId ? users.find((u) => u.id === editId) : null
+  const visibleUsers = users.filter((u) => !u.isSystemOwner || isSystemOwner)
+
+  const agentCount = visibleUsers.filter((u) => u.role === 'AGENT').length
+  const regularAdminCount = visibleUsers.filter(
+    (u) => u.role === 'ADMIN' && !u.isSuperAdmin && !u.isSystemOwner
+  ).length
+  const editingUser = editId ? visibleUsers.find((u) => u.id === editId) : null
   const editingAdmin = editingUser ? isAdminUser(editingUser) : false
-  const canEditRole = !editingAdmin || isSuperAdmin
+  const canEditRole = !editingAdmin || isSuperAdminOrOwner
   const atAgentLimit = agentCount >= MAX_AGENTS
   const atAdminLimit = regularAdminCount >= MAX_REGULAR_ADMINS
 
-  const activeUsers = users.filter((u) => u.active)
-  const inactiveUsers = users.filter((u) => !u.active)
+  const activeUsers = visibleUsers.filter((u) => u.active)
+  const inactiveUsers = visibleUsers.filter((u) => !u.active)
 
   const createMutation = useMutation({
     mutationFn: (data: object) => createUser(data),
@@ -447,7 +460,7 @@ export default function Agents() {
               ) : (
                 <input
                   className="input bg-gray-50 text-gray-500"
-                  value={roleLabel(editingUser!)}
+                  value={roleLabel(editingUser!, isSystemOwner)}
                   readOnly
                   title="Solo el super admin puede cambiar el rol de administradores"
                 />
@@ -493,7 +506,8 @@ export default function Agents() {
             onDeactivate={handleDeactivate}
             onDelete={handleDelete}
             currentUserId={user?.id}
-            isSuperAdmin={isSuperAdmin}
+            isSuperAdminOrOwner={isSuperAdminOrOwner}
+            currentUserIsSystemOwner={isSystemOwner}
           />
         )}
       </div>
@@ -523,7 +537,8 @@ export default function Agents() {
               onReactivate={handleReactivate}
               onDelete={handleDelete}
               currentUserId={user?.id}
-              isSuperAdmin={isSuperAdmin}
+              isSuperAdminOrOwner={isSuperAdminOrOwner}
+              currentUserIsSystemOwner={isSystemOwner}
               muted
             />
           )}

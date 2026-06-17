@@ -9,6 +9,7 @@ export interface AuthRequest extends Request {
     role: string
     name: string
     isSuperAdmin: boolean
+    isSystemOwner: boolean
   }
 }
 
@@ -29,7 +30,15 @@ async function authenticateRequest(req: AuthRequest, res: Response): Promise<boo
     }
     const user = await prisma.user.findUnique({
       where: { id: payload.id },
-      select: { id: true, email: true, role: true, name: true, active: true, isSuperAdmin: true },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        name: true,
+        active: true,
+        isSuperAdmin: true,
+        isSystemOwner: true,
+      },
     })
     if (!user || !user.active) {
       res.status(401).json({ error: 'Sesión inválida. Inicia sesión nuevamente.' })
@@ -41,6 +50,7 @@ async function authenticateRequest(req: AuthRequest, res: Response): Promise<boo
       role: user.role,
       name: user.name,
       isSuperAdmin: user.isSuperAdmin,
+      isSystemOwner: user.isSystemOwner,
     }
     return true
   } catch {
