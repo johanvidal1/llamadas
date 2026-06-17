@@ -38,6 +38,45 @@ export const login = (email: string, password: string) =>
 
 export const getMe = () => api.get('/auth/me').then((r) => r.data)
 
+// ─── Contact (public, no auth required) ───────────────────
+export type ContactFormPayload = {
+  nombre: string
+  empresa?: string
+  email: string
+  asunto: 'soporte' | 'comercial' | 'demo'
+  mensaje: string
+}
+
+export type ContactFormResult =
+  | { ok: true; message: string }
+  | { ok: false; smtpNotConfigured: true; error: string }
+  | { ok: false; smtpNotConfigured?: false; error: string }
+
+export async function submitContactForm(
+  payload: ContactFormPayload
+): Promise<ContactFormResult> {
+  try {
+    const { data } = await api.post<{ ok: boolean; message: string }>('/contact', payload)
+    return { ok: true, message: data.message }
+  } catch (err: unknown) {
+    if (axios.isAxiosError(err)) {
+      const status = err.response?.status
+      const body = err.response?.data as { error?: string; smtpNotConfigured?: boolean } | undefined
+      if (status === 503 && body?.smtpNotConfigured) {
+        return {
+          ok: false,
+          smtpNotConfigured: true,
+          error: body.error ?? 'SMTP no configurado',
+        }
+      }
+      if (body?.error) {
+        return { ok: false, error: body.error }
+      }
+    }
+    throw err
+  }
+}
+
 // ─── Users ────────────────────────────────────────────────
 export type AppUser = {
   id: string

@@ -13,6 +13,7 @@ import callsRouter from './routes/calls'
 import callbacksRouter from './routes/callbacks'
 import dashboardRouter from './routes/dashboard'
 import adminRouter from './routes/admin'
+import contactRouter from './routes/contact'
 import { errorHandler } from './middleware/error'
 
 const app = express()
@@ -38,6 +39,7 @@ app.use('/api/calls', callsRouter)
 app.use('/api/callbacks', callbacksRouter)
 app.use('/api/dashboard', dashboardRouter)
 app.use('/api/admin', adminRouter)
+app.use('/api/contact', contactRouter)
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
