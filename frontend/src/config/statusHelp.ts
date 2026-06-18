@@ -18,27 +18,29 @@ export const STATUS_HELP: Record<
   IN_PROGRESS: {
     title: 'En progreso',
     meaning: 'En seguimiento.',
-    activatesWhen: 'Llamada guardada: no contesta, ocupado, callback u otro.',
+    activatesWhen:
+      'Respuesta 0%: no contesta, volver a llamar, sin llegada al decisor, RUC suspendido o cliente actual.',
   },
   INTERESTED: {
     title: 'Interesado',
-    meaning: 'Quiere migrar.',
-    activatesWhen: 'Llamada con resultado «Interesado en migrar».',
+    meaning: 'Avance comercial (25%–90%).',
+    activatesWhen:
+      'Respuesta interesado, propuesta presentada, discusión de propuesta o a la espera de respuesta final.',
   },
   NOT_INTERESTED: {
     title: 'No interesado',
     meaning: 'Rechazó el contacto.',
-    activatesWhen: 'Llamada con resultado «No interesado».',
+    activatesWhen: 'Respuesta «NO INTERESADO».',
   },
   CONVERTED: {
     title: 'Convertido',
-    meaning: 'Ya migró / cerró venta.',
-    activatesWhen: 'Próximamente desde MyLeads (aún no se asigna automáticamente).',
+    meaning: 'Venta cerrada (100%).',
+    activatesWhen: 'Respuesta «VENTA CERRADA».',
   },
   DO_NOT_CALL: {
     title: 'No llamar',
     meaning: 'No volver a llamar.',
-    activatesWhen: 'Llamada con resultado «No llamar (lista negra)».',
+    activatesWhen: 'Registros históricos con disposición legacy «No llamar».',
   },
 }
 

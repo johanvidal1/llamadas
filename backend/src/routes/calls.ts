@@ -2,19 +2,27 @@ import { Router, Response } from 'express'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
-import { dispositionToStatus, recomputeContactStatus } from '../lib/contactStatus'
+import { recomputeContactStatus, statusForDisposition } from '../lib/contactStatus'
+import {
+  ALL_DISPOSITION_CODES,
+  CALLBACK_DISPOSITIONS,
+  getAclaracionForDisposition,
+  isValidDisposition,
+} from '../lib/responseOptions'
 
 const router = Router()
 
-const dispositionEnum = z.enum([
-  'INTERESTED',
-  'NOT_INTERESTED',
-  'NO_ANSWER',
-  'BUSY',
-  'CALLBACK',
-  'DO_NOT_CALL',
-  'OTHER',
-])
+const dispositionEnum = z.enum(ALL_DISPOSITION_CODES as [string, ...string[]])
+
+function resolveAclaracion(disposition: string, clientAclaracion?: string | null): string | undefined {
+  const catalogAclaracion = getAclaracionForDisposition(disposition)
+  if (catalogAclaracion) return catalogAclaracion
+  return clientAclaracion ?? undefined
+}
+
+function requiresCallbackDate(disposition: string): boolean {
+  return (CALLBACK_DISPOSITIONS as readonly string[]).includes(disposition)
+}
 
 const callSchema = z.object({
   clientId: z.string().min(1),
@@ -63,8 +71,13 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
 router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const data = callSchema.parse(req.body)
 
-  if (data.disposition === 'CALLBACK' && !data.callbackDate) {
-    res.status(400).json({ error: 'Se requiere fecha de callback cuando la disposición es CALLBACK' })
+  if (!isValidDisposition(data.disposition)) {
+    res.status(400).json({ error: 'Disposición no válida' })
+    return
+  }
+
+  if (requiresCallbackDate(data.disposition) && !data.callbackDate) {
+    res.status(400).json({ error: 'Se requiere fecha de callback cuando la respuesta es VOLVER A LLAMAR' })
     return
   }
 
@@ -99,7 +112,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
       agentId: req.user!.id,
       contactId,
       disposition: data.disposition,
-      aclaracion: data.aclaracion,
+      aclaracion: resolveAclaracion(data.disposition, data.aclaracion),
       notes: data.notes,
     },
   })
@@ -107,7 +120,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   if (contactId) {
     await recomputeContactStatus(contactId)
   } else {
-    const newStatus = dispositionToStatus[data.disposition]
+    const newStatus = statusForDisposition(data.disposition)
     await prisma.company.update({
       where: { id: data.clientId },
       data: { status: newStatus },
@@ -188,22 +201,32 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
 
   const effectiveDisposition = data.disposition ?? existing.disposition
 
-  if (effectiveDisposition === 'CALLBACK') {
+  if (data.disposition !== undefined && !isValidDisposition(data.disposition)) {
+    res.status(400).json({ error: 'Disposición no válida' })
+    return
+  }
+
+  if (requiresCallbackDate(effectiveDisposition)) {
     const willHaveCallback =
       data.callbackDate !== undefined
         ? !!data.callbackDate
         : !!existing.callback
     if (!willHaveCallback) {
-      res.status(400).json({ error: 'Se requiere fecha de callback cuando la disposición es CALLBACK' })
+      res.status(400).json({ error: 'Se requiere fecha de callback cuando la respuesta es VOLVER A LLAMAR' })
       return
     }
   }
 
+  const dispositionChanged = data.disposition !== undefined
   const callLog = await prisma.callLog.update({
     where: { id: existing.id },
     data: {
-      ...(data.disposition !== undefined ? { disposition: data.disposition } : {}),
-      ...(data.aclaracion !== undefined ? { aclaracion: data.aclaracion } : {}),
+      ...(dispositionChanged ? { disposition: data.disposition } : {}),
+      ...(dispositionChanged
+        ? { aclaracion: resolveAclaracion(data.disposition!, data.aclaracion) }
+        : data.aclaracion !== undefined
+          ? { aclaracion: resolveAclaracion(existing.disposition, data.aclaracion) }
+          : {}),
       ...(data.notes !== undefined ? { notes: data.notes } : {}),
     },
   })

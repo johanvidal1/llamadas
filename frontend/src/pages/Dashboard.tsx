@@ -44,6 +44,14 @@ const STATUS_LABELS: Record<string, string> = {
 
 const COMPANY_STATUS_EXCLUDE = new Set(['NOT_INTERESTED', 'DO_NOT_CALL'])
 
+function sumDispositions(map: Record<string, number>, codes: string[]): number {
+  return codes.reduce((sum, code) => sum + (map[code] ?? 0), 0)
+}
+
+const INTERESTED_DISP_CODES = ['INTERESADO', 'PROPUESTA_PRESENTADA', 'DISCUSION_PROPUESTA', 'ESPERA_RESPUESTA', 'VENTA_CERRADA', 'INTERESTED']
+const NO_ANSWER_DISP_CODES = ['NO_CONTESTA', 'NO_ANSWER']
+const CALLBACK_DISP_CODES = ['VOLVER_A_LLAMAR', 'CALLBACK']
+
 export default function Dashboard() {
   const { isAdmin, user } = useAuth()
   const [selectedBatchId, setSelectedBatchId] = useState<string | undefined>(undefined)
@@ -276,13 +284,13 @@ export default function Dashboard() {
                       <td className="py-3 text-center text-gray-600">{a._count.assignments}</td>
                       <td className="py-3 text-center text-gray-600">{a._count.callLogs}</td>
                       <td className="py-3 text-center text-green-600 font-medium">
-                        {a.dispositions['INTERESTED'] ?? 0}
+                        {sumDispositions(a.dispositions, INTERESTED_DISP_CODES)}
                       </td>
                       <td className="py-3 text-center text-gray-400">
-                        {a.dispositions['NO_ANSWER'] ?? 0}
+                        {sumDispositions(a.dispositions, NO_ANSWER_DISP_CODES)}
                       </td>
                       <td className="py-3 text-center text-blue-600">
-                        {a.dispositions['CALLBACK'] ?? 0}
+                        {sumDispositions(a.dispositions, CALLBACK_DISP_CODES)}
                       </td>
                     </tr>
                   )

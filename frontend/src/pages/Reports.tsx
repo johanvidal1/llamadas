@@ -10,6 +10,13 @@ import {
 import { StatusBadge } from '../components/StatusBadge'
 import { StatusHelpPopover } from '../components/StatusHelpPopover'
 import type { StatusHelpKey } from '../config/statusHelp'
+import {
+  DISPOSITION_BAR_COLORS,
+  SALES_FUNNEL_STAGES,
+  ZERO_PROGRESS_OPTIONS,
+  getDispositionLabel,
+  getResponseOption,
+} from '../config/responseOptions'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,17 +55,6 @@ interface ReportsData {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const DISP_LABELS: Record<string, string> = {
-  INTERESTED: 'Interesado', NOT_INTERESTED: 'No interesado',
-  NO_ANSWER: 'Sin respuesta', BUSY: 'Ocupado',
-  CALLBACK: 'Callback agendado', DO_NOT_CALL: 'No llamar', OTHER: 'Otro',
-}
-const DISP_COLORS: Record<string, string> = {
-  INTERESTED: 'bg-green-500', NOT_INTERESTED: 'bg-red-400',
-  NO_ANSWER: 'bg-gray-400', BUSY: 'bg-yellow-400',
-  CALLBACK: 'bg-blue-400', DO_NOT_CALL: 'bg-red-700', OTHER: 'bg-purple-400',
-}
 
 function Bar({ pct, color = 'bg-blue-500' }: { pct: number; color?: string }) {
   return (
@@ -337,6 +333,24 @@ export default function Reports() {
   const companies = funnel.companies
   const maxDay = Math.max(...callsByDay.map((d) => d.count), 1)
   const totalDisp = dispositionBreakdown.reduce((s, d) => s + d.count, 0)
+  const salesFunnelCounts = SALES_FUNNEL_STAGES.map((stage) => ({
+    ...stage,
+    count: dispositionBreakdown.find((d) => d.disposition === stage.code)?.count ?? 0,
+  }))
+  const zeroProgressBreakdown = [
+    ...ZERO_PROGRESS_OPTIONS.map((opt) => ({
+      disposition: opt.code,
+      label: opt.label,
+      count: dispositionBreakdown.find((d) => d.disposition === opt.code)?.count ?? 0,
+    })),
+    ...dispositionBreakdown
+      .filter((d) => !getResponseOption(d.disposition) && !ZERO_PROGRESS_OPTIONS.some((z) => z.code === d.disposition))
+      .map((d) => ({
+        disposition: d.disposition,
+        label: getDispositionLabel(d.disposition),
+        count: d.count,
+      })),
+  ].filter((d) => d.count > 0)
   const contactedPct = records.total > 0
     ? Math.round((records.inProgress + records.interested + records.converted + records.notInterested + records.doNotCall) / records.total * 100)
     : 0
@@ -571,26 +585,51 @@ export default function Reports() {
 
         <section>
           <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
-            <span className="flex items-center gap-2"><Phone size={14} />Resultado de llamadas</span>
+            <span className="flex items-center gap-2"><Phone size={14} />Embudo comercial (25%–100%)</span>
           </h2>
           <div className="card p-4 space-y-2.5">
-            {dispositionBreakdown
+            {salesFunnelCounts.map((stage) => (
+              <div key={stage.code} className="space-y-0.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-700">{stage.label} <span className="text-gray-400">({stage.aclaracion})</span></span>
+                  <span className="font-semibold text-gray-900">{stage.count}</span>
+                </div>
+                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${DISPOSITION_BAR_COLORS[stage.code] ?? 'bg-green-500'}`}
+                    style={{ width: `${totalDisp > 0 ? (stage.count / totalDisp) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+            {salesFunnelCounts.every((s) => s.count === 0) && (
+              <p className="text-sm text-gray-400 text-center py-4">Sin avance comercial registrado</p>
+            )}
+          </div>
+        </section>
+
+        <section>
+          <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
+            <span className="flex items-center gap-2"><Phone size={14} />Respuestas 0% y legacy</span>
+          </h2>
+          <div className="card p-4 space-y-2.5">
+            {zeroProgressBreakdown
               .sort((a, b) => b.count - a.count)
               .map((d) => (
                 <div key={d.disposition} className="space-y-0.5">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-gray-700">{DISP_LABELS[d.disposition] ?? d.disposition}</span>
+                    <span className="text-gray-700">{d.label}</span>
                     <span className="font-semibold text-gray-900">{d.count} <span className="text-gray-400 font-normal">({totalDisp > 0 ? Math.round(d.count / totalDisp * 100) : 0}%)</span></span>
                   </div>
                   <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full ${DISP_COLORS[d.disposition] ?? 'bg-gray-400'}`}
+                      className={`h-full rounded-full ${DISPOSITION_BAR_COLORS[d.disposition] ?? 'bg-gray-400'}`}
                       style={{ width: `${totalDisp > 0 ? (d.count / totalDisp) * 100 : 0}%` }}
                     />
                   </div>
                 </div>
               ))}
-            {dispositionBreakdown.length === 0 && <p className="text-sm text-gray-400 text-center py-4">Sin llamadas registradas</p>}
+            {zeroProgressBreakdown.length === 0 && <p className="text-sm text-gray-400 text-center py-4">Sin llamadas registradas</p>}
           </div>
         </section>
       </div>

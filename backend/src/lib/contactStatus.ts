@@ -1,6 +1,20 @@
 import { prisma } from './prisma'
+import { getResponseOption } from './responseOptions'
 
 export const dispositionToStatus: Record<string, string> = {
+  // New respuesta codes
+  NO_CONTESTA: 'IN_PROGRESS',
+  VOLVER_A_LLAMAR: 'IN_PROGRESS',
+  SIN_LLEGADA_DECISOR: 'IN_PROGRESS',
+  RUC_SUSPENDIDO: 'IN_PROGRESS',
+  CLIENTE_ACTUAL: 'IN_PROGRESS',
+  NO_INTERESADO: 'NOT_INTERESTED',
+  INTERESADO: 'INTERESTED',
+  PROPUESTA_PRESENTADA: 'INTERESTED',
+  DISCUSION_PROPUESTA: 'INTERESTED',
+  ESPERA_RESPUESTA: 'INTERESTED',
+  VENTA_CERRADA: 'CONVERTED',
+  // Legacy codes (historical records only)
   INTERESTED: 'INTERESTED',
   NOT_INTERESTED: 'NOT_INTERESTED',
   NO_ANSWER: 'IN_PROGRESS',
@@ -8,6 +22,12 @@ export const dispositionToStatus: Record<string, string> = {
   CALLBACK: 'IN_PROGRESS',
   DO_NOT_CALL: 'DO_NOT_CALL',
   OTHER: 'IN_PROGRESS',
+}
+
+export function statusForDisposition(disposition: string): string {
+  const fromCatalog = getResponseOption(disposition)?.contactStatus
+  if (fromCatalog) return fromCatalog
+  return dispositionToStatus[disposition] ?? 'IN_PROGRESS'
 }
 
 /**
@@ -52,9 +72,7 @@ export async function recomputeContactStatus(contactId: string): Promise<void> {
     select: { disposition: true },
   })
 
-  const status = latestLog
-    ? (dispositionToStatus[latestLog.disposition] ?? 'IN_PROGRESS')
-    : 'PENDING'
+  const status = latestLog ? statusForDisposition(latestLog.disposition) : 'PENDING'
 
   await prisma.contact.update({
     where: { id: contactId },

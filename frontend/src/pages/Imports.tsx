@@ -1,8 +1,9 @@
 import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getImports, getImport, uploadImport, deleteImport, patchImport, downloadImportExport } from '../api/client'
+import { getImports, getImport, uploadImport, deleteImport, patchImport, downloadImportExport, downloadImportOriginal } from '../api/client'
 import type { DuplicateFileWarning } from '../api/client'
 import toast from 'react-hot-toast'
+import { useAuth } from '../contexts/AuthContext'
 import {
   Upload, FileSpreadsheet, ChevronRight, Clock, Users, X,
   Phone, Mail, UserCheck, UserX, Search, Trash2, AlertTriangle, Building2, List, Ban, ShieldCheck, Download,
@@ -90,8 +91,11 @@ export default function Imports() {
   } | null>(null)
   const [duplicateDisplayName, setDuplicateDisplayName] = useState('')
   const [exportingBatchId, setExportingBatchId] = useState<string | null>(null)
+  const [downloadingOriginalId, setDownloadingOriginalId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const qc = useQueryClient()
+  const { user } = useAuth()
+  const canDownloadOriginal = user?.isSuperAdmin || user?.isSystemOwner
 
   const { data: batches = [], isLoading } = useQuery({
     queryKey: ['imports'],
@@ -215,13 +219,26 @@ export default function Imports() {
   const handleExportBatch = async (batchId: string) => {
     setExportingBatchId(batchId)
     try {
-      await downloadImportExport(batchId)
-      toast.success('Descarga iniciada')
+      const saved = await downloadImportExport(batchId)
+      if (saved) toast.success('Archivo guardado')
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
       toast.error(msg ?? 'Error al exportar')
     } finally {
       setExportingBatchId(null)
+    }
+  }
+
+  const handleDownloadOriginal = async (batchId: string) => {
+    setDownloadingOriginalId(batchId)
+    try {
+      const saved = await downloadImportOriginal(batchId)
+      if (saved) toast.success('Archivo original guardado')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(msg ?? 'Error al descargar el archivo original')
+    } finally {
+      setDownloadingOriginalId(null)
     }
   }
 
@@ -340,6 +357,8 @@ export default function Imports() {
                 companyCount: number
                 contactCount: number
                 blocked?: boolean
+                hasOriginalFile?: boolean
+                hasUpdates?: boolean
                 createdAt: string
                 importedBy: { name: string }
               }) => (
@@ -388,14 +407,39 @@ export default function Imports() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    {canDownloadOriginal && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleDownloadOriginal(batch.id)
+                        }}
+                        disabled={!batch.hasOriginalFile || downloadingOriginalId === batch.id}
+                        className="p-2 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={
+                          batch.hasOriginalFile
+                            ? 'Descargar Excel original importado'
+                            : 'Archivo original no disponible'
+                        }
+                      >
+                        <FileSpreadsheet size={16} />
+                      </button>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
                         handleExportBatch(batch.id)
                       }}
                       disabled={exportingBatchId === batch.id}
-                      className="p-2 rounded-lg hover:bg-green-50 text-gray-400 hover:text-green-600 transition-colors disabled:opacity-50"
-                      title="Descargar Excel actualizado"
+                      className={`p-2 rounded-lg transition-colors disabled:opacity-40 ${
+                        batch.hasUpdates
+                          ? 'hover:bg-green-50 text-gray-400 hover:text-green-600'
+                          : 'text-gray-300 hover:bg-gray-50 hover:text-gray-400'
+                      }`}
+                      title={
+                        batch.hasUpdates
+                          ? 'Descargar Excel actualizado'
+                          : 'Descargar Excel actualizado (sin actividad de campaña registrada)'
+                      }
                     >
                       <Download size={16} />
                     </button>

@@ -1,8 +1,12 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { logCall } from '../api/client'
 import toast from 'react-hot-toast'
 import { X, Phone } from 'lucide-react'
+import {
+  RESPUESTA_SELECT_OPTIONS,
+  getResponseOption,
+} from '../config/responseOptions'
 
 interface Client {
   id: string
@@ -16,16 +20,6 @@ interface Props {
   onClose: () => void
 }
 
-const DISPOSITIONS = [
-  { value: 'INTERESTED', label: '✅ Interesado en migrar', color: 'border-green-500 bg-green-50 text-green-800' },
-  { value: 'NOT_INTERESTED', label: '❌ No interesado', color: 'border-red-500 bg-red-50 text-red-800' },
-  { value: 'NO_ANSWER', label: '📵 Sin respuesta', color: 'border-gray-500 bg-gray-50 text-gray-800' },
-  { value: 'BUSY', label: '⏳ Ocupado / Volver a llamar', color: 'border-yellow-500 bg-yellow-50 text-yellow-800' },
-  { value: 'CALLBACK', label: '📅 Agendar llamada posterior', color: 'border-blue-500 bg-blue-50 text-blue-800' },
-  { value: 'DO_NOT_CALL', label: '🚫 No llamar (lista negra)', color: 'border-red-800 bg-red-100 text-red-900' },
-  { value: 'OTHER', label: '📝 Otro resultado', color: 'border-purple-500 bg-purple-50 text-purple-800' },
-]
-
 export default function CallModal({ client, onClose }: Props) {
   const [disposition, setDisposition] = useState('')
   const [notes, setNotes] = useState('')
@@ -35,6 +29,12 @@ export default function CallModal({ client, onClose }: Props) {
   const [callbackNotes, setCallbackNotes] = useState('')
 
   const qc = useQueryClient()
+  const selectedResponse = disposition ? getResponseOption(disposition) : undefined
+
+  const respuestaOptions = useMemo(
+    () => RESPUESTA_SELECT_OPTIONS.filter((o) => o.value !== ''),
+    []
+  )
 
   const mutation = useMutation({
     mutationFn: (data: object) => logCall(data),
@@ -56,7 +56,7 @@ export default function CallModal({ client, onClose }: Props) {
       toast.error('Selecciona un resultado de la llamada')
       return
     }
-    if (disposition === 'CALLBACK' && !callbackDate) {
+    if (disposition === 'VOLVER_A_LLAMAR' && !callbackDate) {
       toast.error('Selecciona la fecha del callback')
       return
     }
@@ -68,7 +68,7 @@ export default function CallModal({ client, onClose }: Props) {
       notes,
     }
 
-    if (disposition === 'CALLBACK') {
+    if (disposition === 'VOLVER_A_LLAMAR') {
       payload.callbackDate = new Date(`${callbackDate}T${callbackTime}:00`).toISOString()
       payload.callbackNotes = callbackNotes
     }
@@ -96,8 +96,6 @@ export default function CallModal({ client, onClose }: Props) {
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-5">
-          {/* Disposition selection */}
-          {/* Contact selector */}
           {client.contacts && client.contacts.length > 0 && (
             <div>
               <label className="label">Contacto al que llamaste</label>
@@ -116,34 +114,36 @@ export default function CallModal({ client, onClose }: Props) {
             </div>
           )}
 
-          <div>
-            <label className="label">Resultado de la llamada *</label>
-            <div className="space-y-2 mt-2">
-              {DISPOSITIONS.map((d) => (
-                <label
-                  key={d.value}
-                  className={`flex items-center gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
-                    disposition === d.value ? d.color : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="disposition"
-                    value={d.value}
-                    checked={disposition === d.value}
-                    onChange={(e) => setDisposition(e.target.value)}
-                    className="sr-only"
-                  />
-                  <span className="text-sm font-medium">{d.label}</span>
-                </label>
-              ))}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="label">Respuesta *</label>
+              <select
+                className="input mt-1"
+                value={disposition}
+                onChange={(e) => setDisposition(e.target.value)}
+                required
+              >
+                <option value="">— Seleccionar —</option>
+                {respuestaOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">Aclaración</label>
+              <div className="mt-1 border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 text-gray-700 min-h-[42px] flex items-center">
+                {selectedResponse?.aclaracion ? (
+                  <span className="badge bg-slate-200 text-slate-800">{selectedResponse.aclaracion}</span>
+                ) : (
+                  <span className="text-gray-400 italic text-xs">Según respuesta</span>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Callback date (only when CALLBACK selected) */}
-          {disposition === 'CALLBACK' && (
+          {disposition === 'VOLVER_A_LLAMAR' && (
             <div className="bg-blue-50 rounded-lg p-4 space-y-3 border border-blue-200">
-              <p className="text-sm font-semibold text-blue-800">📅 Programar llamada de seguimiento</p>
+              <p className="text-sm font-semibold text-blue-800">Programar llamada de seguimiento</p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="label">Fecha *</label>
@@ -179,7 +179,6 @@ export default function CallModal({ client, onClose }: Props) {
             </div>
           )}
 
-          {/* General notes */}
           <div>
             <label className="label">Notas de la llamada</label>
             <textarea
@@ -191,7 +190,6 @@ export default function CallModal({ client, onClose }: Props) {
             />
           </div>
 
-          {/* Actions */}
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} className="btn-secondary">
               Cancelar

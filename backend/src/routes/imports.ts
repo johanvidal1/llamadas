@@ -1,4 +1,6 @@
 import path from 'path'
+import fs from 'fs/promises'
+import { existsSync } from 'fs'
 import { Router, Response } from 'express'
 import multer from 'multer'
 import { z } from 'zod'
@@ -7,6 +9,8 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
 import { parseExcel, parseCsv, ParsedCompany, ParseResult, MissingContactosSheetError } from '../lib/parseFile'
 import { requireAdmin, requireAuth, AuthRequest } from '../middleware/auth'
+import { getDispositionLabel } from '../lib/responseOptions'
+import { isSuperAdminOrOwner } from '../lib/userPermissions'
 
 function parseFechaConsulta(raw?: string): Date | null {
   if (!raw) return null
@@ -148,7 +152,13 @@ router.get('/', requireAdmin, async (_req: AuthRequest, res: Response) => {
   const batchesWithCounts = await Promise.all(
     batches.map(async (batch) => {
       const counts = await getBatchCounts(batch.id)
-      return { ...batch, ...counts }
+      const callLogCount = await getBatchCallLogCount(batch.id)
+      return {
+        ...batch,
+        ...counts,
+        hasOriginalFile: batch.storagePath != null,
+        hasUpdates: callLogCount > 0,
+      }
     })
   )
 
@@ -164,16 +174,6 @@ const STATUS_LABELS: Record<string, string> = {
   DO_NOT_CALL: 'No llamar',
 }
 
-const DISPOSITION_LABELS: Record<string, string> = {
-  INTERESTED: 'Interesado',
-  NOT_INTERESTED: 'No interesado',
-  NO_ANSWER: 'Sin respuesta',
-  BUSY: 'Ocupado',
-  CALLBACK: 'Callback agendado',
-  DO_NOT_CALL: 'No llamar',
-  OTHER: 'Otro',
-}
-
 function formatExportDate(date: Date | null | undefined): string {
   if (!date) return ''
   return date.toISOString().slice(0, 10)
@@ -181,6 +181,43 @@ function formatExportDate(date: Date | null | undefined): string {
 
 function sanitizeFilename(name: string): string {
   return name.replace(/[^\w\s.-]/g, '').replace(/\s+/g, '_').slice(0, 80)
+}
+
+const IMPORTS_UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'imports')
+
+function importFileExtension(filename: string): string {
+  const match = filename.match(/\.(xlsx?|csv)$/i)
+  return match ? match[0].toLowerCase() : '.xlsx'
+}
+
+function resolveStoragePath(storagePath: string): string {
+  return path.join(process.cwd(), storagePath)
+}
+
+async function saveImportOriginalFile(
+  batchId: string,
+  buffer: Buffer,
+  filename: string
+): Promise<string> {
+  const ext = importFileExtension(filename)
+  await fs.mkdir(IMPORTS_UPLOAD_DIR, { recursive: true })
+  const relativePath = path.join('uploads', 'imports', `${batchId}${ext}`)
+  await fs.writeFile(resolveStoragePath(relativePath), buffer)
+  return relativePath.replace(/\\/g, '/')
+}
+
+async function deleteImportOriginalFile(storagePath: string | null | undefined): Promise<void> {
+  if (!storagePath) return
+  const absolutePath = resolveStoragePath(storagePath)
+  if (existsSync(absolutePath)) {
+    await fs.unlink(absolutePath)
+  }
+}
+
+async function getBatchCallLogCount(batchId: string): Promise<number> {
+  return prisma.callLog.count({
+    where: { company: { importBatchId: batchId } },
+  })
 }
 
 // GET /api/imports/:id/export
@@ -252,7 +289,7 @@ router.get('/:id/export', requireAuth, async (req: AuthRequest, res: Response) =
       agente_asignado: contact.assignment?.agent.name ?? '',
       estado_campana: STATUS_LABELS[company.status] ?? company.status,
       ultima_disposicion: lastCall
-        ? (DISPOSITION_LABELS[lastCall.disposition] ?? lastCall.disposition)
+        ? getDispositionLabel(lastCall.disposition)
         : '',
       ultima_aclaracion: lastCall?.aclaracion ?? '',
       fecha_ultima_llamada: lastCall ? formatExportDate(lastCall.calledAt) : '',
@@ -300,6 +337,47 @@ router.get('/:id/export', requireAuth, async (req: AuthRequest, res: Response) =
   )
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
   res.send(buffer)
+})
+
+// GET /api/imports/:id/original
+router.get('/:id/original', requireAuth, async (req: AuthRequest, res: Response) => {
+  if (!isSuperAdminOrOwner(req.user!)) {
+    res.status(403).json({ error: 'Acceso restringido' })
+    return
+  }
+
+  const batch = await prisma.importBatch.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, filename: true, storagePath: true },
+  })
+
+  if (!batch) {
+    res.status(404).json({ error: 'Importación no encontrada' })
+    return
+  }
+
+  if (!batch.storagePath) {
+    res.status(404).json({ error: 'Archivo original no disponible' })
+    return
+  }
+
+  const absolutePath = resolveStoragePath(batch.storagePath)
+  if (!existsSync(absolutePath)) {
+    res.status(404).json({ error: 'Archivo original no encontrado en el servidor' })
+    return
+  }
+
+  const ext = importFileExtension(batch.filename)
+  const contentType =
+    ext === '.csv'
+      ? 'text/csv'
+      : ext === '.xls'
+        ? 'application/vnd.ms-excel'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+  res.setHeader('Content-Type', contentType)
+  res.setHeader('Content-Disposition', `attachment; filename="${batch.filename}"`)
+  res.sendFile(absolutePath)
 })
 
 // GET /api/imports/:id
@@ -484,6 +562,16 @@ router.post(
       { timeout: 120_000, maxWait: 10_000 }
     )
 
+    try {
+      const storagePath = await saveImportOriginalFile(batch.id, buffer, filename)
+      await prisma.importBatch.update({
+        where: { id: batch.id },
+        data: { storagePath },
+      })
+    } catch (err) {
+      console.error('Failed to save import original file:', err)
+    }
+
     res.status(201).json({
       id: batch.id,
       filename: batch.filename,
@@ -553,6 +641,8 @@ router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
 
       await tx.importBatch.delete({ where: { id: batchId } })
     })
+
+    await deleteImportOriginalFile(batch.storagePath)
 
     res.json({ success: true })
   } catch (err) {

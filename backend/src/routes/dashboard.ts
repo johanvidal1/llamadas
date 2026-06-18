@@ -1,6 +1,7 @@
 import { Router, Response } from 'express'
 import { prisma } from '../lib/prisma'
 import { requireAuth, requireAdmin, AuthRequest } from '../middleware/auth'
+import { INTERESTED_DISPOSITIONS } from '../lib/responseOptions'
 
 const router = Router()
 
@@ -305,7 +306,12 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
         prisma.contact.count({ where: { company: { importBatchId: b.id, ...companyAgentFilter }, ...contactAgentFilter } }),
         prisma.company.count({ where: { importBatchId: b.id, ...companyAgentFilter } }),
         prisma.callLog.count({ where: { company: { importBatchId: b.id } } }),
-        prisma.callLog.count({ where: { disposition: 'INTERESTED', company: { importBatchId: b.id } } }),
+        prisma.callLog.count({
+          where: {
+            disposition: { in: [...INTERESTED_DISPOSITIONS, 'VENTA_CERRADA'] },
+            company: { importBatchId: b.id },
+          },
+        }),
       ])
       return { batchId: b.id, contactCount, companyCount, callCount, interestedContactCount }
     })

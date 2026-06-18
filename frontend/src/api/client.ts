@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { filenameFromContentDisposition, saveBlobWithPicker } from '../lib/downloadFile'
 
 // En producción VITE_API_URL apunta al backend (ej: https://llamadas-backend.onrender.com)
 // En desarrollo usa el proxy de Vite (/api → localhost:3001)
@@ -161,15 +162,19 @@ export const downloadImportExport = async (id: string, agentId?: string) => {
     responseType: 'blob',
   })
   const disposition = response.headers['content-disposition'] as string | undefined
-  let filename = 'export.xlsx'
-  const match = disposition?.match(/filename="([^"]+)"/)
-  if (match?.[1]) filename = match[1]
-  const url = window.URL.createObjectURL(new Blob([response.data]))
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  window.URL.revokeObjectURL(url)
+  const filename = filenameFromContentDisposition(disposition) ?? 'export.xlsx'
+  const blob = new Blob([response.data])
+  return saveBlobWithPicker(blob, filename)
+}
+
+export const downloadImportOriginal = async (id: string) => {
+  const response = await api.get(`/imports/${id}/original`, {
+    responseType: 'blob',
+  })
+  const disposition = response.headers['content-disposition'] as string | undefined
+  const filename = filenameFromContentDisposition(disposition) ?? 'import.xlsx'
+  const blob = new Blob([response.data])
+  return saveBlobWithPicker(blob, filename)
 }
 
 // ─── Assignments ──────────────────────────────────────────

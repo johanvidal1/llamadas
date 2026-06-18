@@ -19,6 +19,17 @@ function contactFilterForRole(
   return undefined
 }
 
+/** Call logs counted per requesting user (registered vs blank in MyLeads). */
+function contactCallLogCountForUser(userId: string) {
+  return {
+    _count: {
+      select: {
+        callLogs: { where: { agentId: userId } },
+      },
+    },
+  }
+}
+
 // GET /api/clients — ADMIN sees all, AGENT sees only assigned contacts
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const {
@@ -104,7 +115,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     where: contactWhere,
     include: {
       assignment: { include: { agent: { select: { name: true, id: true } } } },
-      _count: { select: { callLogs: true } },
+      ...contactCallLogCountForUser(req.user!.id),
     },
     orderBy: { createdAt: 'asc' as const },
   }
@@ -155,7 +166,7 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
         where: contactWhere,
         include: {
           assignment: { include: { agent: { select: { name: true } } } },
-          _count: { select: { callLogs: true } },
+          ...contactCallLogCountForUser(req.user!.id),
         },
         orderBy: { createdAt: 'asc' },
       },

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getClients, getClient, logCall, updateCall, updateClient, updateContact, getCallbacks, downloadImportExport } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
@@ -6,6 +6,8 @@ import toast from 'react-hot-toast'
 import {
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   CalendarClock,
   Save,
   User,
@@ -24,30 +26,13 @@ import {
 import CallModal from '../components/CallModal'
 import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { StatusBadge, DISPOSITION_CONFIG } from '../components/StatusBadge'
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const RESPUESTA_OPTIONS = [
-  { value: '', label: 'NINGUNO' },
-  { value: 'INTERESTED', label: 'Interesado en migrar' },
-  { value: 'NOT_INTERESTED', label: 'No interesado' },
-  { value: 'NO_ANSWER', label: 'Sin respuesta / No contesta' },
-  { value: 'BUSY', label: 'Ocupado' },
-  { value: 'CALLBACK', label: 'Agendar llamada posterior' },
-  { value: 'DO_NOT_CALL', label: 'No llamar (lista negra)' },
-  { value: 'OTHER', label: 'Otro' },
-]
-
-const ACLARACION_OPTIONS: Record<string, string[]> = {
-  INTERESTED: ['Necesita más información', 'Pide cotización', 'Quiere revisar contrato', 'Enviará documentos'],
-  NOT_INTERESTED: ['Precio alto', 'Contrato vigente con otro operador', 'No necesita el servicio', 'Mala experiencia previa'],
-  NO_ANSWER: ['Timbre sin respuesta', 'Buzón de voz', 'Número no disponible', 'Número equivocado'],
-  BUSY: ['En reunión', 'Llamar más tarde hoy', 'Pide llamar mañana por la mañana', 'Pide llamar mañana por la tarde'],
-  CALLBACK: ['Cliente solicitó la cita', 'Necesita consultar con decisor', 'Fuera de ciudad', 'Fecha específica acordada'],
-  DO_NOT_CALL: ['Solicita no ser contactado', 'Número equivocado permanente', 'Cliente fallecido'],
-  OTHER: ['Sin información adicional', 'Número de empresa', 'Idioma diferente'],
-}
+import { StatusBadge, DISPOSITION_CONFIG, getDispositionBorderColor } from '../components/StatusBadge'
+import {
+  RESPUESTA_SELECT_OPTIONS,
+  RESPONSE_OPTIONS,
+  getDispositionLabel,
+  getResponseOption,
+} from '../config/responseOptions'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -56,7 +41,15 @@ interface ClientSummary {
   ruc: string
   razonSocial?: string
   status: string
-  contacts: { nombre: string; tipoContacto?: string; telefono?: string; email?: string; dni?: string }[]
+  contacts: {
+    id?: string
+    nombre: string
+    tipoContacto?: string
+    telefono?: string
+    email?: string
+    dni?: string
+    _count?: { callLogs: number }
+  }[]
   importBatch?: { id: string; filename: string; createdAt: string }
 }
 
@@ -122,6 +115,83 @@ function contactNameParts(nombre?: string) {
     segundoNombre: parts[1] ?? '',
     tercerNombre: parts[2] ?? '',
   }
+}
+
+function DetailRecordNav({
+  variant,
+  onFirstRegistered,
+  onPrev,
+  onNext,
+  onFirstEmpty,
+  isFirst,
+  isLast,
+  atFirstRegistered,
+  atFirstEmpty,
+  noRegistered,
+  noEmpty,
+}: {
+  variant: 'header' | 'footer'
+  onFirstRegistered: () => void
+  onPrev: () => void
+  onNext: () => void
+  onFirstEmpty: () => void
+  isFirst: boolean
+  isLast: boolean
+  atFirstRegistered: boolean
+  atFirstEmpty: boolean
+  noRegistered: boolean
+  noEmpty: boolean
+}) {
+  const isHeader = variant === 'header'
+  const btnBase = isHeader
+    ? 'flex items-center justify-center p-1.5 bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed rounded transition-colors'
+    : 'flex items-center justify-center p-2.5 min-h-[44px] min-w-[44px] border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
+  const iconSize = isHeader ? 16 : 15
+
+  return (
+    <div className={`flex items-center gap-1 ${isHeader ? '' : 'flex-1 sm:flex-none'}`}>
+      <button
+        type="button"
+        onClick={onFirstRegistered}
+        disabled={noRegistered || atFirstRegistered}
+        className={btnBase}
+        title="Primera empresa con registro"
+        aria-label="Primera empresa con registro"
+      >
+        <ChevronsLeft size={iconSize} />
+      </button>
+      <button
+        type="button"
+        onClick={onPrev}
+        disabled={isFirst}
+        className={btnBase}
+        title="Anterior"
+        aria-label="Anterior"
+      >
+        <ChevronLeft size={iconSize} />
+      </button>
+      <button
+        type="button"
+        onClick={onNext}
+        disabled={isLast}
+        className={btnBase}
+        title="Siguiente"
+        aria-label="Siguiente"
+      >
+        <ChevronRight size={iconSize} />
+      </button>
+      <button
+        type="button"
+        onClick={onFirstEmpty}
+        disabled={noEmpty || atFirstEmpty}
+        className={btnBase}
+        title="Primera empresa pendiente"
+        aria-label="Primera empresa pendiente"
+      >
+        <ChevronsRight size={iconSize} />
+      </button>
+    </div>
+  )
 }
 
 function snapshotFromLog(
@@ -340,12 +410,13 @@ export default function MyLeads() {
   const [editingCallLogId, setEditingCallLogId] = useState<string | null>(null)
   const [previousSnapshot, setPreviousSnapshot] = useState<CallLogSnapshot | null>(null)
   const [disposition, setDisposition] = useState('')
-  const [aclaracion, setAclaracion] = useState('')
   const [callNotes, setCallNotes] = useState('')
   const [schedDate, setSchedDate] = useState('')
   const [schedTime, setSchedTime] = useState('')
   const pendingCallLogIdRef = useRef<string | null>(null)
   const pendingContactIdRef = useRef<string | null>(null)
+  const pendingContactIdxRef = useRef<number | null>(null)
+  const needsContactResolveRef = useRef(false)
   const [editTelefono, setEditTelefono] = useState('')
   const [editEmail, setEditEmail] = useState('')
   const [editDni, setEditDni] = useState('')
@@ -382,7 +453,7 @@ export default function MyLeads() {
   // All loaded clients (unfiltered) — used only for batch derivation
   const allClients: ClientSummary[] = allClientsData?.clients ?? []
   const countContacts = (list: ClientSummary[]) =>
-    list.reduce((sum, c) => sum + c.contacts.length, 0)
+    list.reduce((sum, c) => sum + (c.contacts?.length ?? 0), 0)
   const allContactCount = countContacts(allClients)
 
   // Derive unique batches sorted newest first
@@ -407,9 +478,9 @@ export default function MyLeads() {
   })
   const detail = clientDetail as ClientDetail | undefined
 
-  // Prefer detail contacts; fall back to list summary when detail returns empty
+  // Prefer detail contacts for the active company only; fall back to list summary while loading
   const displayContacts: ClientDetail['contacts'] =
-    detail?.contacts?.length
+    detail != null && detail.id === currentClient?.id && (detail.contacts?.length ?? 0) > 0
       ? detail.contacts
       : (currentClient?.contacts ?? []).map((ct, idx) => ({
           id: (ct as { id?: string }).id ?? `summary-${currentClient?.id ?? 'x'}-${idx}`,
@@ -431,10 +502,21 @@ export default function MyLeads() {
   // Clamp contact index when contact count changes (only if out of bounds)
   useEffect(() => {
     if (!displayContacts.length) return
+    if (
+      pendingContactIdRef.current !== null ||
+      pendingContactIdxRef.current !== null ||
+      needsContactResolveRef.current
+    ) {
+      return
+    }
     setActiveContactIdx((idx) =>
       idx >= displayContacts.length ? Math.max(0, displayContacts.length - 1) : idx
     )
   }, [detail?.id, displayContacts.length])
+
+  useEffect(() => {
+    needsContactResolveRef.current = true
+  }, [selectedBatchId])
 
   // Sync company fields when company changes
   useEffect(() => {
@@ -446,7 +528,6 @@ export default function MyLeads() {
 
   const clearEditableCallFields = useCallback(() => {
     setDisposition('')
-    setAclaracion('')
     setCallNotes('')
     setSchedDate('')
     setSchedTime('')
@@ -454,7 +535,6 @@ export default function MyLeads() {
 
   const hydrateFromSnapshot = useCallback((snapshot: CallLogSnapshot) => {
     setDisposition(snapshot.disposition)
-    setAclaracion(snapshot.aclaracion ?? '')
     setCallNotes(snapshot.notes ?? '')
     setSchedDate(snapshot.schedDate ?? '')
     setSchedTime(snapshot.schedTime || '09:00')
@@ -465,13 +545,33 @@ export default function MyLeads() {
     if (!detail || !user?.id) return
 
     let contactIdx = activeContactIdx
-    if (pendingContactIdRef.current) {
+    if (needsContactResolveRef.current && detail.id === currentClient?.id) {
+      const agentLogs = [...detail.callLogs]
+        .filter((l) => l.agentId === user.id && l.contact?.id)
+        .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())
+      if (agentLogs.length > 0) {
+        const contactId = agentLogs[0].contact!.id
+        const cIdx = displayContacts.findIndex((c) => c.id === contactId)
+        contactIdx = cIdx >= 0 ? cIdx : 0
+      } else {
+        contactIdx = 0
+      }
+      setActiveContactIdx(contactIdx)
+      needsContactResolveRef.current = false
+      pendingContactIdRef.current = null
+      pendingContactIdxRef.current = null
+    } else if (pendingContactIdRef.current && !needsContactResolveRef.current) {
       const cIdx = displayContacts.findIndex((c) => c.id === pendingContactIdRef.current)
       if (cIdx >= 0) {
         contactIdx = cIdx
         setActiveContactIdx(cIdx)
       }
       pendingContactIdRef.current = null
+      pendingContactIdxRef.current = null
+    } else if (pendingContactIdxRef.current !== null) {
+      contactIdx = Math.min(pendingContactIdxRef.current, Math.max(0, displayContacts.length - 1))
+      setActiveContactIdx(contactIdx)
+      pendingContactIdxRef.current = null
     }
 
     const idx = Math.min(contactIdx, Math.max(0, displayContacts.length - 1))
@@ -503,7 +603,7 @@ export default function MyLeads() {
       setPreviousSnapshot(null)
       clearEditableCallFields()
     }
-  }, [detail, activeContactIdx, user?.id, clearEditableCallFields, hydrateFromSnapshot, displayContacts])
+  }, [detail, activeContactIdx, user?.id, clearEditableCallFields, hydrateFromSnapshot, displayContacts, currentClient?.id])
 
   const saveActiveContactIfDirty = useCallback(async () => {
     if (!displayContacts.length) return
@@ -563,46 +663,198 @@ export default function MyLeads() {
     (clientIdx: number) => {
       const client = clients[clientIdx]
       if (!client) return 0
-      if (clientIdx === currentIndex && detail?.id === client.id) {
-        return displayContacts.length
+      const listCount = client.contacts?.length ?? 0
+      if (clientIdx === currentIndex && detail != null && detail.id === client.id) {
+        return Math.max(listCount, displayContacts.length)
       }
-      return client.contacts?.length ?? 0
+      return listCount
     },
     [clients, currentIndex, detail?.id, displayContacts.length]
   )
 
+  const contactIdAt = useCallback(
+    (clientIdx: number, contactIdx: number): string | undefined => {
+      const client = clients[clientIdx]
+      if (!client) return undefined
+
+      const fromList = client.contacts?.[contactIdx]?.id
+      if (fromList) return fromList
+
+      if (clientIdx === currentIndex && detail != null && detail.id === client.id) {
+        if (displayContacts.length > 0) {
+          const fromDisplay = displayContacts[contactIdx]?.id
+          if (fromDisplay && !fromDisplay.startsWith('summary-')) return fromDisplay
+        }
+        return detail.contacts?.[contactIdx]?.id
+      }
+
+      const cachedDetail = qc.getQueryData<ClientDetail>(['client-detail', client.id])
+      if (cachedDetail?.id === client.id) {
+        const fromCached = cachedDetail.contacts?.[contactIdx]?.id
+        if (fromCached && !fromCached.startsWith('summary-')) return fromCached
+      }
+
+      return undefined
+    },
+    [clients, currentIndex, detail, displayContacts, qc]
+  )
+
+  const contactHasAgentLog = useCallback(
+    (clientIdx: number, contactIdx: number): boolean => {
+      if (!user?.id) return false
+      const client = clients[clientIdx]
+      if (!client) return false
+
+      const contact = client.contacts?.[contactIdx]
+      const contactId = contactIdAt(clientIdx, contactIdx) ?? contact?.id
+
+      const hasLogInDetail = (d: ClientDetail, cid: string) =>
+        d.callLogs.some((l) => l.agentId === user.id && l.contact?.id === cid)
+
+      if (contactId && !contactId.startsWith('summary-')) {
+        if (clientIdx === currentIndex && detail != null && detail.id === client.id) {
+          return hasLogInDetail(detail, contactId)
+        }
+
+        const cachedDetail = qc.getQueryData<ClientDetail>(['client-detail', client.id])
+        if (cachedDetail?.id === client.id) {
+          return hasLogInDetail(cachedDetail, contactId)
+        }
+      }
+
+      if (!contact) return false
+      return (contact._count?.callLogs ?? 0) > 0
+    },
+    [clients, currentIndex, detail, user?.id, contactIdAt, qc]
+  )
+
+  const companyHasAgentLog = useCallback(
+    (clientIdx: number): boolean => {
+      const n = contactCountFor(clientIdx)
+      for (let i = 0; i < n; i++) {
+        if (contactHasAgentLog(clientIdx, i)) return true
+      }
+      return false
+    },
+    [contactCountFor, contactHasAgentLog]
+  )
+
+  const resolveContactIdxForCompany = useCallback(
+    (clientIdx: number, detailOverride?: ClientDetail): number => {
+      const client = clients[clientIdx]
+      if (!client || !user?.id) return 0
+
+      const n = contactCountFor(clientIdx)
+      if (n === 0) return 0
+
+      let detailSource: ClientDetail | undefined = detailOverride
+      if (!detailSource) {
+        if (clientIdx === currentIndex && detail?.id === client.id) {
+          detailSource = detail
+        } else {
+          detailSource = qc.getQueryData<ClientDetail>(['client-detail', client.id])
+        }
+      }
+
+      if (detailSource?.id === client.id && detailSource.callLogs.length > 0) {
+        const agentLogs = [...detailSource.callLogs]
+          .filter((l) => l.agentId === user.id && l.contact?.id)
+          .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())
+        if (agentLogs.length > 0) {
+          const contactId = agentLogs[0].contact!.id
+          const contacts =
+            detailSource.contacts?.length > 0
+              ? detailSource.contacts
+              : (client.contacts ?? [])
+          const idx = contacts.findIndex((c) => c.id === contactId)
+          if (idx >= 0) return idx
+        }
+      }
+
+      const listContacts = client.contacts ?? []
+      for (let i = 0; i < listContacts.length; i++) {
+        if ((listContacts[i]._count?.callLogs ?? 0) > 0) {
+          return i
+        }
+      }
+
+      return 0
+    },
+    [clients, user?.id, contactCountFor, currentIndex, detail, qc]
+  )
+
+  const navigateToCompany = useCallback(
+    async (clientIdx: number) => {
+      await saveActiveContactIfDirty()
+      const resolvedIdx = resolveContactIdxForCompany(clientIdx)
+      const contactId = contactIdAt(clientIdx, resolvedIdx)
+      needsContactResolveRef.current = true
+      if (contactId && !contactId.startsWith('summary-')) {
+        pendingContactIdRef.current = contactId
+        pendingContactIdxRef.current = null
+      } else {
+        pendingContactIdRef.current = null
+        pendingContactIdxRef.current = resolvedIdx
+      }
+      setActiveContactIdx(resolvedIdx)
+      setCurrentIndex(clientIdx)
+    },
+    [saveActiveContactIfDirty, resolveContactIdxForCompany, contactIdAt]
+  )
+
   const goTo = useCallback(
     async (idx: number) => {
-      await saveActiveContactIfDirty()
       if (idx >= 0 && idx < clients.length) {
-        setCurrentIndex(idx)
-        setActiveContactIdx(0)
+        await navigateToCompany(idx)
       }
     },
-    [clients.length, saveActiveContactIfDirty]
+    [clients.length, navigateToCompany]
   )
 
   const goNext = useCallback(async () => {
     await saveActiveContactIfDirty()
-    const currentContacts = contactCountFor(currentIndex)
-    if (activeContactIdx < currentContacts - 1) {
-      setActiveContactIdx(activeContactIdx + 1)
-    } else if (currentIndex < clients.length - 1) {
-      setCurrentIndex(currentIndex + 1)
-      setActiveContactIdx(0)
+    if (currentIndex < clients.length - 1) {
+      await navigateToCompany(currentIndex + 1)
     }
-  }, [currentIndex, activeContactIdx, clients.length, contactCountFor, saveActiveContactIfDirty])
+  }, [currentIndex, clients.length, saveActiveContactIfDirty, navigateToCompany])
 
   const goPrev = useCallback(async () => {
     await saveActiveContactIfDirty()
-    if (activeContactIdx > 0) {
-      setActiveContactIdx(activeContactIdx - 1)
-    } else if (currentIndex > 0) {
-      const prevContacts = contactCountFor(currentIndex - 1)
-      setCurrentIndex(currentIndex - 1)
-      setActiveContactIdx(Math.max(0, prevContacts - 1))
+    if (currentIndex > 0) {
+      await navigateToCompany(currentIndex - 1)
     }
-  }, [currentIndex, activeContactIdx, contactCountFor, saveActiveContactIfDirty])
+  }, [currentIndex, saveActiveContactIfDirty, navigateToCompany])
+
+  const flatNavItems = useMemo(
+    () => clients.map((_, clientIdx) => ({ clientIdx })),
+    [clients]
+  )
+
+  const firstRegisteredTarget = useMemo(
+    () => flatNavItems.find((item) => companyHasAgentLog(item.clientIdx)),
+    [flatNavItems, companyHasAgentLog]
+  )
+
+  const firstEmptyTarget = useMemo(
+    () => flatNavItems.find((item) => !companyHasAgentLog(item.clientIdx)),
+    [flatNavItems, companyHasAgentLog]
+  )
+
+  const goToFirstRegistered = useCallback(async () => {
+    if (firstRegisteredTarget) {
+      await navigateToCompany(firstRegisteredTarget.clientIdx)
+    } else {
+      toast('No hay registros guardados', { icon: 'ℹ️' })
+    }
+  }, [firstRegisteredTarget, navigateToCompany])
+
+  const goToFirstEmpty = useCallback(async () => {
+    if (firstEmptyTarget) {
+      await navigateToCompany(firstEmptyTarget.clientIdx)
+    } else {
+      toast('No hay registros pendientes', { icon: 'ℹ️' })
+    }
+  }, [firstEmptyTarget, navigateToCompany])
 
   const navigateWithSave = useCallback(
     (action: () => Promise<void>) => async () => {
@@ -618,6 +870,9 @@ export default function MyLeads() {
   const switchBatch = (batchId: string) => {
     setSelectedBatchId(batchId)
     setCurrentIndex(0)
+    pendingContactIdRef.current = null
+    pendingContactIdxRef.current = null
+    needsContactResolveRef.current = true
     setGridPage(1)
   }
 
@@ -626,10 +881,19 @@ export default function MyLeads() {
     opts?: { callLogId?: string; contactId?: string }
   ) => {
     if (opts?.callLogId) pendingCallLogIdRef.current = opts.callLogId
-    if (opts?.contactId) pendingContactIdRef.current = opts.contactId
     const idx = clients.findIndex((c) => c.id === clientId)
-    if (idx >= 0) goTo(idx)
-    else toast('Este cliente no está en tu lista visible', { icon: 'ℹ️' })
+    if (idx >= 0) {
+      if (opts?.contactId) {
+        pendingContactIdRef.current = opts.contactId
+        pendingContactIdxRef.current = null
+        needsContactResolveRef.current = false
+        setCurrentIndex(idx)
+      } else {
+        void navigateToCompany(idx)
+      }
+    } else {
+      toast('Este cliente no está en tu lista visible', { icon: 'ℹ️' })
+    }
   }
 
   const saveMutation = useMutation({
@@ -640,49 +904,63 @@ export default function MyLeads() {
         plan: editPlan || undefined,
       })
 
+      if (displayContacts.length === 0) {
+        throw new Error('Esta empresa no tiene contactos')
+      }
+
+      const contactForSave =
+        displayContacts[Math.min(activeContactIdx, displayContacts.length - 1)]
+      if (displayContacts.length > 1) {
+        if (!contactForSave?.id || contactForSave.id.startsWith('summary-')) {
+          throw new Error('Selecciona un contacto antes de guardar')
+        }
+      }
+
       const callbackDateIso = schedDate
         ? new Date(`${schedDate}T${schedTime || '09:00'}:00`).toISOString()
         : undefined
+
+      const contactId =
+        contactForSave?.id && !contactForSave.id.startsWith('summary-')
+          ? contactForSave.id
+          : undefined
 
       if (editingCallLogId) {
         const snap = previousSnapshot
         const snapSchedTime = snap?.schedTime || '09:00'
         const hasDispositionChange = snap ? disposition !== snap.disposition : !!disposition
-        const hasAclaracionChange = snap ? aclaracion !== (snap.aclaracion ?? '') : !!aclaracion
         const hasNotesChange = snap ? callNotes !== (snap.notes ?? '') : !!callNotes
         const hasSchedDateChange = snap ? schedDate !== (snap.schedDate ?? '') : !!schedDate
         const hasSchedTimeChange = snap ? schedTime !== snapSchedTime : !!schedTime
-        const hasCallUpdate = hasDispositionChange || hasAclaracionChange || hasNotesChange
+        const hasCallUpdate = hasDispositionChange || hasNotesChange
         const hasSchedUpdate = hasSchedDateChange || hasSchedTimeChange
         if (!hasCallUpdate && !hasSchedUpdate) {
           throw new Error('Ingresa al menos un campo para actualizar el registro')
         }
-        if (disposition === 'CALLBACK' && !schedDate) {
+        if (disposition === 'VOLVER_A_LLAMAR' && !schedDate) {
           throw new Error('Selecciona la fecha para el callback')
         }
         await updateCall(editingCallLogId, {
           ...(hasDispositionChange ? { disposition } : {}),
-          ...(hasAclaracionChange ? { aclaracion: aclaracion || undefined } : {}),
           ...(hasNotesChange ? { notes: callNotes || undefined } : {}),
           ...(hasSchedUpdate ? { callbackDate: callbackDateIso } : {}),
         })
       } else if (disposition) {
-        if (disposition === 'CALLBACK' && !schedDate) {
+        if (disposition === 'VOLVER_A_LLAMAR' && !schedDate) {
           throw new Error('Selecciona la fecha para el callback')
         }
         await logCall({
           clientId: currentClient.id,
-          contactId: activeContact?.id || undefined,
+          contactId,
           disposition,
-          aclaracion: aclaracion || undefined,
           notes: callNotes || undefined,
           callbackDate: schedDate ? callbackDateIso : undefined,
         })
       } else if (schedDate) {
         await logCall({
           clientId: currentClient.id,
-          contactId: activeContact?.id || undefined,
-          disposition: 'CALLBACK',
+          contactId,
+          disposition: 'VOLVER_A_LLAMAR',
           notes: callNotes || undefined,
           callbackDate: callbackDateIso,
         })
@@ -705,7 +983,26 @@ export default function MyLeads() {
   const gridClients = gridData?.clients ?? []
   const gridTotal = gridData?.total ?? 0
   const effectiveDisposition = disposition
-  const aclaracionList = effectiveDisposition ? ACLARACION_OPTIONS[effectiveDisposition] ?? [] : []
+  const selectedResponse = effectiveDisposition ? getResponseOption(effectiveDisposition) : undefined
+  const derivedAclaracion =
+    selectedResponse?.aclaracion ??
+    (previousSnapshot?.aclaracion && !selectedResponse ? previousSnapshot.aclaracion : '')
+  const agendarDisabled =
+    selectedResponse?.disableAgendar ||
+    effectiveDisposition === 'DO_NOT_CALL' ||
+    effectiveDisposition === 'NOT_INTERESTED'
+  const respuestaSelectOptions = useMemo(() => {
+    if (
+      effectiveDisposition &&
+      !RESPONSE_OPTIONS.some((o) => o.code === effectiveDisposition)
+    ) {
+      return [
+        ...RESPUESTA_SELECT_OPTIONS,
+        { value: effectiveDisposition, label: `${getDispositionLabel(effectiveDisposition)} (histórico)` },
+      ]
+    }
+    return RESPUESTA_SELECT_OPTIONS
+  }, [effectiveDisposition])
 
   // Split callbacks: own = current user; team = all (admin only)
   const ownCallbacks = callbackList.filter((c) => c.agent.id === user?.id)
@@ -725,11 +1022,13 @@ export default function MyLeads() {
     clients.slice(0, currentIndex).reduce((sum, _c, idx) => sum + contactCountFor(idx), 0) +
     activeContactIdx +
     1
-  const isFirst = currentIndex === 0 && activeContactIdx === 0
-  const currentContactCount = contactCountFor(currentIndex)
-  const isLast =
-    currentIndex >= clients.length - 1 &&
-    activeContactIdx >= Math.max(0, currentContactCount - 1)
+  const isFirst = clients.length === 0 || currentIndex === 0
+  const isLast = clients.length === 0 || currentIndex >= clients.length - 1
+
+  const atFirstRegistered =
+    firstRegisteredTarget != null && firstRegisteredTarget.clientIdx === currentIndex
+  const atFirstEmpty =
+    firstEmptyTarget != null && firstEmptyTarget.clientIdx === currentIndex
 
   const duplicateRucCount = detail
     ? clients.filter((c) => c.ruc === detail.ruc).length
@@ -749,8 +1048,8 @@ export default function MyLeads() {
     }
     setExporting(true)
     try {
-      await downloadImportExport(exportBatchId, isAdmin ? undefined : user?.id)
-      toast.success('Descarga iniciada')
+      const saved = await downloadImportExport(exportBatchId, isAdmin ? undefined : user?.id)
+      if (saved) toast.success('Archivo guardado')
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
       toast.error(msg ?? 'Error al exportar')
@@ -848,20 +1147,19 @@ export default function MyLeads() {
           {viewMode === 'detail' && (
             <>
               <span className="text-blue-300 text-xs">{currentIndex + 1} / {total}</span>
-              <button
-                onClick={navigateWithSave(goPrev)}
-                disabled={isFirst}
-                className="flex items-center gap-1 px-3 py-1.5 bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed rounded text-xs font-medium transition-colors"
-              >
-                <ChevronLeft size={14} /> Anterior
-              </button>
-              <button
-                onClick={navigateWithSave(goNext)}
-                disabled={isLast}
-                className="flex items-center gap-1 px-3 py-1.5 bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed rounded text-xs font-medium transition-colors"
-              >
-                Siguiente <ChevronRight size={14} />
-              </button>
+              <DetailRecordNav
+                variant="header"
+                onFirstRegistered={navigateWithSave(goToFirstRegistered)}
+                onPrev={navigateWithSave(goPrev)}
+                onNext={navigateWithSave(goNext)}
+                onFirstEmpty={navigateWithSave(goToFirstEmpty)}
+                isFirst={isFirst}
+                isLast={isLast}
+                atFirstRegistered={atFirstRegistered}
+                atFirstEmpty={atFirstEmpty}
+                noRegistered={!firstRegisteredTarget}
+                noEmpty={!firstEmptyTarget}
+              />
             </>
           )}
         </div>
@@ -989,28 +1287,27 @@ export default function MyLeads() {
                           className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
                           value={disposition}
                           onChange={(e) => {
-                            setDisposition(e.target.value)
-                            setAclaracion('')
-                            if (e.target.value === 'NOT_INTERESTED' || e.target.value === 'DO_NOT_CALL') {
+                            const next = e.target.value
+                            setDisposition(next)
+                            const opt = getResponseOption(next)
+                            if (opt?.disableAgendar) {
                               setSchedDate('')
                               setSchedTime('')
                             }
                           }}
                         >
-                          {RESPUESTA_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          {respuestaSelectOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
                       </div>
                       <div className="flex flex-col gap-0.5">
                         <label className="text-xs text-gray-500 font-medium">Aclaración</label>
-                        <select
-                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none disabled:bg-gray-100 disabled:text-gray-400"
-                          value={aclaracion}
-                          onChange={(e) => setAclaracion(e.target.value)}
-                          disabled={!effectiveDisposition || aclaracionList.length === 0}
-                        >
-                          <option value="">— Seleccionar —</option>
-                          {aclaracionList.map((a) => <option key={a} value={a}>{a}</option>)}
-                        </select>
+                        <div className="w-full border border-gray-200 rounded px-3 py-2 text-sm bg-gray-100 text-gray-700 min-h-[38px] flex items-center">
+                          {derivedAclaracion ? (
+                            <span className="badge bg-slate-200 text-slate-800">{derivedAclaracion}</span>
+                          ) : (
+                            <span className="text-gray-400 italic">Se asigna según la respuesta</span>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="flex flex-col gap-0.5">
@@ -1037,11 +1334,11 @@ export default function MyLeads() {
                   )}
 
                   {/* Agendar */}
-                  <div className={`border border-gray-200 rounded-lg overflow-hidden transition-opacity ${effectiveDisposition === 'NOT_INTERESTED' || effectiveDisposition === 'DO_NOT_CALL' ? 'opacity-40 pointer-events-none select-none' : ''} ${previousSnapshot ? 'bg-amber-50' : 'bg-white'}`}>
+                  <div className={`border border-gray-200 rounded-lg overflow-hidden transition-opacity ${agendarDisabled ? 'opacity-40 pointer-events-none select-none' : ''} ${previousSnapshot ? 'bg-amber-50' : 'bg-white'}`}>
                     <div className="bg-gray-100 border-b border-gray-200 px-4 py-2 flex items-center gap-2">
                       <CalendarClock size={14} className="text-gray-500" />
                       <span className="text-sm font-semibold text-gray-600">Agendar</span>
-                      {effectiveDisposition === 'CALLBACK'
+                      {effectiveDisposition === 'VOLVER_A_LLAMAR' || effectiveDisposition === 'CALLBACK'
                         ? <span className="badge bg-blue-100 text-blue-700 ml-1">Requerido</span>
                         : <span className="text-xs text-gray-400">(opcional)</span>}
                     </div>
@@ -1082,6 +1379,33 @@ export default function MyLeads() {
                     </div>
                   </div>
 
+                  <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 py-3">
+                    <button onClick={() => saveMutation.mutate(false)} disabled={saveMutation.isPending}
+                      className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
+                      <Save size={15} />
+                      {saveMutation.isPending ? 'Guardando...' : editingCallLogId ? 'Guardar actualización' : 'Guardar resultado'}
+                    </button>
+                    <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || isLast}
+                      className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
+                      Guardar y siguiente empresa <ChevronRight size={15} />
+                    </button>
+                    <div className="flex gap-2 sm:ml-auto">
+                      <DetailRecordNav
+                        variant="footer"
+                        onFirstRegistered={navigateWithSave(goToFirstRegistered)}
+                        onPrev={navigateWithSave(goPrev)}
+                        onNext={navigateWithSave(goNext)}
+                        onFirstEmpty={navigateWithSave(goToFirstEmpty)}
+                        isFirst={isFirst}
+                        isLast={isLast}
+                        atFirstRegistered={atFirstRegistered}
+                        atFirstEmpty={atFirstEmpty}
+                        noRegistered={!firstRegisteredTarget}
+                        noEmpty={!firstEmptyTarget}
+                      />
+                    </div>
+                  </div>
+
                   {/* Líneas móviles */}
                   <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
                     <div className="bg-gray-100 border-b border-gray-200 px-4 py-2">
@@ -1117,28 +1441,6 @@ export default function MyLeads() {
                     </div>
                   </div>
 
-                </div>
-
-                <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 pb-6">
-                  <button onClick={() => saveMutation.mutate(false)} disabled={saveMutation.isPending}
-                    className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
-                    <Save size={15} />
-                    {saveMutation.isPending ? 'Guardando...' : editingCallLogId ? 'Guardar actualización' : 'Guardar resultado'}
-                  </button>
-                  <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || isLast}
-                    className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
-                    Guardar y siguiente <ChevronRight size={15} />
-                  </button>
-                  <div className="flex gap-2 sm:ml-auto">
-                    <button onClick={navigateWithSave(goPrev)} disabled={isFirst}
-                      className="flex items-center justify-center gap-1 px-4 py-2.5 min-h-[44px] flex-1 sm:flex-none border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg text-sm font-medium disabled:opacity-40">
-                      <ChevronLeft size={15} /> Anterior
-                    </button>
-                    <button onClick={navigateWithSave(goNext)} disabled={isLast}
-                      className="flex items-center justify-center gap-1 px-4 py-2.5 min-h-[44px] flex-1 sm:flex-none border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg text-sm font-medium disabled:opacity-40">
-                      Siguiente <ChevronRight size={15} />
-                    </button>
-                  </div>
                 </div>
               </div>
             )}
@@ -1329,21 +1631,12 @@ export default function MyLeads() {
                       </div>
                     )
                     return logs.map((log) => {
-                      const cfg = DISPOSITION_CONFIG[log.disposition] ?? { label: log.disposition, classes: 'bg-gray-100 text-gray-600' }
-                      const borderColor: Record<string, string> = {
-                        INTERESTED: 'border-l-green-400',
-                        NOT_INTERESTED: 'border-l-red-400',
-                        NO_ANSWER: 'border-l-gray-300',
-                        BUSY: 'border-l-yellow-400',
-                        CALLBACK: 'border-l-blue-400',
-                        DO_NOT_CALL: 'border-l-red-700',
-                        OTHER: 'border-l-purple-400',
-                      }
+                      const cfg = DISPOSITION_CONFIG[log.disposition] ?? { label: getDispositionLabel(log.disposition), classes: 'bg-gray-100 text-gray-600' }
                       const linkedCb = detail.callbacks?.find((c) => c.callLogId === log.id)
                       return (
                         <div
                           key={log.id}
-                          className={`bg-white rounded-lg border border-gray-200 border-l-4 ${borderColor[log.disposition] ?? 'border-l-gray-300'} p-2.5 shadow-sm`}
+                          className={`bg-white rounded-lg border border-gray-200 border-l-4 ${getDispositionBorderColor(log.disposition)} p-2.5 shadow-sm`}
                         >
                           <div className="flex items-center justify-between gap-2 mb-1.5">
                             <span className={`badge text-[10px] ${cfg.classes}`}>{cfg.label}</span>
