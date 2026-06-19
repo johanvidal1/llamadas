@@ -1,6 +1,8 @@
-import { useState } from 'react'
-import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Outlet, NavLink, Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { sendHeartbeat } from '../api/client'
+import { getDeviceId, detectPlatform } from '../lib/deviceId'
 import {
   LayoutDashboard,
   Upload,
@@ -36,10 +38,43 @@ const agentNav = [
 export default function Layout() {
   const { user, isAdmin, logout } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
+  const heartbeatPausedRef = useRef(false)
 
   const navItems = isAdmin ? adminNav : agentNav
   const sidebarBg = isAdmin ? 'bg-green-900' : 'bg-blue-900'
+
+  const postHeartbeat = useCallback(() => {
+    if (!user || heartbeatPausedRef.current) return
+    sendHeartbeat({
+      deviceId: getDeviceId(),
+      currentRoute: location.pathname,
+      platform: detectPlatform(),
+    }).catch(() => {
+      // Ignore transient network errors; next interval will retry.
+    })
+  }, [user, location.pathname])
+
+  useEffect(() => {
+    if (!user) return
+
+    postHeartbeat()
+    const intervalId = window.setInterval(postHeartbeat, 60_000)
+
+    const onVisibilityChange = () => {
+      heartbeatPausedRef.current = document.hidden
+      if (!document.hidden) {
+        postHeartbeat()
+      }
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [user, postHeartbeat])
 
   const handleLogout = () => {
     setMenuOpen(false)

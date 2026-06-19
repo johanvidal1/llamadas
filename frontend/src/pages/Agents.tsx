@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getUsers,
@@ -9,7 +9,10 @@ import {
   deleteUser,
   getResetPreview,
   resetCampaign,
+  getAgentPresence,
   type AppUser,
+  type AgentPresence,
+  type AgentPresenceStatus,
 } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
@@ -67,6 +70,36 @@ function isAdminUser(u: AppUser) {
   return u.role === 'ADMIN' || u.isSuperAdmin === true || u.isSystemOwner === true
 }
 
+function formatTimeAgo(iso: string): string {
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000)
+  if (mins < 1) return 'ahora'
+  if (mins === 1) return 'hace 1 min'
+  return `hace ${mins} min`
+}
+
+function presenceLabel(status: AgentPresenceStatus): string {
+  if (status === 'online') return '🟢 En línea'
+  if (status === 'recent') return '🟡 Reciente'
+  return '⚪ Offline'
+}
+
+function presenceBadgeClass(status: AgentPresenceStatus): string {
+  if (status === 'online') return 'bg-green-100 text-green-800'
+  if (status === 'recent') return 'bg-yellow-100 text-yellow-800'
+  return 'bg-gray-100 text-gray-500'
+}
+
+function sessionSummary(session: AgentPresence['sessions'][number]): string {
+  const parts = [
+    session.os ?? 'SO desconocido',
+    session.browser ?? 'Navegador desconocido',
+    session.ipAddress ? `IP ${session.ipAddress}` : null,
+    session.currentRoute ? `Ruta ${session.currentRoute}` : null,
+    formatTimeAgo(session.lastSeenAt),
+  ].filter(Boolean)
+  return parts.join(' · ')
+}
+
 function deleteDisabledReason(u: AppUser) {
   const parts: string[] = []
   if (u._count.assignments > 0) parts.push(`${u._count.assignments} asignación(es)`)
@@ -86,6 +119,7 @@ function UserTable({
   isSuperAdminOrOwner = false,
   currentUserIsSystemOwner = false,
   muted = false,
+  presenceByUserId,
 }: {
   users: AppUser[]
   onEdit: (u: AppUser) => void
@@ -96,7 +130,10 @@ function UserTable({
   isSuperAdminOrOwner?: boolean
   currentUserIsSystemOwner?: boolean
   muted?: boolean
+  presenceByUserId?: Record<string, AgentPresence>
 }) {
+  const [expandedPresenceId, setExpandedPresenceId] = useState<string | null>(null)
+
   if (users.length === 0) {
     return <div className="p-8 text-center text-gray-400 text-sm">No hay usuarios en esta sección</div>
   }
@@ -107,6 +144,7 @@ function UserTable({
         <tr>
           <th className="text-left px-4 py-3 font-medium text-gray-600">Usuario</th>
           <th className="text-left px-4 py-3 font-medium text-gray-600">Rol</th>
+          <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
           <th className="text-center px-4 py-3 font-medium text-gray-600">Asignados</th>
           <th className="text-center px-4 py-3 font-medium text-gray-600">Llamadas</th>
           <th className="text-center px-4 py-3 font-medium text-gray-600">Callbacks</th>
@@ -117,6 +155,8 @@ function UserTable({
       <tbody className="divide-y divide-gray-100">
         {users.map((u) => {
           const adminTarget = isAdminUser(u)
+          const presence = presenceByUserId?.[u.id]
+          const isAgentRole = u.role === 'AGENT'
           const canManageAdmin = !adminTarget || isSuperAdminOrOwner
           const canDelete =
             canManageAdmin &&
@@ -142,33 +182,57 @@ function UserTable({
               : 'Desactivar usuario'
 
           return (
-            <tr key={u.id} className={`hover:bg-gray-50 ${muted ? 'text-gray-500' : ''}`}>
-              <td className="px-4 py-3">
-                <div className="flex items-center gap-3">
-                  <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
-                      muted ? 'bg-gray-100 text-gray-500' : 'bg-blue-100 text-blue-700'
-                    }`}
-                  >
-                    {u.name.charAt(0)}
+            <Fragment key={u.id}>
+              <tr className={`hover:bg-gray-50 ${muted ? 'text-gray-500' : ''}`}>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+                        muted ? 'bg-gray-100 text-gray-500' : 'bg-blue-100 text-blue-700'
+                      }`}
+                    >
+                      {u.name.charAt(0)}
+                    </div>
+                    <div>
+                      <p className={`font-medium ${muted ? 'text-gray-600' : 'text-gray-900'}`}>{u.name}</p>
+                      <p className="text-xs text-gray-400">{u.email}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className={`font-medium ${muted ? 'text-gray-600' : 'text-gray-900'}`}>{u.name}</p>
-                    <p className="text-xs text-gray-400">{u.email}</p>
-                  </div>
-                </div>
-              </td>
-              <td className="px-4 py-3">
-                <span className={`badge ${roleBadgeClass(u, currentUserIsSystemOwner)}`}>
-                  {u.role === 'ADMIN' || u.isSuperAdmin || (u.isSystemOwner && currentUserIsSystemOwner) ? (
-                    <Shield size={11} className="inline mr-1" />
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`badge ${roleBadgeClass(u, currentUserIsSystemOwner)}`}>
+                    {u.role === 'ADMIN' || u.isSuperAdmin || (u.isSystemOwner && currentUserIsSystemOwner) ? (
+                      <Shield size={11} className="inline mr-1" />
+                    ) : (
+                      <Phone size={11} className="inline mr-1" />
+                    )}
+                    {roleLabel(u, currentUserIsSystemOwner)}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  {!isAgentRole || !presenceByUserId ? (
+                    <span className="text-xs text-gray-400">N/A</span>
                   ) : (
-                    <Phone size={11} className="inline mr-1" />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedPresenceId((prev) => (prev === u.id ? null : u.id))
+                      }
+                      className={`badge ${presenceBadgeClass(presence?.status ?? 'offline')} cursor-pointer hover:opacity-90`}
+                      title={
+                        presence && presence.sessions.length > 0
+                          ? presence.sessions.map(sessionSummary).join('\n')
+                          : 'Sin sesiones activas'
+                      }
+                    >
+                      {presenceLabel(presence?.status ?? 'offline')}
+                      {presence && presence.sessions.length > 1 && (
+                        <span className="ml-1 text-[10px] opacity-75">({presence.sessions.length})</span>
+                      )}
+                    </button>
                   )}
-                  {roleLabel(u, currentUserIsSystemOwner)}
-                </span>
-              </td>
-              <td className="px-4 py-3 text-center">{u._count.assignments}</td>
+                </td>
+                <td className="px-4 py-3 text-center">{u._count.assignments}</td>
               <td className="px-4 py-3 text-center">{u._count.callLogs}</td>
               <td className="px-4 py-3 text-center">{u._count.callbacks}</td>
               <td className="px-4 py-3 text-center">{u._count.imports}</td>
@@ -236,6 +300,34 @@ function UserTable({
                 </div>
               </td>
             </tr>
+            {expandedPresenceId === u.id && presence && presence.sessions.length > 0 && (
+              <tr key={`${u.id}-sessions`} className="bg-gray-50/80">
+                <td colSpan={8} className="px-4 py-3">
+                  <div className="space-y-2">
+                    {presence.sessions.map((session, idx) => (
+                      <div
+                        key={`${session.lastSeenAt}-${idx}`}
+                        className="text-xs text-gray-600 border border-gray-200 rounded-lg px-3 py-2 bg-white"
+                      >
+                        <p className="font-medium text-gray-800">
+                          {session.deviceLabel ?? `Dispositivo ${idx + 1}`}
+                          {session.platform ? ` · ${session.platform}` : ''}
+                        </p>
+                        <p className="mt-0.5">
+                          {session.os ?? 'SO desconocido'} · {session.browser ?? 'Navegador desconocido'}
+                          {session.ipAddress ? ` · IP ${session.ipAddress}` : ''}
+                        </p>
+                        <p className="mt-0.5 text-gray-500">
+                          {session.currentRoute ? `Ruta ${session.currentRoute} · ` : ''}
+                          {formatTimeAgo(session.lastSeenAt)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </td>
+              </tr>
+            )}
+            </Fragment>
           )
         })}
       </tbody>
@@ -276,6 +368,15 @@ export default function Agents() {
   })
 
   const { data: users = [], isLoading } = useQuery({ queryKey: ['users'], queryFn: getUsers })
+
+  const { data: agentPresence = [] } = useQuery({
+    queryKey: ['agent-presence'],
+    queryFn: getAgentPresence,
+    refetchInterval: 30_000,
+    enabled: isAdmin,
+  })
+
+  const presenceByUserId = Object.fromEntries(agentPresence.map((p) => [p.id, p]))
 
   const visibleUsers = users.filter((u) => !u.isSystemOwner || isSystemOwner)
 
@@ -508,6 +609,7 @@ export default function Agents() {
             currentUserId={user?.id}
             isSuperAdminOrOwner={isSuperAdminOrOwner}
             currentUserIsSystemOwner={isSystemOwner}
+            presenceByUserId={presenceByUserId}
           />
         )}
       </div>
@@ -539,6 +641,7 @@ export default function Agents() {
               currentUserId={user?.id}
               isSuperAdminOrOwner={isSuperAdminOrOwner}
               currentUserIsSystemOwner={isSystemOwner}
+              presenceByUserId={presenceByUserId}
               muted
             />
           )}

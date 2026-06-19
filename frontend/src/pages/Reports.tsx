@@ -5,18 +5,18 @@ import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
 import {
   TrendingUp, Users, Phone, CalendarClock, Target,
-  Award, AlertCircle, ChevronUp, ChevronDown, Package, Filter, X, RefreshCw,
+  Award, AlertCircle, ChevronUp, ChevronDown, Package, Filter, X, RefreshCw, ChevronRight,
 } from 'lucide-react'
 import { StatusBadge } from '../components/StatusBadge'
 import { StatusHelpPopover } from '../components/StatusHelpPopover'
 import type { StatusHelpKey } from '../config/statusHelp'
 import {
   DISPOSITION_BAR_COLORS,
-  SALES_FUNNEL_STAGES,
   ZERO_PROGRESS_OPTIONS,
   getDispositionLabel,
   getResponseOption,
 } from '../config/responseOptions'
+import { AGENT_PIPELINE_FUNNEL, AGENT_PIPELINE_OPERATIONAL } from '../config/companyPipeline'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -52,6 +52,8 @@ interface ReportsData {
   dispositionBreakdown: DispCount[]
   batchProgress: BatchProgress[]
   funnel: Funnel
+  assignedCompanies: number
+  companyPipeline: Record<string, number>
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -288,6 +290,7 @@ function useSortedAgents(agents: AgentPerf[]) {
 export default function Reports() {
   const [filterAgentId, setFilterAgentId] = useState('')
   const [drillDown, setDrillDown] = useState<DrillDown | null>(null)
+  const [showStatusDetail, setShowStatusDetail] = useState(false)
 
   const drill = (agentId: string, agentName: string, metric: MetricKey) =>
     setDrillDown({ agentId, agentName, metric })
@@ -328,15 +331,14 @@ export default function Reports() {
 
   const agents = allData?.agentPerformance ?? []
 
-  const { funnel, callsByDay, dispositionBreakdown, batchProgress } = data
+  const { funnel, callsByDay, dispositionBreakdown, batchProgress, companyPipeline, assignedCompanies } = data
   const records = funnel.records
   const companies = funnel.companies
   const maxDay = Math.max(...callsByDay.map((d) => d.count), 1)
   const totalDisp = dispositionBreakdown.reduce((s, d) => s + d.count, 0)
-  const salesFunnelCounts = SALES_FUNNEL_STAGES.map((stage) => ({
-    ...stage,
-    count: dispositionBreakdown.find((d) => d.disposition === stage.code)?.count ?? 0,
-  }))
+  const pipelineTotal = assignedCompanies ?? 0
+  const pipelinePending = companyPipeline?.PENDING ?? 0
+  const pipelineWithResponse = pipelineTotal - pipelinePending
   const zeroProgressBreakdown = [
     ...ZERO_PROGRESS_OPTIONS.map((opt) => ({
       disposition: opt.code,
@@ -404,6 +406,99 @@ export default function Reports() {
         </div>
       </div>
 
+      {/* ── Company pipeline (primary) ── */}
+      <section>
+        <div className="card p-6 overflow-visible">
+          <h2 className="font-semibold text-gray-900 mb-1">Por empresa (RUC)</h2>
+          <p className="text-xs text-gray-500 mb-5">
+            {companyPipeline ? (
+              <>
+                <span className="font-medium text-gray-700">{pipelineTotal} empresas</span>
+                <span className="text-gray-300 mx-1.5">·</span>
+                <span>{pipelinePending} pendientes</span>
+                <span className="text-gray-300 mx-1.5">·</span>
+                <span>{pipelineWithResponse} con respuesta</span>
+                {filterAgentId && (
+                  <span className="text-gray-400 ml-1.5">
+                    — {agents.find((a) => a.id === filterAgentId)?.name ?? 'agente filtrado'}
+                  </span>
+                )}
+              </>
+            ) : (
+              'Última respuesta registrada por empresa'
+            )}
+          </p>
+
+          {companyPipeline ? (
+            <div className="grid grid-cols-1 md:grid-cols-[minmax(0,35%)_minmax(0,65%)] gap-6 md:gap-0">
+              <div className="md:pr-6 md:border-r md:border-gray-200">
+                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
+                  Cola de trabajo
+                </h3>
+                <div className="space-y-2">
+                  {AGENT_PIPELINE_OPERATIONAL.filter(
+                    (row) => row.key !== 'OTROS' || (companyPipeline.OTROS ?? 0) > 0
+                  ).map((row) => {
+                    const count = companyPipeline[row.key] ?? 0
+                    return (
+                      <div
+                        key={row.key}
+                        className={`flex items-center justify-between rounded-lg border px-3 py-2.5 ${row.bgClass}`}
+                      >
+                        <div className="text-sm text-gray-700">
+                          {row.label}
+                          {'aclaracion' in row && (
+                            <span className="ml-1.5 text-[10px] font-semibold text-gray-400">
+                              {row.aclaracion}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-sm font-semibold text-gray-900">{count}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div className="md:pl-6">
+                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
+                  Embudo comercial (25%–100%)
+                </h3>
+                <div className="space-y-2.5">
+                  {AGENT_PIPELINE_FUNNEL.map((row) => {
+                    const count = companyPipeline[row.key] ?? 0
+                    return (
+                      <div key={row.key} className="space-y-0.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-gray-700">
+                            <span title={row.fullLabel}>{row.shortLabel ?? row.label}</span>
+                            <span className="text-gray-400"> ({row.aclaracion})</span>
+                          </span>
+                          <span className="font-semibold text-gray-900">{count}</span>
+                        </div>
+                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${DISPOSITION_BAR_COLORS[row.key] ?? 'bg-green-500'}`}
+                            style={{
+                              width: `${pipelineTotal > 0 ? (count / pipelineTotal) * 100 : 0}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {AGENT_PIPELINE_FUNNEL.every((row) => (companyPipeline[row.key] ?? 0) === 0) && (
+                    <p className="text-sm text-gray-400 text-center py-4">Sin avance comercial registrado</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-400 text-center py-4">Sin datos todavía</p>
+          )}
+        </div>
+      </section>
+
       {/* ── Funnel (records primary) ── */}
       <section>
         <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Embudo de campaña — Registros</h2>
@@ -433,15 +528,30 @@ export default function Reports() {
           </div>
         </div>
 
-        <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mt-5 mb-3">Por empresa (RUC)</h2>
-        <p className="text-xs text-gray-400 -mt-2 mb-3">Estado agregado por RUC (derivado de contactos)</p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 overflow-visible">
-          <StatCard label="Total empresas" value={companies.total} sub="RUC" />
-          <StatCard label="Pendientes" value={companies.pending} color="text-gray-500" sub="empresas" statusHelpKey="PENDING" companyLevel />
-          <StatCard label="En progreso" value={companies.inProgress} color="text-blue-500" sub="empresas" statusHelpKey="IN_PROGRESS" companyLevel />
-          <StatCard label="Interesados" value={companies.interested} color="text-green-600" sub="empresas" statusHelpKey="INTERESTED" companyLevel />
-          <StatCard label="Convertidos" value={companies.converted} color="text-emerald-600" sub="empresas" statusHelpKey="CONVERTED" companyLevel />
-        </div>
+        <button
+          type="button"
+          onClick={() => setShowStatusDetail((v) => !v)}
+          className="flex items-center gap-1.5 text-sm font-bold text-gray-400 uppercase tracking-wider mt-5 mb-3 hover:text-gray-600 transition-colors"
+        >
+          <ChevronRight
+            size={14}
+            className={`transition-transform ${showStatusDetail ? 'rotate-90' : ''}`}
+          />
+          Detalle por status de contacto
+        </button>
+        {showStatusDetail && (
+          <>
+            <p className="text-xs text-gray-400 -mt-2 mb-3">Estado agregado por RUC (derivado de contactos)</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 overflow-visible">
+              <StatCard label="Total empresas" value={companies.total} sub="RUC" />
+              <StatCard label="Asignadas" value={companies.assigned} color="text-blue-700" sub="empresas" />
+              <StatCard label="Pendientes" value={companies.pending} color="text-gray-500" sub="empresas" statusHelpKey="PENDING" companyLevel />
+              <StatCard label="En progreso" value={companies.inProgress} color="text-blue-500" sub="empresas" statusHelpKey="IN_PROGRESS" companyLevel />
+              <StatCard label="Interesados" value={companies.interested} color="text-green-600" sub="empresas" statusHelpKey="INTERESTED" companyLevel />
+              <StatCard label="Convertidos" value={companies.converted} color="text-emerald-600" sub="empresas" statusHelpKey="CONVERTED" companyLevel />
+            </div>
+          </>
+        )}
       </section>
 
       {/* ── Agent performance table ── */}
@@ -580,31 +690,6 @@ export default function Reports() {
             <p className="text-xs text-gray-500 mt-2 text-right">
               Total: <span className="font-semibold text-gray-700">{callsByDay.reduce((s, d) => s + d.count, 0)}</span> llamadas
             </p>
-          </div>
-        </section>
-
-        <section>
-          <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
-            <span className="flex items-center gap-2"><Phone size={14} />Embudo comercial (25%–100%)</span>
-          </h2>
-          <div className="card p-4 space-y-2.5">
-            {salesFunnelCounts.map((stage) => (
-              <div key={stage.code} className="space-y-0.5">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-700">{stage.label} <span className="text-gray-400">({stage.aclaracion})</span></span>
-                  <span className="font-semibold text-gray-900">{stage.count}</span>
-                </div>
-                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full ${DISPOSITION_BAR_COLORS[stage.code] ?? 'bg-green-500'}`}
-                    style={{ width: `${totalDisp > 0 ? (stage.count / totalDisp) * 100 : 0}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-            {salesFunnelCounts.every((s) => s.count === 0) && (
-              <p className="text-sm text-gray-400 text-center py-4">Sin avance comercial registrado</p>
-            )}
           </div>
         </section>
 

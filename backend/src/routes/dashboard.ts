@@ -155,6 +155,9 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
   const companyAgentFilter = filterAgentId
     ? { contacts: { some: { assignment: { agentId: filterAgentId } } } }
     : {}
+  const assignedCompanyFilter = filterAgentId
+    ? { contacts: { some: { assignment: { agentId: filterAgentId } } } }
+    : { contacts: { some: { assignment: { is: {} } } } }
   const contactAgentFilter = filterAgentId
     ? { assignment: { agentId: filterAgentId } }
     : {}
@@ -364,13 +367,20 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
     }
   })
 
-  const [totalCompanies, totalRecords, assignedContacts, funnelContactStatuses, funnelCompanyStatuses] = await Promise.all([
+  const [totalCompanies, totalRecords, assignedContacts, assignedCompanyRows, funnelContactStatuses, funnelCompanyStatuses] = await Promise.all([
     prisma.company.count({ where: { ...companyAgentFilter } }),
     prisma.contact.count({ where: { ...contactAgentFilter } }),
     prisma.assignment.count({ where: filterAgentId ? { agentId: filterAgentId } : {} }),
+    prisma.company.findMany({ where: assignedCompanyFilter, select: { id: true } }),
     prisma.contact.groupBy({ by: ['status'], _count: { status: true }, where: { ...contactAgentFilter } }),
     prisma.company.groupBy({ by: ['status'], _count: { status: true }, where: { ...companyAgentFilter } }),
   ])
+  const assignedCompanies = assignedCompanyRows.length
+  const lastByCompany = await getLastDispositionByCompanyIds(
+    assignedCompanyRows.map((c) => c.id),
+    filterAgentId || undefined
+  )
+  const companyPipeline = buildCompanyPipelineCounts(lastByCompany)
   const recordMap = toStatusMap(funnelContactStatuses)
   const companyMap = toStatusMap(funnelCompanyStatuses)
 
@@ -379,6 +389,8 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
     callsByDay: Object.entries(callsByDay).map(([date, count]) => ({ date, count })),
     dispositionBreakdown: dispositionBreakdown.map((d) => ({ disposition: d.disposition, count: d._count.disposition })),
     batchProgress,
+    assignedCompanies,
+    companyPipeline,
     funnel: {
       records: {
         total: totalRecords,
@@ -392,7 +404,7 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
       },
       companies: {
         total: totalCompanies,
-        assigned: assignedContacts,
+        assigned: assignedCompanies,
         pending: companyMap['PENDING'] ?? 0,
         inProgress: companyMap['IN_PROGRESS'] ?? 0,
         interested: companyMap['INTERESTED'] ?? 0,

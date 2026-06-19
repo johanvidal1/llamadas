@@ -256,3 +256,35 @@ export const getMyBatches = () => api.get('/dashboard/my-batches').then((r) => r
 // ─── Admin ─────────────────────────────────────────────────────────────────────
 export const getResetPreview = () => api.get('/admin/reset-campaign/preview').then((r) => r.data)
 export const resetCampaign = () => api.post('/admin/reset-campaign', { confirm: 'RESETEAR' }).then((r) => r.data)
+
+// ─── Presence ──────────────────────────────────────────────────────────────────
+export type AgentPresenceStatus = 'online' | 'recent' | 'offline'
+
+export type AgentSession = {
+  browser: string | null
+  os: string | null
+  platform: string | null
+  ipAddress: string | null
+  currentRoute: string | null
+  lastSeenAt: string
+  loginAt: string
+  deviceLabel: string | null
+}
+
+export type AgentPresence = {
+  id: string
+  name: string
+  email: string
+  status: AgentPresenceStatus
+  sessions: AgentSession[]
+}
+
+export const sendHeartbeat = (payload: {
+  deviceId: string
+  currentRoute?: string
+  platform?: string
+  deviceLabel?: string
+}) => api.post('/presence/heartbeat', payload)
+
+export const getAgentPresence = () =>
+  api.get<AgentPresence[]>('/presence/agents').then((r) => r.data)

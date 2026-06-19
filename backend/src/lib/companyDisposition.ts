@@ -33,10 +33,10 @@ export function pipelineBucketForDisposition(lastDisposition: string | null): Co
   return 'OTROS'
 }
 
-/** Last agent disposition per company (scoped to assigned contacts). */
+/** Last disposition per company (scoped to assigned contacts; optional agent filter). */
 export async function getLastDispositionByCompanyIds(
   companyIds: string[],
-  agentUserId: string
+  agentUserId?: string
 ): Promise<Map<string, { disposition: string | null; aclaracion: string | null }>> {
   const result = new Map<string, { disposition: string | null; aclaracion: string | null }>()
   if (companyIds.length === 0) return result
@@ -44,8 +44,9 @@ export async function getLastDispositionByCompanyIds(
   const logs = await prisma.callLog.findMany({
     where: {
       companyId: { in: companyIds },
-      agentId: agentUserId,
-      contact: { assignment: { agentId: agentUserId } },
+      ...(agentUserId
+        ? { agentId: agentUserId, contact: { assignment: { agentId: agentUserId } } }
+        : { contact: { assignment: { is: {} } } }),
     },
     select: { companyId: true, disposition: true, aclaracion: true, calledAt: true },
     orderBy: { calledAt: 'desc' },

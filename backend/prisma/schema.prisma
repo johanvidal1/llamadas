@@ -32,6 +32,27 @@ model User {
   assignments Assignment[]
   callLogs    CallLog[]
   callbacks   Callback[]
+  sessions    UserSession[]
+}
+
+model UserSession {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId     String
+  deviceLabel  String?
+  ipAddress    String?
+  userAgent    String?
+  browser      String?
+  os           String?
+  platform     String?
+  currentRoute String?
+  loginAt      DateTime @default(now())
+  lastSeenAt   DateTime @updatedAt
+
+  @@unique([userId, deviceId])
+  @@index([lastSeenAt])
+  @@index([userId])
 }
 
 model ImportBatch {

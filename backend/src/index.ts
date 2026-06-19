@@ -14,10 +14,13 @@ import callbacksRouter from './routes/callbacks'
 import dashboardRouter from './routes/dashboard'
 import adminRouter from './routes/admin'
 import contactRouter from './routes/contact'
+import presenceRouter from './routes/presence'
 import { errorHandler } from './middleware/error'
 
 const app = express()
 const PORT = process.env.PORT || 3001
+
+app.set('trust proxy', 1)
 
 function normalizeOrigin(url: string): string {
   return url.trim().replace(/\/+$/, '')
@@ -81,6 +84,7 @@ app.use('/api/callbacks', callbacksRouter)
 app.use('/api/dashboard', dashboardRouter)
 app.use('/api/admin', adminRouter)
 app.use('/api/contact', contactRouter)
+app.use('/api/presence', presenceRouter)
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
