@@ -1,22 +1,26 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getDashboardStats, getAgentStats, getMyBatches } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
-import { Users, Phone, CalendarClock, TrendingUp, PhoneCall, Layers, RefreshCw } from 'lucide-react'
+import { Users, Phone, CalendarClock, Calendar, PhoneCall, Layers, RefreshCw } from 'lucide-react'
 import { DispositionBadge } from '../components/StatusBadge'
 import { StatusHelpPopover } from '../components/StatusHelpPopover'
 import { isStatusHelpKey } from '../config/statusHelp'
+import { DISPOSITION_BAR_COLORS, SALES_FUNNEL_STAGES, getResponseOption } from '../config/responseOptions'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 
 function StatCard({
   label,
   value,
+  subtitle,
   icon: Icon,
   color,
 }: {
   label: string
   value: number | string
+  subtitle?: string
   icon: React.ElementType
   color: string
 }) {
@@ -27,6 +31,7 @@ function StatCard({
       </div>
       <div>
         <p className="text-2xl font-bold text-gray-900">{value}</p>
+        {subtitle ? <p className="text-xs text-gray-400">{subtitle}</p> : null}
         <p className="text-sm text-gray-500">{label}</p>
       </div>
     </div>
@@ -44,6 +49,34 @@ const STATUS_LABELS: Record<string, string> = {
 
 const COMPANY_STATUS_EXCLUDE = new Set(['NOT_INTERESTED', 'DO_NOT_CALL'])
 
+const PIPELINE_SHORT_LABELS: Partial<Record<string, string>> = {
+  ESPERA_RESPUESTA: 'Espera resp. final',
+  DISCUSION_PROPUESTA: 'Discusión propuesta',
+  PROPUESTA_PRESENTADA: 'Propuesta presentada',
+}
+
+const AGENT_PIPELINE_OPERATIONAL = [
+  { key: 'PENDING', label: 'Pendientes', bgClass: 'bg-gray-50 border-gray-200 hover:bg-gray-100' },
+  {
+    key: 'VOLVER_A_LLAMAR',
+    label: 'Volver a llamar',
+    bgClass: 'bg-blue-50 border-blue-200 hover:bg-blue-100',
+    aclaracion: getResponseOption('VOLVER_A_LLAMAR')?.aclaracion ?? '0%',
+  },
+  { key: 'OTROS', label: 'Otros', bgClass: 'bg-slate-50 border-slate-200 hover:bg-slate-100' },
+] as const
+
+const AGENT_PIPELINE_FUNNEL = SALES_FUNNEL_STAGES.map((stage) => {
+  const label = stage.label.charAt(0) + stage.label.slice(1).toLowerCase()
+  return {
+    key: stage.code,
+    label,
+    shortLabel: PIPELINE_SHORT_LABELS[stage.code] ?? label,
+    aclaracion: stage.aclaracion,
+    fullLabel: stage.label,
+  }
+})
+
 function sumDispositions(map: Record<string, number>, codes: string[]): number {
   return codes.reduce((sum, code) => sum + (map[code] ?? 0), 0)
 }
@@ -54,7 +87,17 @@ const CALLBACK_DISP_CODES = ['VOLVER_A_LLAMAR', 'CALLBACK']
 
 export default function Dashboard() {
   const { isAdmin, user } = useAuth()
+  const navigate = useNavigate()
   const [selectedBatchId, setSelectedBatchId] = useState<string | undefined>(undefined)
+
+  const goToMyLeadsFilter = (filter: string) => {
+    const params = new URLSearchParams()
+    if (filter) params.set('filter', filter)
+    if (selectedBatchId) params.set('batchId', selectedBatchId)
+    params.set('from', 'dashboard')
+    const query = params.toString()
+    navigate(`/my-leads?${query}`)
+  }
 
   const { data: myBatches } = useQuery({
     queryKey: ['my-batches'],
@@ -165,56 +208,173 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard label="Contactos asignados" value={stats?.assignedContacts ?? stats?.assignedClients ?? 0} icon={Users} color="bg-blue-600" />
+          <StatCard
+            label="Contactos asignados"
+            value={stats?.assignedContacts ?? stats?.assignedClients ?? 0}
+            subtitle={
+              stats?.assignedCompanies != null
+                ? `${stats.assignedCompanies} empresas`
+                : undefined
+            }
+            icon={Users}
+            color="bg-blue-600"
+          />
           <StatCard label="Llamadas realizadas" value={stats?.totalCalls ?? 0} icon={Phone} color="bg-green-600" />
           <StatCard label="Callbacks hoy" value={stats?.todayCallbacks ?? 0} icon={CalendarClock} color="bg-amber-500" />
-          <StatCard label="Callbacks pendientes" value={stats?.pendingCallbacks ?? 0} icon={TrendingUp} color="bg-purple-600" />
+          <StatCard label="Callbacks pendientes" value={stats?.pendingCallbacks ?? 0} icon={Calendar} color="bg-purple-600" />
         </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Record status breakdown (primary) */}
-        <div className="card p-6 overflow-visible">
-          <h2 className="font-semibold text-gray-900 mb-1">Estado de registros</h2>
-          <p className="text-xs text-gray-400 mb-4">Por contacto (cada fila del Excel)</p>
-          <div className="space-y-3">
-            {Object.entries(stats?.contactsByStatus ?? {}).map(([status, count]) => (
-              <div key={status} className="flex items-center justify-between group/row">
-                <div className="text-sm text-gray-600 flex items-center gap-1">
-                  {STATUS_LABELS[status] ?? status}
-                  {isStatusHelpKey(status) && <StatusHelpPopover helpKey={status} />}
-                </div>
-                <span className="text-sm font-semibold text-gray-900">{count as number}</span>
+        {isAdmin ? (
+          <>
+            {/* Record status breakdown (primary) */}
+            <div className="card p-6 overflow-visible">
+              <h2 className="font-semibold text-gray-900 mb-1">Estado de registros</h2>
+              <p className="text-xs text-gray-400 mb-4">Por contacto (cada fila del Excel)</p>
+              <div className="space-y-3">
+                {Object.entries(stats?.contactsByStatus ?? {}).map(([status, count]) => (
+                  <div key={status} className="flex items-center justify-between group/row">
+                    <div className="text-sm text-gray-600 flex items-center gap-1">
+                      {STATUS_LABELS[status] ?? status}
+                      {isStatusHelpKey(status) && <StatusHelpPopover helpKey={status} />}
+                    </div>
+                    <span className="text-sm font-semibold text-gray-900">{count as number}</span>
+                  </div>
+                ))}
+                {Object.keys(stats?.contactsByStatus ?? {}).length === 0 && (
+                  <p className="text-sm text-gray-400 text-center py-4">Sin datos todavía</p>
+                )}
               </div>
-            ))}
-            {Object.keys(stats?.contactsByStatus ?? {}).length === 0 && (
-              <p className="text-sm text-gray-400 text-center py-4">Sin datos todavía</p>
-            )}
-          </div>
-        </div>
+            </div>
 
-        {/* Company status breakdown (supplementary) */}
-        <div className="card p-6 overflow-visible">
-          <h2 className="font-semibold text-gray-900 mb-1">Por empresa (RUC)</h2>
-          <p className="text-xs text-gray-400 mb-4">Estado agregado por RUC (derivado de contactos)</p>
-          <div className="space-y-3">
-            {Object.entries(stats?.companiesByStatus ?? stats?.clientsByStatus ?? {})
-              .filter(([status]) => !COMPANY_STATUS_EXCLUDE.has(status))
-              .map(([status, count]) => (
-              <div key={status} className="flex items-center justify-between group/row">
-                <div className="text-sm text-gray-600 flex items-center gap-1">
-                  {STATUS_LABELS[status] ?? status}
-                  {isStatusHelpKey(status) && <StatusHelpPopover helpKey={status} companyLevel />}
-                </div>
-                <span className="text-sm font-semibold text-gray-500">{count as number}</span>
+            {/* Company status breakdown (supplementary) */}
+            <div className="card p-6 overflow-visible">
+              <h2 className="font-semibold text-gray-900 mb-1">Por empresa (RUC)</h2>
+              <p className="text-xs text-gray-400 mb-4">Estado agregado por RUC (derivado de contactos)</p>
+              <div className="space-y-3">
+                {Object.entries(stats?.companiesByStatus ?? stats?.clientsByStatus ?? {})
+                  .filter(([status]) => !COMPANY_STATUS_EXCLUDE.has(status))
+                  .map(([status, count]) => (
+                  <div key={status} className="flex items-center justify-between group/row">
+                    <div className="text-sm text-gray-600 flex items-center gap-1">
+                      {STATUS_LABELS[status] ?? status}
+                      {isStatusHelpKey(status) && <StatusHelpPopover helpKey={status} companyLevel />}
+                    </div>
+                    <span className="text-sm font-semibold text-gray-500">{count as number}</span>
+                  </div>
+                ))}
+                {Object.entries(stats?.companiesByStatus ?? stats?.clientsByStatus ?? {})
+                  .filter(([status]) => !COMPANY_STATUS_EXCLUDE.has(status)).length === 0 && (
+                  <p className="text-sm text-gray-400 text-center py-4">Sin datos todavía</p>
+                )}
               </div>
-            ))}
-            {Object.entries(stats?.companiesByStatus ?? stats?.clientsByStatus ?? {})
-              .filter(([status]) => !COMPANY_STATUS_EXCLUDE.has(status)).length === 0 && (
-              <p className="text-sm text-gray-400 text-center py-4">Sin datos todavía</p>
-            )}
-          </div>
-        </div>
+            </div>
+          </>
+        ) : (
+          (() => {
+            const pipeline = stats?.companyPipeline
+            const totalCompanies = stats?.assignedCompanies ?? 0
+            const pendingCount = pipeline?.PENDING ?? 0
+            const withResponse = totalCompanies - pendingCount
+
+            return (
+              <div className="card p-6 overflow-visible lg:col-span-2">
+                <h2 className="font-semibold text-gray-900 mb-1">Por empresa (RUC)</h2>
+                <p className="text-xs text-gray-500 mb-5">
+                  {pipeline ? (
+                    <>
+                      <span className="font-medium text-gray-700">{totalCompanies} empresas</span>
+                      <span className="text-gray-300 mx-1.5">·</span>
+                      <span>{pendingCount} pendientes</span>
+                      <span className="text-gray-300 mx-1.5">·</span>
+                      <span>{withResponse} con respuesta</span>
+                    </>
+                  ) : (
+                    'Última respuesta registrada por el agente por empresa'
+                  )}
+                </p>
+
+                {pipeline ? (
+                  <div className="grid grid-cols-1 md:grid-cols-[minmax(0,35%)_minmax(0,65%)] gap-6 md:gap-0">
+                    <div className="md:pr-6 md:border-r md:border-gray-200">
+                      <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
+                        Cola de trabajo
+                      </h3>
+                      <div className="space-y-2">
+                        {AGENT_PIPELINE_OPERATIONAL.filter(
+                          (row) => row.key !== 'OTROS' || (pipeline.OTROS ?? 0) > 0
+                        ).map((row) => {
+                          const count = pipeline[row.key] ?? 0
+                          return (
+                            <button
+                              key={row.key}
+                              type="button"
+                              onClick={() => goToMyLeadsFilter(row.key)}
+                              title={`Ver ${row.label.toLowerCase()} en Mis Clientes`}
+                              className={`w-full flex items-center justify-between rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${row.bgClass}`}
+                            >
+                              <div className="text-sm text-gray-700 text-left">
+                                {row.label}
+                                {'aclaracion' in row && (
+                                  <span className="ml-1.5 text-[10px] font-semibold text-gray-400">
+                                    {row.aclaracion}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-sm font-semibold text-gray-900">{count}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="md:pl-6">
+                      <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
+                        Embudo comercial (25%–100%)
+                      </h3>
+                      <div className="space-y-2.5">
+                        {AGENT_PIPELINE_FUNNEL.map((row) => {
+                          const count = pipeline[row.key] ?? 0
+                          return (
+                            <button
+                              key={row.key}
+                              type="button"
+                              onClick={() => goToMyLeadsFilter(row.key)}
+                              title={`Ver ${row.fullLabel.toLowerCase()} en Mis Clientes`}
+                              className="w-full space-y-0.5 cursor-pointer rounded-md px-1 -mx-1 py-0.5 hover:bg-gray-50 transition-colors text-left"
+                            >
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-gray-700">
+                                  <span title={row.fullLabel}>{row.shortLabel ?? row.label}</span>
+                                  <span className="text-gray-400"> ({row.aclaracion})</span>
+                                </span>
+                                <span className="font-semibold text-gray-900">{count}</span>
+                              </div>
+                              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${DISPOSITION_BAR_COLORS[row.key] ?? 'bg-green-500'}`}
+                                  style={{
+                                    width: `${totalCompanies > 0 ? (count / totalCompanies) * 100 : 0}%`,
+                                  }}
+                                />
+                              </div>
+                            </button>
+                          )
+                        })}
+                        {AGENT_PIPELINE_FUNNEL.every((row) => (pipeline[row.key] ?? 0) === 0) && (
+                          <p className="text-sm text-gray-400 text-center py-4">Sin avance comercial registrado</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-400 text-center py-4">Sin datos todavía</p>
+                )}
+              </div>
+            )
+          })()
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

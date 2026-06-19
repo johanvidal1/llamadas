@@ -2,6 +2,10 @@ import { Router, Response } from 'express'
 import { prisma } from '../lib/prisma'
 import { requireAuth, requireAdmin, AuthRequest } from '../middleware/auth'
 import { INTERESTED_DISPOSITIONS } from '../lib/responseOptions'
+import {
+  buildCompanyPipelineCounts,
+  getLastDispositionByCompanyIds,
+} from '../lib/companyDisposition'
 
 const router = Router()
 
@@ -65,10 +69,6 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       contacts: { some: { assignment: { agentId: req.user!.id } } },
       ...(batchId ? { importBatchId: batchId } : {}),
     }
-    const agentContactFilter = {
-      assignment: { agentId: req.user!.id },
-      ...(batchId ? { company: { importBatchId: batchId } } : {}),
-    }
     const callFilter = batchId
       ? { agentId: req.user!.id, company: { importBatchId: batchId } }
       : { agentId: req.user!.id }
@@ -76,11 +76,13 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       ? { agentId: req.user!.id, company: { importBatchId: batchId } }
       : { agentId: req.user!.id }
 
-    const [assignedContacts, contactsByStatusRows, companiesByStatusRows, totalCalls, pendingCallbacks, todayCallbacks, recentCalls] =
+    const [assignedContacts, assignedCompanies, totalCalls, pendingCallbacks, todayCallbacks, recentCalls] =
       await Promise.all([
         prisma.assignment.count({ where: { agentId: req.user!.id, ...batchFilter } }),
-        prisma.contact.groupBy({ by: ['status'], _count: { status: true }, where: agentContactFilter }),
-        prisma.company.groupBy({ by: ['status'], _count: { status: true }, where: agentCompanyFilter }),
+        prisma.company.findMany({
+          where: agentCompanyFilter,
+          select: { id: true },
+        }),
         prisma.callLog.count({ where: callFilter }),
         prisma.callback.count({ where: { ...cbFilter, completed: false } }),
         prisma.callback.count({
@@ -104,18 +106,20 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
         }),
       ])
 
-    const contactsByStatus = toStatusMap(contactsByStatusRows)
-    const companiesByStatus = toStatusMap(companiesByStatusRows)
+    const lastByCompany = await getLastDispositionByCompanyIds(
+      assignedCompanies.map((c) => c.id),
+      req.user!.id
+    )
+    const companyPipeline = buildCompanyPipelineCounts(lastByCompany)
 
     res.json({
       assignedClients: assignedContacts,
       assignedContacts,
+      assignedCompanies: assignedCompanies.length,
       totalCalls,
       pendingCallbacks,
       todayCallbacks,
-      contactsByStatus,
-      companiesByStatus,
-      clientsByStatus: companiesByStatus,
+      companyPipeline,
       recentCalls,
     })
   }

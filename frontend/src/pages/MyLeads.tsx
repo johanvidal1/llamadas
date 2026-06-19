@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getClients, getClient, logCall, updateCall, updateClient, updateContact, getCallbacks, downloadImportExport } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
@@ -312,15 +313,43 @@ const GRID_STATUS_FILTERS = [
   { value: 'DO_NOT_CALL', label: 'No llamar' },
 ]
 
-const LIST_FILTERS = [
-  { value: '', label: 'Todos', kind: 'all' as const },
-  { value: 'PENDING', label: 'Pendientes', kind: 'pending' as const },
-  ...SALES_FUNNEL_STAGES.map((stage) => ({
-    value: stage.code,
-    label: stage.label.charAt(0) + stage.label.slice(1).toLowerCase(),
-    kind: 'disposition' as const,
-  })),
+const LIST_FILTERS_OPERATIONAL = [
+  { value: '', label: 'Todos' },
+  { value: 'PENDING', label: 'Pendientes' },
+  { value: 'VOLVER_A_LLAMAR', label: 'Volver a llamar' },
+  { value: 'OTROS', label: 'Otros' },
 ]
+
+const VALID_LIST_FILTERS = new Set([
+  'PENDING',
+  'VOLVER_A_LLAMAR',
+  'OTROS',
+  ...SALES_FUNNEL_STAGES.map((stage) => stage.code),
+])
+
+const LIST_FILTER_SHORT_LABELS: Partial<Record<string, string>> = {
+  ESPERA_RESPUESTA: 'Espera resp. final',
+  DISCUSION_PROPUESTA: 'Discusión propuesta',
+  PROPUESTA_PRESENTADA: 'Propuesta presentada',
+}
+
+const LIST_FILTERS_FUNNEL = SALES_FUNNEL_STAGES.map((stage) => {
+  const label = stage.label.charAt(0) + stage.label.slice(1).toLowerCase()
+  return {
+    value: stage.code,
+    label,
+    shortLabel: LIST_FILTER_SHORT_LABELS[stage.code] ?? label,
+    aclaracion: stage.aclaracion,
+    fullLabel: stage.label,
+  }
+})
+
+function getListFilterLabel(filter: string): string | undefined {
+  return (
+    LIST_FILTERS_OPERATIONAL.find((f) => f.value === filter)?.label ??
+    LIST_FILTERS_FUNNEL.find((f) => f.value === filter)?.label
+  )
+}
 
 const AGENDADOS_SPLIT_STORAGE_KEY = 'myLeads-agendadosSplitPct'
 const AGENDADOS_SPLIT_DEFAULT = 38
@@ -348,14 +377,22 @@ function useIsLg() {
 
 export default function MyLeads() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const { user, isAdmin } = useAuth()
   const isLg = useIsLg()
+  const [searchParams] = useSearchParams()
+  const initialFilter = searchParams.get('filter') ?? ''
+  const initialBatchId = searchParams.get('batchId') ?? ''
+  const deepLinkFilter = VALID_LIST_FILTERS.has(initialFilter) ? initialFilter : ''
+  const initialFromDashboard = searchParams.get('from') === 'dashboard'
 
   // ── View toggle (persisted)
-  const [viewMode, setViewMode] = useState<'detail' | 'grid' | 'list'>(
-    () => (localStorage.getItem('myLeadsView') as 'detail' | 'grid' | 'list') || 'detail'
-  )
+  const [viewMode, setViewMode] = useState<'detail' | 'grid' | 'list'>(() => {
+    if (deepLinkFilter) return 'list'
+    return (localStorage.getItem('myLeadsView') as 'detail' | 'grid' | 'list') || 'detail'
+  })
   const [returnToView, setReturnToView] = useState<'list' | 'grid' | null>(null)
+  const [returnToDashboard, setReturnToDashboard] = useState(initialFromDashboard)
   const switchView = (mode: 'detail' | 'grid' | 'list', opts?: { persist?: boolean }) => {
     setViewMode(mode)
     if (opts?.persist !== false) {
@@ -365,7 +402,7 @@ export default function MyLeads() {
 
   // ── List view state
   const [listSearch, setListSearch] = useState('')
-  const [listFilter, setListFilter] = useState('')
+  const [listFilter, setListFilter] = useState(deepLinkFilter)
 
   // ── Grid view state
   const [gridSearch, setGridSearch] = useState('')
@@ -374,7 +411,7 @@ export default function MyLeads() {
   const [selectedClient, setSelectedClient] = useState<{ id: string; ruc: string; razonSocial?: string; contacts?: { id?: string; nombre: string; tipoContacto?: string; telefono?: string }[] } | null>(null)
 
   // ── Batch filter (shared between detail + grid views)
-  const [selectedBatchId, setSelectedBatchId] = useState<string>('')
+  const [selectedBatchId, setSelectedBatchId] = useState<string>(initialBatchId)
 
   // ── Agendados sidebar tab
   const [cbTab, setCbTab] = useState<'own' | 'team'>('own')
@@ -916,6 +953,11 @@ export default function MyLeads() {
     switchView('list')
   }, [])
 
+  const returnToDashboardHome = useCallback(() => {
+    setReturnToDashboard(false)
+    navigate('/')
+  }, [navigate])
+
   const goNext = useCallback(async () => {
     await saveActiveContactIfDirty()
     if (currentIndex < clients.length - 1) {
@@ -1242,21 +1284,6 @@ export default function MyLeads() {
       {/* ══════════════════════ SHARED TOP BAR ══════════════════════ */}
       <div className="bg-blue-800 text-white px-3 lg:px-6 py-3 flex flex-wrap items-center justify-between shrink-0 gap-2 lg:gap-4">
         <div className="flex items-center gap-2 lg:gap-4 min-w-0 text-sm flex-wrap">
-          {viewMode === 'detail' && returnToView === 'list' && (
-            <button
-              type="button"
-              onClick={returnToList}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-600 text-white text-xs font-medium transition-colors shrink-0"
-            >
-              <ArrowLeft size={14} />
-              Volver a la lista
-              {listFilter ? (
-                <span className="text-blue-200 font-normal">
-                  ({LIST_FILTERS.find((f) => f.value === listFilter)?.label})
-                </span>
-              ) : null}
-            </button>
-          )}
           <span className="font-semibold truncate shrink-0">Migración de Operador</span>
 
           {/* Batch selector */}
@@ -1299,6 +1326,36 @@ export default function MyLeads() {
         </div>
 
         <div className="flex items-center gap-2 lg:gap-3 shrink-0 flex-wrap">
+          {viewMode === 'list' && returnToDashboard && (
+            <button
+              type="button"
+              onClick={returnToDashboardHome}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-600 border border-blue-500 text-white text-xs font-medium"
+            >
+              <ArrowLeft size={14} />
+              Volver al inicio
+              {listFilter ? (
+                <span className="text-blue-200 font-normal">
+                  ({getListFilterLabel(listFilter)})
+                </span>
+              ) : null}
+            </button>
+          )}
+          {viewMode === 'detail' && returnToView === 'list' && (
+            <button
+              type="button"
+              onClick={returnToList}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-600 border border-blue-500 text-white text-xs font-medium"
+            >
+              <ArrowLeft size={14} />
+              Volver a la lista
+              {listFilter ? (
+                <span className="text-blue-200 font-normal">
+                  ({getListFilterLabel(listFilter)})
+                </span>
+              ) : null}
+            </button>
+          )}
           {/* ── View toggle ── */}
           <div className="flex bg-blue-700 rounded-lg p-0.5 gap-0.5">
             <button
@@ -1324,12 +1381,27 @@ export default function MyLeads() {
               <LayoutGrid size={13} /> Tarjetas
             </button>
             <button
-              onClick={() => { setReturnToView(null); switchView('list') }}
-              title="Vista lista — tabla completa de clientes"
+              onClick={() => {
+                if (viewMode === 'detail' && returnToView === 'list') {
+                  returnToList()
+                } else {
+                  setReturnToView(null)
+                  switchView('list')
+                }
+              }}
+              title={
+                viewMode === 'detail' && returnToView === 'list'
+                  ? 'Volver a la lista filtrada'
+                  : 'Vista lista — tabla completa de clientes'
+              }
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
                 viewMode === 'list'
                   ? 'bg-white text-blue-700 shadow-sm'
                   : 'text-blue-200 hover:text-white'
+              } ${
+                viewMode === 'detail' && returnToView === 'list'
+                  ? 'ring-1 ring-blue-300'
+                  : ''
               }`}
             >
               <AlignJustify size={13} /> Lista
@@ -2019,39 +2091,69 @@ export default function MyLeads() {
         return (
           <div className="flex-1 overflow-y-auto p-4 lg:p-5 space-y-4">
             {/* Filters */}
-            <div className="flex flex-wrap gap-3">
-              <div className="relative flex-1 min-w-[220px]">
+            <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+              <div className="relative flex-1 min-w-[12rem] w-full sm:min-w-48">
                 <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
                   type="text"
-                  className="input pl-9 text-sm"
-                  placeholder="Buscar por nombre o teléfono..."
+                  className="input w-full pl-9 text-sm h-9 py-1.5"
+                  placeholder="Buscar nombre o teléfono"
                   value={listSearch}
                   onChange={(e) => setListSearch(e.target.value)}
                 />
               </div>
-              <div className="flex gap-2 flex-wrap">
-                {LIST_FILTERS.map((f) => {
+              <div className="flex flex-col gap-1 shrink-0 w-full sm:w-auto sm:min-w-[160px]">
+                <label htmlFor="list-queue-filter" className="text-xs text-gray-500 font-medium">
+                  Cola
+                </label>
+                <select
+                  id="list-queue-filter"
+                  value={LIST_FILTERS_OPERATIONAL.some((f) => f.value === listFilter) ? listFilter : ''}
+                  onChange={(e) => setListFilter(e.target.value)}
+                  className="input text-sm h-9 py-1.5 w-full"
+                >
+                  {LIST_FILTERS_OPERATIONAL.map((f) => (
+                    <option key={f.value || 'all'} value={f.value}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div
+                className="hidden sm:block w-px h-9 bg-gray-300 shrink-0"
+                aria-hidden
+              />
+              <div className="flex flex-wrap gap-2.5 sm:gap-3 w-full sm:w-auto min-w-0 sm:pl-1">
+                {LIST_FILTERS_FUNNEL.map((f) => {
                   const isActive = listFilter === f.value
-                  const dispClasses = f.kind === 'disposition' ? DISPOSITION_COLORS[f.value] : null
+                  const dispClasses = DISPOSITION_COLORS[f.value]
                   return (
                     <button
-                      key={f.value || 'all'}
+                      key={f.value}
+                      type="button"
+                      title={f.fullLabel}
                       onClick={() => setListFilter(f.value)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                      className={`flex flex-col items-center gap-0.5 px-3 py-1.5 min-w-[5.5rem] text-center rounded-lg text-xs font-medium transition-colors border shrink-0 ${
                         isActive
-                          ? f.kind === 'disposition' && dispClasses
+                          ? dispClasses
                             ? `${dispClasses.split(' border-l-')[0]} border-current ring-2 ring-offset-1 ring-green-500`
                             : 'bg-blue-600 text-white border-blue-600'
                           : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
                       }`}
                     >
-                      {f.label}
+                      <span className="text-xs leading-tight max-w-[8rem] text-balance">
+                        {f.shortLabel}
+                      </span>
+                      <span className="text-[10px] font-semibold opacity-80">
+                        {f.aclaracion}
+                      </span>
                     </button>
                   )
                 })}
               </div>
-              <span className="text-xs text-gray-400 self-center shrink-0">{listFiltered.length} registros</span>
+              <span className="shrink-0 text-xs text-gray-400 pb-2">
+                {listFiltered.length} registros
+              </span>
             </div>
 
             {/* Table */}

@@ -3,6 +3,11 @@ import { z } from 'zod'
 import { prisma } from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { getAclaracionForDisposition, isValidDisposition } from '../lib/responseOptions'
+import {
+  dispositionMatchesFilter,
+  getLastDispositionByCompanyIds,
+  pipelineBucketForDisposition,
+} from '../lib/companyDisposition'
 
 const router = Router()
 
@@ -34,13 +39,6 @@ function contactCallLogCountForUser(userId: string) {
 function scopedAgentId(role: string, userId: string, agentId?: string): string {
   if (role === 'AGENT') return userId
   return agentId || userId
-}
-
-function dispositionMatchesFilter(lastDisposition: string | null, filter: string): boolean {
-  if (filter === 'INTERESADO') {
-    return lastDisposition === 'INTERESADO' || lastDisposition === 'INTERESTED'
-  }
-  return lastDisposition === filter
 }
 
 type CompanyRow = Awaited<ReturnType<typeof fetchCompanies>>[number]
@@ -88,33 +86,18 @@ async function enrichWithLastDisposition(
 > {
   if (companies.length === 0) return []
 
-  const companyIds = companies.map((c) => c.id)
-  const logs = await prisma.callLog.findMany({
-    where: {
-      companyId: { in: companyIds },
-      agentId: agentUserId,
-      contact: { assignment: { agentId: agentUserId } },
-    },
-    select: { companyId: true, disposition: true, aclaracion: true, calledAt: true },
-    orderBy: { calledAt: 'desc' },
-  })
-
-  const lastByCompany = new Map<string, { disposition: string; aclaracion: string | null }>()
-  for (const log of logs) {
-    if (!lastByCompany.has(log.companyId)) {
-      lastByCompany.set(log.companyId, {
-        disposition: log.disposition,
-        aclaracion: log.aclaracion,
-      })
-    }
-  }
+  const lastByCompany = await getLastDispositionByCompanyIds(
+    companies.map((c) => c.id),
+    agentUserId
+  )
 
   return companies.map((c) => {
     const last = lastByCompany.get(c.id)
+    const disposition = last?.disposition ?? null
     return {
       ...c,
-      lastDisposition: last?.disposition ?? null,
-      lastAclaracion: last?.aclaracion ?? getAclaracionForDisposition(last?.disposition ?? '') ?? null,
+      lastDisposition: disposition,
+      lastAclaracion: last?.aclaracion ?? getAclaracionForDisposition(disposition ?? '') ?? null,
     }
   })
 }
@@ -143,7 +126,9 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const isAgent = req.user!.role === 'AGENT'
   const agentUserId = scopedAgentId(req.user!.role, req.user!.id, agentId)
   const agentScopedPending = status === 'PENDING'
-  const agentScopedDisposition = disposition && isValidDisposition(disposition)
+  const agentScopedOtros = disposition === 'OTROS'
+  const agentScopedDisposition =
+    disposition && !agentScopedOtros && isValidDisposition(disposition)
 
   if (unassigned === 'true' && !isAgent) {
     let contactWhere: Record<string, unknown> = { company: { importBatch: { blocked: false } } }
@@ -210,10 +195,13 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     ]
   }
 
-  if (agentScopedDisposition || agentScopedPending) {
+  if (agentScopedDisposition || agentScopedPending || agentScopedOtros) {
     const allCompanies = await fetchCompanies(where, contactWhere, agentUserId)
     const enriched = await enrichWithLastDisposition(allCompanies, agentUserId)
     const filtered = enriched.filter((c) => {
+      if (agentScopedOtros) {
+        return pipelineBucketForDisposition(c.lastDisposition) === 'OTROS'
+      }
       if (agentScopedDisposition) {
         return dispositionMatchesFilter(c.lastDisposition, disposition)
       }
