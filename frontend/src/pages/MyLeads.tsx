@@ -1203,9 +1203,6 @@ export default function MyLeads() {
   const gridTotal = gridData?.total ?? 0
   const effectiveDisposition = disposition
   const selectedResponse = effectiveDisposition ? getResponseOption(effectiveDisposition) : undefined
-  const derivedAclaracion =
-    selectedResponse?.aclaracion ??
-    (previousSnapshot?.aclaracion && !selectedResponse ? previousSnapshot.aclaracion : '')
   const agendarDisabled =
     selectedResponse?.disableAgendar ||
     effectiveDisposition === 'DO_NOT_CALL' ||
@@ -1551,25 +1548,13 @@ export default function MyLeads() {
                   {/* Resultado de esta llamada */}
                   <div className={`border border-gray-200 rounded-lg p-4 space-y-3 ${previousSnapshot ? 'bg-slate-50 border-l-4 border-l-blue-500' : 'bg-white'}`}>
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Resultado de esta llamada</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div className="flex flex-col gap-0.5 sm:col-span-2">
-                        <label className="text-xs text-gray-500 font-medium">Respuesta</label>
-                        <DispositionSelector
-                          disposition={disposition}
-                          onChange={handleDispositionChange}
-                          error={respuestaError}
-                        />
-                      </div>
-                      <div className="flex flex-col gap-0.5">
-                        <label className="text-xs text-gray-500 font-medium">Aclaración</label>
-                        <div className="w-full border border-gray-200 rounded px-3 py-2 text-sm bg-gray-100 text-gray-700 min-h-[38px] flex items-center">
-                          {derivedAclaracion ? (
-                            <span className="badge bg-slate-200 text-slate-800">{derivedAclaracion}</span>
-                          ) : (
-                            <span className="text-gray-400 italic">Se asigna según la respuesta</span>
-                          )}
-                        </div>
-                      </div>
+                    <div className="flex flex-col gap-0.5">
+                      <label className="text-xs text-gray-500 font-medium">Respuesta</label>
+                      <DispositionSelector
+                        disposition={disposition}
+                        onChange={handleDispositionChange}
+                        error={respuestaError}
+                      />
                     </div>
                     <div className="flex flex-col gap-0.5">
                       <label className="text-xs text-gray-500 font-medium">Notas de la llamada</label>

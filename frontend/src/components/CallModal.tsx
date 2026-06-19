@@ -27,7 +27,6 @@ export default function CallModal({ client, onClose }: Props) {
   const [callbackNotes, setCallbackNotes] = useState('')
 
   const qc = useQueryClient()
-  const selectedResponse = disposition ? getResponseOption(disposition) : undefined
 
   const handleDispositionChange = (next: string) => {
     setDisposition(next)
@@ -117,25 +116,13 @@ export default function CallModal({ client, onClose }: Props) {
             </div>
           )}
 
-          <div className="space-y-3">
-            <div>
-              <label className="label">Respuesta *</label>
-              <div className="mt-1">
-                <DispositionSelector
-                  disposition={disposition}
-                  onChange={handleDispositionChange}
-                />
-              </div>
-            </div>
-            <div>
-              <label className="label">Aclaración</label>
-              <div className="mt-1 border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 text-gray-700 min-h-[42px] flex items-center">
-                {selectedResponse?.aclaracion ? (
-                  <span className="badge bg-slate-200 text-slate-800">{selectedResponse.aclaracion}</span>
-                ) : (
-                  <span className="text-gray-400 italic text-xs">Según respuesta</span>
-                )}
-              </div>
+          <div>
+            <label className="label">Respuesta *</label>
+            <div className="mt-1">
+              <DispositionSelector
+                disposition={disposition}
+                onChange={handleDispositionChange}
+              />
             </div>
           </div>
 
