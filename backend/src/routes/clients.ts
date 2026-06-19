@@ -2,6 +2,7 @@ import { Router, Response } from 'express'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { getAclaracionForDisposition, isValidDisposition } from '../lib/responseOptions'
 
 const router = Router()
 
@@ -30,21 +31,119 @@ function contactCallLogCountForUser(userId: string) {
   }
 }
 
+function scopedAgentId(role: string, userId: string, agentId?: string): string {
+  if (role === 'AGENT') return userId
+  return agentId || userId
+}
+
+function dispositionMatchesFilter(lastDisposition: string | null, filter: string): boolean {
+  if (filter === 'INTERESADO') {
+    return lastDisposition === 'INTERESADO' || lastDisposition === 'INTERESTED'
+  }
+  return lastDisposition === filter
+}
+
+type CompanyRow = Awaited<ReturnType<typeof fetchCompanies>>[number]
+
+async function fetchCompanies(
+  where: Record<string, unknown>,
+  contactWhere: Record<string, unknown> | undefined,
+  agentUserId: string,
+  take?: number,
+  skip?: number
+) {
+  const contactsInclude = {
+    where: contactWhere,
+    include: {
+      assignment: { include: { agent: { select: { name: true, id: true } } } },
+      ...contactCallLogCountForUser(agentUserId),
+    },
+    orderBy: { createdAt: 'asc' as const },
+  }
+
+  return prisma.company.findMany({
+    where,
+    include: {
+      contacts: contactsInclude,
+      importBatch: { select: { id: true, filename: true, createdAt: true } },
+      _count: { select: { callLogs: true, callbacks: true } },
+      callbacks: {
+        where: { completed: false },
+        orderBy: { scheduledAt: 'asc' },
+        take: 1,
+        select: { scheduledAt: true, notes: true },
+      },
+    },
+    orderBy: { createdAt: 'asc' },
+    ...(take !== undefined ? { take } : {}),
+    ...(skip !== undefined ? { skip } : {}),
+  })
+}
+
+async function enrichWithLastDisposition(
+  companies: CompanyRow[],
+  agentUserId: string
+): Promise<
+  (CompanyRow & { lastDisposition: string | null; lastAclaracion: string | null })[]
+> {
+  if (companies.length === 0) return []
+
+  const companyIds = companies.map((c) => c.id)
+  const logs = await prisma.callLog.findMany({
+    where: {
+      companyId: { in: companyIds },
+      agentId: agentUserId,
+      contact: { assignment: { agentId: agentUserId } },
+    },
+    select: { companyId: true, disposition: true, aclaracion: true, calledAt: true },
+    orderBy: { calledAt: 'desc' },
+  })
+
+  const lastByCompany = new Map<string, { disposition: string; aclaracion: string | null }>()
+  for (const log of logs) {
+    if (!lastByCompany.has(log.companyId)) {
+      lastByCompany.set(log.companyId, {
+        disposition: log.disposition,
+        aclaracion: log.aclaracion,
+      })
+    }
+  }
+
+  return companies.map((c) => {
+    const last = lastByCompany.get(c.id)
+    return {
+      ...c,
+      lastDisposition: last?.disposition ?? null,
+      lastAclaracion: last?.aclaracion ?? getAclaracionForDisposition(last?.disposition ?? '') ?? null,
+    }
+  })
+}
+
+function matchesPendingFilter(
+  company: CompanyRow & { lastDisposition: string | null },
+): boolean {
+  return company.lastDisposition == null
+}
+
 // GET /api/clients — ADMIN sees all, AGENT sees only assigned contacts
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const {
     page = '1',
     limit = '50',
     status,
+    disposition,
     search,
     batchId,
     agentId,
     unassigned,
   } = req.query as Record<string, string>
 
-  const take = Math.min(Number(limit) || 50, 200)
+  const take = Math.min(Number(limit) || 50, 500)
   const skip = (Math.max(Number(page) || 1, 1) - 1) * take
   const isAgent = req.user!.role === 'AGENT'
+  const agentUserId = scopedAgentId(req.user!.role, req.user!.id, agentId)
+  const agentScopedPending = status === 'PENDING'
+  const agentScopedDisposition = disposition && isValidDisposition(disposition)
 
   if (unassigned === 'true' && !isAgent) {
     let contactWhere: Record<string, unknown> = { company: { importBatch: { blocked: false } } }
@@ -101,7 +200,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 
   if (batchId) where.importBatchId = batchId
-  if (status) where.status = status
+  if (status && !agentScopedPending) where.status = status
   if (search) {
     where.OR = [
       { ruc: { contains: search, mode: 'insensitive' } },
@@ -111,37 +210,29 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     ]
   }
 
-  const contactsInclude = {
-    where: contactWhere,
-    include: {
-      assignment: { include: { agent: { select: { name: true, id: true } } } },
-      ...contactCallLogCountForUser(req.user!.id),
-    },
-    orderBy: { createdAt: 'asc' as const },
+  if (agentScopedDisposition || agentScopedPending) {
+    const allCompanies = await fetchCompanies(where, contactWhere, agentUserId)
+    const enriched = await enrichWithLastDisposition(allCompanies, agentUserId)
+    const filtered = enriched.filter((c) => {
+      if (agentScopedDisposition) {
+        return dispositionMatchesFilter(c.lastDisposition, disposition)
+      }
+      return matchesPendingFilter(c)
+    })
+    const total = filtered.length
+    const clients = filtered.slice(skip, skip + take)
+    res.json({ clients, total, page: Number(page), limit: take })
+    return
   }
 
   const [companies, total] = await Promise.all([
-    prisma.company.findMany({
-      where,
-      include: {
-        contacts: contactsInclude,
-        importBatch: { select: { id: true, filename: true, createdAt: true } },
-        _count: { select: { callLogs: true, callbacks: true } },
-        callbacks: {
-          where: { completed: false },
-          orderBy: { scheduledAt: 'asc' },
-          take: 1,
-          select: { scheduledAt: true, notes: true },
-        },
-      },
-      orderBy: { createdAt: 'asc' },
-      take,
-      skip,
-    }),
+    fetchCompanies(where, contactWhere, agentUserId, take, skip),
     prisma.company.count({ where }),
   ])
 
-  res.json({ clients: companies, total, page: Number(page), limit: take })
+  const clients = await enrichWithLastDisposition(companies, agentUserId)
+
+  res.json({ clients, total, page: Number(page), limit: take })
 })
 
 // GET /api/clients/:id

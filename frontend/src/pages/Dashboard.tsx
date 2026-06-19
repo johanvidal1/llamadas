@@ -174,7 +174,7 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Record status breakdown (primary) */}
-        <div className="card p-6">
+        <div className="card p-6 overflow-visible">
           <h2 className="font-semibold text-gray-900 mb-1">Estado de registros</h2>
           <p className="text-xs text-gray-400 mb-4">Por contacto (cada fila del Excel)</p>
           <div className="space-y-3">
@@ -194,7 +194,7 @@ export default function Dashboard() {
         </div>
 
         {/* Company status breakdown (supplementary) */}
-        <div className="card p-6">
+        <div className="card p-6 overflow-visible">
           <h2 className="font-semibold text-gray-900 mb-1">Por empresa (RUC)</h2>
           <p className="text-xs text-gray-400 mb-4">Estado agregado por RUC (derivado de contactos)</p>
           <div className="space-y-3">

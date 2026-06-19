@@ -4,6 +4,7 @@ import { getClients, getClient, logCall, updateCall, updateClient, updateContact
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
 import {
+  ArrowLeft,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -26,11 +27,14 @@ import {
 import CallModal from '../components/CallModal'
 import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { StatusBadge, DISPOSITION_CONFIG, getDispositionBorderColor } from '../components/StatusBadge'
+import { StatusBadge, DISPOSITION_CONFIG, getDispositionBorderColor, DispositionBadge } from '../components/StatusBadge'
 import {
   RESPUESTA_SELECT_OPTIONS,
   RESPONSE_OPTIONS,
+  SALES_FUNNEL_STAGES,
+  DISPOSITION_COLORS,
   getDispositionLabel,
+  getAclaracionForDisposition,
   getResponseOption,
 } from '../config/responseOptions'
 
@@ -41,6 +45,8 @@ interface ClientSummary {
   ruc: string
   razonSocial?: string
   status: string
+  lastDisposition?: string | null
+  lastAclaracion?: string | null
   contacts: {
     id?: string
     nombre: string
@@ -114,6 +120,13 @@ function contactNameParts(nombre?: string) {
     primerNombre: parts[0] ?? '',
     segundoNombre: parts[1] ?? '',
     tercerNombre: parts[2] ?? '',
+  }
+}
+
+class SaveCancelled extends Error {
+  constructor() {
+    super('Save cancelled')
+    this.name = 'SaveCancelled'
   }
 }
 
@@ -299,6 +312,16 @@ const GRID_STATUS_FILTERS = [
   { value: 'DO_NOT_CALL', label: 'No llamar' },
 ]
 
+const LIST_FILTERS = [
+  { value: '', label: 'Todos', kind: 'all' as const },
+  { value: 'PENDING', label: 'Pendientes', kind: 'pending' as const },
+  ...SALES_FUNNEL_STAGES.map((stage) => ({
+    value: stage.code,
+    label: stage.label.charAt(0) + stage.label.slice(1).toLowerCase(),
+    kind: 'disposition' as const,
+  })),
+]
+
 const AGENDADOS_SPLIT_STORAGE_KEY = 'myLeads-agendadosSplitPct'
 const AGENDADOS_SPLIT_DEFAULT = 38
 const AGENDADOS_SPLIT_MIN = 20
@@ -332,14 +355,17 @@ export default function MyLeads() {
   const [viewMode, setViewMode] = useState<'detail' | 'grid' | 'list'>(
     () => (localStorage.getItem('myLeadsView') as 'detail' | 'grid' | 'list') || 'detail'
   )
-  const switchView = (mode: 'detail' | 'grid' | 'list') => {
+  const [returnToView, setReturnToView] = useState<'list' | 'grid' | null>(null)
+  const switchView = (mode: 'detail' | 'grid' | 'list', opts?: { persist?: boolean }) => {
     setViewMode(mode)
-    localStorage.setItem('myLeadsView', mode)
+    if (opts?.persist !== false) {
+      localStorage.setItem('myLeadsView', mode)
+    }
   }
 
   // ── List view state
   const [listSearch, setListSearch] = useState('')
-  const [listStatus, setListStatus] = useState('')
+  const [listFilter, setListFilter] = useState('')
 
   // ── Grid view state
   const [gridSearch, setGridSearch] = useState('')
@@ -420,6 +446,7 @@ export default function MyLeads() {
   const [editTelefono, setEditTelefono] = useState('')
   const [editEmail, setEditEmail] = useState('')
   const [editDni, setEditDni] = useState('')
+  const [respuestaError, setRespuestaError] = useState(false)
   const [exporting, setExporting] = useState(false)
   const savedContactRef = useRef<{ id: string; telefono: string; email: string; dni: string } | null>(null)
   const lastSyncedContactKey = useRef<string | null>(null)
@@ -434,6 +461,22 @@ export default function MyLeads() {
   const { data: clientsData, isLoading: loadingList } = useQuery({
     queryKey: ['clients', 'my-leads', 'nav', selectedBatchId],
     queryFn: () => getClients({ limit: 500, batchId: selectedBatchId || undefined }),
+  })
+
+  // List view: server-side disposition / pending filters
+  const { data: listData, isLoading: loadingListView } = useQuery({
+    queryKey: ['clients', 'my-leads', 'list', selectedBatchId, listFilter],
+    queryFn: () =>
+      getClients({
+        limit: 500,
+        batchId: selectedBatchId || undefined,
+        ...(listFilter === 'PENDING'
+          ? { status: 'PENDING' }
+          : listFilter
+          ? { disposition: listFilter }
+          : {}),
+      }),
+    enabled: viewMode === 'list',
   })
 
   // Paginated + filtered list (for grid view)
@@ -605,20 +648,20 @@ export default function MyLeads() {
     }
   }, [detail, activeContactIdx, user?.id, clearEditableCallFields, hydrateFromSnapshot, displayContacts, currentClient?.id])
 
-  const saveActiveContactIfDirty = useCallback(async () => {
-    if (!displayContacts.length) return
+  const saveActiveContactIfDirty = useCallback(async (): Promise<boolean> => {
+    if (!displayContacts.length) return false
     const idx = Math.min(activeContactIdx, displayContacts.length - 1)
     const ct = displayContacts[idx]
-    if (!ct?.id || ct.id.startsWith('summary-')) return
+    if (!ct?.id || ct.id.startsWith('summary-')) return false
 
     const saved = savedContactRef.current
-    if (!saved || saved.id !== ct.id) return
+    if (!saved || saved.id !== ct.id) return false
 
     const telefono = editTelefono.trim()
     const email = editEmail.trim()
     const dni = editDni.trim()
 
-    if (telefono === saved.telefono && email === saved.email && dni === saved.dni) return
+    if (telefono === saved.telefono && email === saved.email && dni === saved.dni) return false
 
     await updateContact(ct.id, {
       telefono: telefono || null,
@@ -631,6 +674,7 @@ export default function MyLeads() {
       qc.invalidateQueries({ queryKey: ['client-detail', currentClient.id] })
     }
     qc.invalidateQueries({ queryKey: ['clients'] })
+    return true
   }, [displayContacts, activeContactIdx, editTelefono, editEmail, editDni, currentClient?.id, qc])
 
   // Sync editable contact fields when active contact changes
@@ -677,14 +721,17 @@ export default function MyLeads() {
       const client = clients[clientIdx]
       if (!client) return undefined
 
-      const fromList = client.contacts?.[contactIdx]?.id
-      if (fromList) return fromList
-
       if (clientIdx === currentIndex && detail != null && detail.id === client.id) {
         if (displayContacts.length > 0) {
           const fromDisplay = displayContacts[contactIdx]?.id
           if (fromDisplay && !fromDisplay.startsWith('summary-')) return fromDisplay
         }
+      }
+
+      const fromList = client.contacts?.[contactIdx]?.id
+      if (fromList) return fromList
+
+      if (clientIdx === currentIndex && detail != null && detail.id === client.id) {
         return detail.contacts?.[contactIdx]?.id
       }
 
@@ -699,44 +746,78 @@ export default function MyLeads() {
     [clients, currentIndex, detail, displayContacts, qc]
   )
 
-  const contactHasAgentLog = useCallback(
-    (clientIdx: number, contactIdx: number): boolean => {
-      if (!user?.id) return false
-      const client = clients[clientIdx]
-      if (!client) return false
+  const contactHasAgentLogByContactId = useCallback(
+    (contactId: string | undefined, clientIdx?: number): boolean => {
+      if (!user?.id || !contactId || contactId.startsWith('summary-')) return false
 
-      const contact = client.contacts?.[contactIdx]
-      const contactId = contactIdAt(clientIdx, contactIdx) ?? contact?.id
+      const idx = clientIdx ?? currentIndex
+      const client = clients[idx]
+      if (!client) return false
 
       const hasLogInDetail = (d: ClientDetail, cid: string) =>
         d.callLogs.some((l) => l.agentId === user.id && l.contact?.id === cid)
 
-      if (contactId && !contactId.startsWith('summary-')) {
-        if (clientIdx === currentIndex && detail != null && detail.id === client.id) {
-          return hasLogInDetail(detail, contactId)
-        }
-
-        const cachedDetail = qc.getQueryData<ClientDetail>(['client-detail', client.id])
-        if (cachedDetail?.id === client.id) {
-          return hasLogInDetail(cachedDetail, contactId)
-        }
+      if (idx === currentIndex && detail != null && detail.id === client.id) {
+        return hasLogInDetail(detail, contactId)
       }
 
-      if (!contact) return false
-      return (contact._count?.callLogs ?? 0) > 0
+      const cachedDetail = qc.getQueryData<ClientDetail>(['client-detail', client.id])
+      if (cachedDetail?.id === client.id) {
+        return hasLogInDetail(cachedDetail, contactId)
+      }
+
+      const listContact = client.contacts?.find((c) => c.id === contactId)
+      if (listContact) {
+        return (listContact._count?.callLogs ?? 0) > 0
+      }
+
+      return false
     },
-    [clients, currentIndex, detail, user?.id, contactIdAt, qc]
+    [clients, currentIndex, detail, user?.id, qc]
+  )
+
+  const contactHasAgentLog = useCallback(
+    (clientIdx: number, contactIdx: number): boolean => {
+      const contactId = contactIdAt(clientIdx, contactIdx)
+      return contactHasAgentLogByContactId(contactId, clientIdx)
+    },
+    [contactIdAt, contactHasAgentLogByContactId]
   )
 
   const companyHasAgentLog = useCallback(
     (clientIdx: number): boolean => {
-      const n = contactCountFor(clientIdx)
-      for (let i = 0; i < n; i++) {
-        if (contactHasAgentLog(clientIdx, i)) return true
+      const client = clients[clientIdx]
+      if (!client) return false
+
+      let contactIds: (string | undefined)[] = []
+      if (clientIdx === currentIndex && detail?.id === client.id && displayContacts.length > 0) {
+        contactIds = displayContacts.map((c) => c.id)
+      } else {
+        const cachedDetail = qc.getQueryData<ClientDetail>(['client-detail', client.id])
+        if (cachedDetail?.id === client.id && (cachedDetail.contacts?.length ?? 0) > 0) {
+          contactIds = cachedDetail.contacts.map((c) => c.id)
+        } else {
+          contactIds = (client.contacts ?? []).map((c) => c.id)
+        }
+      }
+
+      for (const cid of contactIds) {
+        if (contactHasAgentLogByContactId(cid, clientIdx)) return true
       }
       return false
     },
-    [contactCountFor, contactHasAgentLog]
+    [clients, currentIndex, detail, displayContacts, contactHasAgentLogByContactId, qc]
+  )
+
+  const findOtherContactWithAgentLog = useCallback(
+    (contactIdToSave: string | undefined): { id: string; nombre: string } | undefined => {
+      if (!detail || !user?.id || !contactIdToSave) return undefined
+      const otherLog = detail.callLogs.find(
+        (l) => l.agentId === user.id && l.contact?.id && l.contact.id !== contactIdToSave
+      )
+      return otherLog?.contact
+    },
+    [detail, user?.id]
   )
 
   const resolveContactIdxForCompany = useCallback(
@@ -763,24 +844,34 @@ export default function MyLeads() {
         if (agentLogs.length > 0) {
           const contactId = agentLogs[0].contact!.id
           const contacts =
-            detailSource.contacts?.length > 0
-              ? detailSource.contacts
-              : (client.contacts ?? [])
+            clientIdx === currentIndex && displayContacts.length > 0
+              ? displayContacts
+              : detailSource.contacts?.length > 0
+                ? detailSource.contacts
+                : (client.contacts ?? [])
           const idx = contacts.findIndex((c) => c.id === contactId)
           if (idx >= 0) return idx
         }
       }
 
       const listContacts = client.contacts ?? []
-      for (let i = 0; i < listContacts.length; i++) {
-        if ((listContacts[i]._count?.callLogs ?? 0) > 0) {
-          return i
+      for (const ct of listContacts) {
+        if (!ct.id) continue
+        if ((ct._count?.callLogs ?? 0) > 0) {
+          const contacts =
+            clientIdx === currentIndex && displayContacts.length > 0
+              ? displayContacts
+              : detailSource?.contacts?.length
+                ? detailSource.contacts
+                : listContacts
+          const idx = contacts.findIndex((c) => c.id === ct.id)
+          if (idx >= 0) return idx
         }
       }
 
       return 0
     },
-    [clients, user?.id, contactCountFor, currentIndex, detail, qc]
+    [clients, user?.id, contactCountFor, currentIndex, detail, displayContacts, qc]
   )
 
   const navigateToCompany = useCallback(
@@ -810,6 +901,20 @@ export default function MyLeads() {
     },
     [clients.length, navigateToCompany]
   )
+
+  const openDetailFromList = useCallback(
+    (realIdx: number) => {
+      if (realIdx >= 0) void goTo(realIdx)
+      setReturnToView('list')
+      switchView('detail', { persist: false })
+    },
+    [goTo]
+  )
+
+  const returnToList = useCallback(() => {
+    setReturnToView(null)
+    switchView('list')
+  }, [])
 
   const goNext = useCallback(async () => {
     await saveActiveContactIfDirty()
@@ -896,13 +1001,38 @@ export default function MyLeads() {
     }
   }
 
+  const canSaveCallResult = useMemo(() => {
+    if (editingCallLogId) {
+      const snap = previousSnapshot
+      if (!snap) return false
+      const snapSchedTime = snap.schedTime || '09:00'
+      return (
+        disposition !== snap.disposition ||
+        callNotes !== (snap.notes ?? '') ||
+        schedDate !== (snap.schedDate ?? '') ||
+        schedTime !== snapSchedTime
+      )
+    }
+    return disposition !== '' || schedDate !== ''
+  }, [editingCallLogId, previousSnapshot, disposition, callNotes, schedDate, schedTime])
+
   const saveMutation = useMutation({
     mutationFn: async (autoNext: boolean) => {
-      if (!currentClient) return autoNext
-      await saveActiveContactIfDirty()
-      await updateClient(currentClient.id, {
-        plan: editPlan || undefined,
-      })
+      const emptyResult = {
+        autoNext,
+        callLogSaved: false,
+        contactSaved: false,
+        planChanged: false,
+      }
+      if (!currentClient) return emptyResult
+
+      const contactSaved = await saveActiveContactIfDirty()
+      const planChanged = (editPlan || '') !== (detail?.plan ?? '')
+      if (planChanged) {
+        await updateClient(currentClient.id, {
+          plan: editPlan || undefined,
+        })
+      }
 
       if (displayContacts.length === 0) {
         throw new Error('Esta empresa no tiene contactos')
@@ -925,6 +1055,8 @@ export default function MyLeads() {
           ? contactForSave.id
           : undefined
 
+      let callLogSaved = false
+
       if (editingCallLogId) {
         const snap = previousSnapshot
         const snapSchedTime = snap?.schedTime || '09:00'
@@ -945,9 +1077,19 @@ export default function MyLeads() {
           ...(hasNotesChange ? { notes: callNotes || undefined } : {}),
           ...(hasSchedUpdate ? { callbackDate: callbackDateIso } : {}),
         })
+        callLogSaved = true
       } else if (disposition) {
         if (disposition === 'VOLVER_A_LLAMAR' && !schedDate) {
           throw new Error('Selecciona la fecha para el callback')
+        }
+        const otherContact = findOtherContactWithAgentLog(contactId)
+        if (
+          otherContact &&
+          !confirm(
+            `Esta empresa ya tiene un contacto registrado (${otherContact.nombre}). ¿Está seguro de que desea registrar este contacto?`
+          )
+        ) {
+          throw new SaveCancelled()
         }
         await logCall({
           clientId: currentClient.id,
@@ -956,7 +1098,17 @@ export default function MyLeads() {
           notes: callNotes || undefined,
           callbackDate: schedDate ? callbackDateIso : undefined,
         })
+        callLogSaved = true
       } else if (schedDate) {
+        const otherContact = findOtherContactWithAgentLog(contactId)
+        if (
+          otherContact &&
+          !confirm(
+            `Esta empresa ya tiene un contacto registrado (${otherContact.nombre}). ¿Está seguro de que desea registrar este contacto?`
+          )
+        ) {
+          throw new SaveCancelled()
+        }
         await logCall({
           clientId: currentClient.id,
           contactId,
@@ -964,18 +1116,44 @@ export default function MyLeads() {
           notes: callNotes || undefined,
           callbackDate: callbackDateIso,
         })
+        callLogSaved = true
       }
-      return autoNext
+
+      if (autoNext && !callLogSaved) {
+        throw new Error('Selecciona una respuesta antes de avanzar a la siguiente empresa')
+      }
+      if (!callLogSaved && !contactSaved && !planChanged) {
+        throw new Error('Selecciona una respuesta antes de guardar')
+      }
+
+      return { autoNext, callLogSaved, contactSaved, planChanged }
     },
-    onSuccess: async (autoNext) => {
-      toast.success('Guardado correctamente')
+    onSuccess: async (result) => {
+      setRespuestaError(false)
+      if (result.callLogSaved) {
+        toast.success('Resultado guardado')
+      } else if (result.contactSaved) {
+        toast.success('Datos de contacto actualizados')
+      } else if (result.planChanged) {
+        toast.success('Plan actualizado')
+      }
       qc.invalidateQueries({ queryKey: ['client-detail', currentClient?.id] })
       qc.invalidateQueries({ queryKey: ['callbacks'] })
       qc.invalidateQueries({ queryKey: ['clients'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
-      if (autoNext) await goNext()
+      if (result.autoNext) await goNext()
     },
-    onError: (err: Error) => toast.error(err?.message ?? 'Error al guardar'),
+    onError: (err: Error) => {
+      if (err.name === 'SaveCancelled') return
+      const message = err?.message ?? 'Error al guardar'
+      if (
+        message.includes('Selecciona una respuesta') ||
+        message.includes('Ingresa al menos un campo')
+      ) {
+        setRespuestaError(true)
+      }
+      toast.error(message)
+    },
   })
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -1064,6 +1242,21 @@ export default function MyLeads() {
       {/* ══════════════════════ SHARED TOP BAR ══════════════════════ */}
       <div className="bg-blue-800 text-white px-3 lg:px-6 py-3 flex flex-wrap items-center justify-between shrink-0 gap-2 lg:gap-4">
         <div className="flex items-center gap-2 lg:gap-4 min-w-0 text-sm flex-wrap">
+          {viewMode === 'detail' && returnToView === 'list' && (
+            <button
+              type="button"
+              onClick={returnToList}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-600 text-white text-xs font-medium transition-colors shrink-0"
+            >
+              <ArrowLeft size={14} />
+              Volver a la lista
+              {listFilter ? (
+                <span className="text-blue-200 font-normal">
+                  ({LIST_FILTERS.find((f) => f.value === listFilter)?.label})
+                </span>
+              ) : null}
+            </button>
+          )}
           <span className="font-semibold truncate shrink-0">Migración de Operador</span>
 
           {/* Batch selector */}
@@ -1109,7 +1302,7 @@ export default function MyLeads() {
           {/* ── View toggle ── */}
           <div className="flex bg-blue-700 rounded-lg p-0.5 gap-0.5">
             <button
-              onClick={() => switchView('detail')}
+              onClick={() => { setReturnToView(null); switchView('detail') }}
               title="Vista detalle — ficha individual con historial"
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
                 viewMode === 'detail'
@@ -1120,7 +1313,7 @@ export default function MyLeads() {
               <List size={13} /> Detalle
             </button>
             <button
-              onClick={() => switchView('grid')}
+              onClick={() => { setReturnToView(null); switchView('grid') }}
               title="Vista tarjetas — grilla con búsqueda y filtros"
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
                 viewMode === 'grid'
@@ -1131,7 +1324,7 @@ export default function MyLeads() {
               <LayoutGrid size={13} /> Tarjetas
             </button>
             <button
-              onClick={() => switchView('list')}
+              onClick={() => { setReturnToView(null); switchView('list') }}
               title="Vista lista — tabla completa de clientes"
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
                 viewMode === 'list'
@@ -1227,19 +1420,28 @@ export default function MyLeads() {
                     <div className="flex border-b border-gray-200 bg-gray-50 overflow-x-auto">
                       {displayContacts.map((ct, idx) => {
                         const { primerNombre, segundoNombre, tercerNombre } = contactNameParts(ct.nombre)
+                        const isRegistered = contactHasAgentLogByContactId(ct.id, currentIndex)
+                        const isActive = safeContactIdx === idx
+                        const tabClass = isRegistered
+                          ? isActive
+                            ? 'bg-emerald-100 text-emerald-900 border-emerald-500 border-b-4 border-b-emerald-600 hover:bg-emerald-200'
+                            : 'bg-emerald-100 text-emerald-900 border-emerald-500 border-b-2 hover:bg-emerald-200'
+                          : isActive
+                            ? 'text-blue-700 border-blue-600 bg-white border-b-2'
+                            : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-100 border-b-2'
                         return (
                           <button
                             key={ct.id ?? idx}
+                            title={isRegistered ? 'Contacto registrado' : undefined}
                             onClick={navigateWithSave(async () => {
                               await saveActiveContactIfDirty()
                               setActiveContactIdx(idx)
                             })}
-                            className={`px-4 py-2 text-xs font-medium whitespace-nowrap transition-colors border-b-2 flex flex-col items-center leading-tight min-w-[100px] ${
-                              safeContactIdx === idx
-                                ? 'text-blue-700 border-blue-600 bg-white'
-                                : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-100'
-                            }`}>
-                            <span>{primerNombre || 'Contacto'}</span>
+                            className={`px-4 py-2 text-xs font-medium whitespace-nowrap transition-colors flex flex-col items-center leading-tight min-w-[100px] ${tabClass}`}>
+                            <span className="flex items-center gap-1">
+                              {isRegistered && <CheckCircle2 size={12} className="shrink-0 text-emerald-700" />}
+                              {primerNombre || 'Contacto'}
+                            </span>
                             {(segundoNombre || tercerNombre) && (
                               <span className="flex items-center gap-1 text-[10px] font-normal opacity-75 mt-0.5">
                                 {segundoNombre && <span>{segundoNombre}</span>}
@@ -1284,11 +1486,16 @@ export default function MyLeads() {
                       <div className="flex flex-col gap-0.5">
                         <label className="text-xs text-gray-500 font-medium">Respuesta</label>
                         <select
-                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                          className={`w-full border rounded px-3 py-2 text-sm bg-white text-gray-900 outline-none ${
+                            respuestaError
+                              ? 'border-red-500 ring-1 ring-red-500 focus:border-red-500 focus:ring-red-500'
+                              : 'border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
+                          }`}
                           value={disposition}
                           onChange={(e) => {
                             const next = e.target.value
                             setDisposition(next)
+                            setRespuestaError(false)
                             const opt = getResponseOption(next)
                             if (opt?.disableAgendar) {
                               setSchedDate('')
@@ -1380,12 +1587,12 @@ export default function MyLeads() {
                   </div>
 
                   <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 py-3">
-                    <button onClick={() => saveMutation.mutate(false)} disabled={saveMutation.isPending}
+                    <button onClick={() => saveMutation.mutate(false)} disabled={saveMutation.isPending || !canSaveCallResult}
                       className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
                       <Save size={15} />
                       {saveMutation.isPending ? 'Guardando...' : editingCallLogId ? 'Guardar actualización' : 'Guardar resultado'}
                     </button>
-                    <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || isLast}
+                    <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || isLast || !canSaveCallResult}
                       className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
                       Guardar y siguiente empresa <ChevronRight size={15} />
                     </button>
@@ -1803,19 +2010,11 @@ export default function MyLeads() {
 
       {/* ══════════════════════ LIST VIEW ══════════════════════════ */}
       {viewMode === 'list' && (() => {
-        const STATUS_FILTERS = [
-          { value: '', label: 'Todos' },
-          { value: 'PENDING', label: 'Pendientes' },
-          { value: 'IN_PROGRESS', label: 'En progreso' },
-          { value: 'INTERESTED', label: 'Interesados' },
-          { value: 'NOT_INTERESTED', label: 'No interesados' },
-          { value: 'DO_NOT_CALL', label: 'No llamar' },
-        ]
-        const listFiltered = clients.filter((c) => {
-          const matchStatus = !listStatus || c.status === listStatus
+        const listClients: ClientSummary[] = listData?.clients ?? []
+        const listFiltered = listClients.filter((c) => {
           const q = listSearch.toLowerCase()
           const matchSearch = !q || c.ruc.toLowerCase().includes(q) || (c.razonSocial ?? '').toLowerCase().includes(q) || c.contacts.some((ct) => ct.nombre.toLowerCase().includes(q) || (ct.telefono ?? '').includes(q))
-          return matchStatus && matchSearch
+          return matchSearch
         })
         return (
           <div className="flex-1 overflow-y-auto p-4 lg:p-5 space-y-4">
@@ -1832,26 +2031,32 @@ export default function MyLeads() {
                 />
               </div>
               <div className="flex gap-2 flex-wrap">
-                {STATUS_FILTERS.map((f) => (
-                  <button
-                    key={f.value}
-                    onClick={() => setListStatus(f.value)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                      listStatus === f.value
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-white text-gray-600 border border-gray-300 hover:bg-gray-50'
-                    }`}
-                  >
-                    {f.label}
-                  </button>
-                ))}
+                {LIST_FILTERS.map((f) => {
+                  const isActive = listFilter === f.value
+                  const dispClasses = f.kind === 'disposition' ? DISPOSITION_COLORS[f.value] : null
+                  return (
+                    <button
+                      key={f.value || 'all'}
+                      onClick={() => setListFilter(f.value)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                        isActive
+                          ? f.kind === 'disposition' && dispClasses
+                            ? `${dispClasses.split(' border-l-')[0]} border-current ring-2 ring-offset-1 ring-green-500`
+                            : 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  )
+                })}
               </div>
               <span className="text-xs text-gray-400 self-center shrink-0">{listFiltered.length} registros</span>
             </div>
 
             {/* Table */}
             <div className="card overflow-x-auto">
-              {loadingList ? (
+              {loadingListView ? (
                 <div className="p-8 text-center text-gray-400 text-sm">Cargando...</div>
               ) : listFiltered.length === 0 ? (
                 <div className="p-12 text-center text-gray-400">
@@ -1867,7 +2072,7 @@ export default function MyLeads() {
                       <th className="text-left px-4 py-3 font-medium text-gray-600">Razón Social / Contacto</th>
                       <th className="text-left px-4 py-3 font-medium text-gray-600">Teléfono</th>
                       {!selectedBatchId && <th className="text-left px-4 py-3 font-medium text-gray-600">Lote</th>}
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-600">Respuesta</th>
                       <th className="text-left px-4 py-3 font-medium text-gray-600">Próximo agendado</th>
                       <th className="text-center px-4 py-3 font-medium text-gray-600">Llamadas</th>
                       <th className="px-4 py-3"></th>
@@ -1876,7 +2081,7 @@ export default function MyLeads() {
                   <tbody className="divide-y divide-gray-100">
                     {listFiltered.map((c, i) => {
                       const realIdx = clients.findIndex((x) => x.id === c.id)
-                      // Find next pending callback for this client (sorted soonest first)
+                      const navIdx = realIdx >= 0 ? realIdx : i
                       const nextCb = callbackList
                         .filter((cb) => cb.company.id === c.id)
                         .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())[0]
@@ -1888,26 +2093,27 @@ export default function MyLeads() {
                           ? 'text-amber-700 bg-amber-50 border border-amber-200'
                           : 'text-blue-700 bg-blue-50 border border-blue-200'
                         : ''
+                      const aclaracion = c.lastAclaracion || (c.lastDisposition ? getAclaracionForDisposition(c.lastDisposition) : '')
                       return (
                         <tr
                           key={c.id}
                           className={`hover:bg-blue-50 cursor-pointer transition-colors ${
-                            realIdx === currentIndex ? 'bg-blue-50 border-l-2 border-blue-500' : ''
+                            navIdx === currentIndex ? 'bg-blue-50 border-l-2 border-blue-500' : ''
                           }`}
-                          onClick={() => { goTo(realIdx); switchView('detail') }}
+                          onClick={() => openDetailFromList(realIdx)}
                         >
-                          <td className="px-4 py-2.5 text-gray-400 text-xs">{realIdx + 1}</td>
+                          <td className="px-4 py-2.5 text-gray-400 text-xs">{navIdx + 1}</td>
                           <td className="px-4 py-2.5 font-mono text-xs text-gray-600">{c.ruc}</td>
                           <td className="px-4 py-2.5">
-                            <p className="font-medium text-gray-900 text-sm">{(c as ClientSummary).razonSocial || <span className="text-gray-400 italic text-xs">Sin razón social</span>}</p>
-                            {(c as ClientSummary).contacts?.[0] && (
-                              <p className="text-xs text-gray-400">{(c as ClientSummary).contacts[0].nombre}</p>
+                            <p className="font-medium text-gray-900 text-sm">{c.razonSocial || <span className="text-gray-400 italic text-xs">Sin razón social</span>}</p>
+                            {c.contacts?.[0] && (
+                              <p className="text-xs text-gray-400">{c.contacts[0].nombre}</p>
                             )}
                           </td>
                           <td className="px-4 py-2.5 text-gray-600 font-mono text-xs">
-                            {(c as ClientSummary).contacts?.[0]?.telefono ? (
-                              <a href={`tel:${(c as ClientSummary).contacts![0].telefono}`} className="hover:text-blue-600">
-                                {(c as ClientSummary).contacts![0].telefono}
+                            {c.contacts?.[0]?.telefono ? (
+                              <a href={`tel:${c.contacts[0].telefono}`} className="hover:text-blue-600" onClick={(e) => e.stopPropagation()}>
+                                {c.contacts[0].telefono}
                               </a>
                             ) : '—'}
                           </td>
@@ -1918,7 +2124,20 @@ export default function MyLeads() {
                                 : '—'}
                             </td>
                           )}
-                          <td className="px-4 py-2.5"><StatusBadge status={c.status} /></td>
+                          <td className="px-4 py-2.5">
+                            {c.lastDisposition ? (
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <DispositionBadge disposition={c.lastDisposition} />
+                                {aclaracion ? (
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
+                                    {aclaracion}
+                                  </span>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <StatusBadge status="PENDING" />
+                            )}
+                          </td>
                           <td className="px-4 py-2.5">
                             {cbDate ? (
                               <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${cbColor}`}>

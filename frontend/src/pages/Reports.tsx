@@ -364,7 +364,7 @@ export default function Reports() {
       : <ChevronDown size={13} className="text-gray-300" />
 
   return (
-    <div className="p-4 md:p-6 space-y-7 overflow-y-auto h-full">
+    <div className="p-4 md:p-6 space-y-7">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Reportes y Análisis</h1>
@@ -407,7 +407,7 @@ export default function Reports() {
       {/* ── Funnel (records primary) ── */}
       <section>
         <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Embudo de campaña — Registros</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 overflow-visible">
           <StatCard label="Total registros" value={records.total} icon={Users} />
           <StatCard label="Asignados" value={records.assigned} icon={UserCheck2} color="text-blue-700" sub="contactos" />
           <StatCard label="Pendientes" value={records.pending} color="text-gray-600" statusHelpKey="PENDING" />
@@ -435,7 +435,7 @@ export default function Reports() {
 
         <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mt-5 mb-3">Por empresa (RUC)</h2>
         <p className="text-xs text-gray-400 -mt-2 mb-3">Estado agregado por RUC (derivado de contactos)</p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 overflow-visible">
           <StatCard label="Total empresas" value={companies.total} sub="RUC" />
           <StatCard label="Pendientes" value={companies.pending} color="text-gray-500" sub="empresas" statusHelpKey="PENDING" companyLevel />
           <StatCard label="En progreso" value={companies.inProgress} color="text-blue-500" sub="empresas" statusHelpKey="IN_PROGRESS" companyLevel />
