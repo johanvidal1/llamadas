@@ -86,6 +86,38 @@ export const SALES_FUNNEL_STAGES = RESPONSE_OPTIONS.filter((o) => o.progress >= 
 
 export const ZERO_PROGRESS_OPTIONS = RESPONSE_OPTIONS.filter((o) => o.progress === 0)
 
+export const OPERATIONAL_SELECT_OPTIONS = [
+  { value: '', label: 'NINGUNO' },
+  ...ZERO_PROGRESS_OPTIONS.map((o) => ({ value: o.code, label: o.label })),
+]
+
+const funnelCodes = new Set<string>(SALES_FUNNEL_STAGES.map((o) => o.code))
+const operationalCodes = new Set<string>(ZERO_PROGRESS_OPTIONS.map((o) => o.code))
+
+export function isFunnelDisposition(code: string): boolean {
+  return funnelCodes.has(code)
+}
+
+export function isOperationalDisposition(code: string): boolean {
+  return operationalCodes.has(code)
+}
+
+export function isKnownResponseDisposition(code: string): boolean {
+  return optionByCode.has(code)
+}
+
+const FUNNEL_CHIP_SHORT_LABELS: Partial<Record<ResponseCode, string>> = {
+  ESPERA_RESPUESTA: 'Espera resp. final',
+  DISCUSION_PROPUESTA: 'Discusión propuesta',
+  PROPUESTA_PRESENTADA: 'Propuesta presentada',
+}
+
+export function getFunnelChipLabel(stage: ResponseOption): string {
+  const short = FUNNEL_CHIP_SHORT_LABELS[stage.code]
+  if (short) return short
+  return stage.label.charAt(0) + stage.label.slice(1).toLowerCase()
+}
+
 export const DISPOSITION_COLORS: Record<string, string> = {
   NO_CONTESTA: 'bg-gray-100 text-gray-700 border-l-gray-300',
   VOLVER_A_LLAMAR: 'bg-blue-100 text-blue-700 border-l-blue-400',

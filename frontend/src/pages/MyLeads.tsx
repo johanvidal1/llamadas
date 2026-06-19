@@ -26,12 +26,11 @@ import {
   CheckCircle2,
 } from 'lucide-react'
 import CallModal from '../components/CallModal'
+import DispositionSelector from '../components/DispositionSelector'
 import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { StatusBadge, DISPOSITION_CONFIG, getDispositionBorderColor, DispositionBadge } from '../components/StatusBadge'
 import {
-  RESPUESTA_SELECT_OPTIONS,
-  RESPONSE_OPTIONS,
   SALES_FUNNEL_STAGES,
   DISPOSITION_COLORS,
   getDispositionLabel,
@@ -1211,18 +1210,16 @@ export default function MyLeads() {
     selectedResponse?.disableAgendar ||
     effectiveDisposition === 'DO_NOT_CALL' ||
     effectiveDisposition === 'NOT_INTERESTED'
-  const respuestaSelectOptions = useMemo(() => {
-    if (
-      effectiveDisposition &&
-      !RESPONSE_OPTIONS.some((o) => o.code === effectiveDisposition)
-    ) {
-      return [
-        ...RESPUESTA_SELECT_OPTIONS,
-        { value: effectiveDisposition, label: `${getDispositionLabel(effectiveDisposition)} (histórico)` },
-      ]
+
+  const handleDispositionChange = useCallback((next: string) => {
+    setDisposition(next)
+    setRespuestaError(false)
+    const opt = getResponseOption(next)
+    if (opt?.disableAgendar) {
+      setSchedDate('')
+      setSchedTime('')
     }
-    return RESPUESTA_SELECT_OPTIONS
-  }, [effectiveDisposition])
+  }, [])
 
   // Split callbacks: own = current user; team = all (admin only)
   const ownCallbacks = callbackList.filter((c) => c.agent.id === user?.id)
@@ -1555,28 +1552,13 @@ export default function MyLeads() {
                   <div className={`border border-gray-200 rounded-lg p-4 space-y-3 ${previousSnapshot ? 'bg-slate-50 border-l-4 border-l-blue-500' : 'bg-white'}`}>
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Resultado de esta llamada</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div className="flex flex-col gap-0.5">
+                      <div className="flex flex-col gap-0.5 sm:col-span-2">
                         <label className="text-xs text-gray-500 font-medium">Respuesta</label>
-                        <select
-                          className={`w-full border rounded px-3 py-2 text-sm bg-white text-gray-900 outline-none ${
-                            respuestaError
-                              ? 'border-red-500 ring-1 ring-red-500 focus:border-red-500 focus:ring-red-500'
-                              : 'border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
-                          }`}
-                          value={disposition}
-                          onChange={(e) => {
-                            const next = e.target.value
-                            setDisposition(next)
-                            setRespuestaError(false)
-                            const opt = getResponseOption(next)
-                            if (opt?.disableAgendar) {
-                              setSchedDate('')
-                              setSchedTime('')
-                            }
-                          }}
-                        >
-                          {respuestaSelectOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                        </select>
+                        <DispositionSelector
+                          disposition={disposition}
+                          onChange={handleDispositionChange}
+                          error={respuestaError}
+                        />
                       </div>
                       <div className="flex flex-col gap-0.5">
                         <label className="text-xs text-gray-500 font-medium">Aclaración</label>

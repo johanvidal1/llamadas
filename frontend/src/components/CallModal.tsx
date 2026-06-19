@@ -1,12 +1,10 @@
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { logCall } from '../api/client'
 import toast from 'react-hot-toast'
 import { X, Phone } from 'lucide-react'
-import {
-  RESPUESTA_SELECT_OPTIONS,
-  getResponseOption,
-} from '../config/responseOptions'
+import { getResponseOption } from '../config/responseOptions'
+import DispositionSelector from './DispositionSelector'
 
 interface Client {
   id: string
@@ -31,10 +29,15 @@ export default function CallModal({ client, onClose }: Props) {
   const qc = useQueryClient()
   const selectedResponse = disposition ? getResponseOption(disposition) : undefined
 
-  const respuestaOptions = useMemo(
-    () => RESPUESTA_SELECT_OPTIONS.filter((o) => o.value !== ''),
-    []
-  )
+  const handleDispositionChange = (next: string) => {
+    setDisposition(next)
+    const opt = getResponseOption(next)
+    if (opt?.disableAgendar) {
+      setCallbackDate('')
+      setCallbackTime('')
+      setCallbackNotes('')
+    }
+  }
 
   const mutation = useMutation({
     mutationFn: (data: object) => logCall(data),
@@ -114,20 +117,15 @@ export default function CallModal({ client, onClose }: Props) {
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-3">
             <div>
               <label className="label">Respuesta *</label>
-              <select
-                className="input mt-1"
-                value={disposition}
-                onChange={(e) => setDisposition(e.target.value)}
-                required
-              >
-                <option value="">— Seleccionar —</option>
-                {respuestaOptions.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
+              <div className="mt-1">
+                <DispositionSelector
+                  disposition={disposition}
+                  onChange={handleDispositionChange}
+                />
+              </div>
             </div>
             <div>
               <label className="label">Aclaración</label>
