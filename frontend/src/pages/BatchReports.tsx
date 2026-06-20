@@ -5,28 +5,20 @@ import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import {
   ArrowLeft, Filter, Package, RefreshCw, TrendingUp, AlertCircle,
+  ChevronRight, ChevronDown,
 } from 'lucide-react'
 import {
   getReports,
   getCallActivity,
   type CallActivityGranularity,
+  type BatchProgressRow as ApiBatchProgressRow,
+  type BatchAgentBreakdownRow,
+  type BatchAssignmentRunMetrics,
 } from '../api/client'
 import { CallActivityChart, formatGapMinutes, SMALL_SAMPLE_THRESHOLD } from '../components/CallActivityChart'
 
 type AgentOption = { id: string; name: string }
-type BatchProgressRow = {
-  id: string
-  filename: string
-  createdAt: string
-  batchTotalCompanies: number
-  assignedCompanies: number
-  assignedToAgentCompanies: number | null
-  callCount: number
-  contactedCompanies: number
-  contactedPct: number
-  inFunnel: number
-  ventaCerrada: number
-}
+type BatchProgressRow = ApiBatchProgressRow
 
 function Bar({ pct, color = 'bg-blue-500' }: { pct: number; color?: string }) {
   return (
@@ -34,6 +26,13 @@ function Bar({ pct, color = 'bg-blue-500' }: { pct: number; color?: string }) {
       <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${Math.min(pct, 100)}%` }} />
     </div>
   )
+}
+
+function formatAssignedAt(iso: string | null) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  // dd/MM/yyyy HH:mm is easier to scan than long locale text.
+  return format(d, 'dd/MM/yyyy HH:mm', { locale: es })
 }
 
 function buildLotesUrl(agentId?: string) {
@@ -50,6 +49,8 @@ export default function BatchReports() {
   const [searchParams, setSearchParams] = useSearchParams()
   const filterAgentId = searchParams.get('agentId') ?? ''
   const [granularity, setGranularity] = useState<CallActivityGranularity>('day')
+  const [expandedBatches, setExpandedBatches] = useState<Record<string, boolean>>({})
+  const [expandedAgents, setExpandedAgents] = useState<Record<string, Record<string, boolean>>>({})
 
   const { data: reportsData, isLoading: reportsLoading, refetch: refetchReports, isFetching: fetchingReports } = useQuery({
     queryKey: ['reports', filterAgentId || null],
@@ -68,10 +69,13 @@ export default function BatchReports() {
   const agents: AgentOption[] = reportsData?.agentPerformance ?? []
   const batchProgress: BatchProgressRow[] = reportsData?.batchProgress ?? []
   const isRefreshing = fetchingReports || fetchingActivity
+  const showAgentBreakdown = !filterAgentId
 
   const handleAgentChange = (agentId: string) => {
     if (agentId) setSearchParams({ agentId })
     else setSearchParams({})
+    setExpandedBatches({})
+    setExpandedAgents({})
   }
 
   const handleRefresh = () => {
@@ -243,6 +247,7 @@ export default function BatchReports() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
+                <th className="w-10 px-2 py-3" />
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Archivo</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Fecha</th>
                 <th className="text-right px-3 py-3 font-medium text-gray-600">Asignadas / Total</th>
@@ -254,17 +259,45 @@ export default function BatchReports() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {batchProgress.map((b) => {
+              {batchProgress.flatMap((b) => {
+                const canExpand = showAgentBreakdown && (b.agentBreakdown?.length ?? 0) > 0
+                const isExpanded = !!expandedBatches[b.id]
                 const assigned = filterAgentId
                   ? (b.assignedToAgentCompanies ?? 0)
                   : b.assignedCompanies
-                return (
-                  <tr key={b.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 max-w-[200px] truncate">
+
+                const batchRow = (
+                  <tr
+                    key={b.id}
+                    className={`${canExpand ? 'cursor-pointer' : ''} hover:bg-gray-50 transition-colors`}
+                    onClick={() => {
+                      if (!canExpand) return
+                      setExpandedBatches((prev) => ({ ...prev, [b.id]: !prev[b.id] }))
+                    }}
+                  >
+                    <td className="px-2 py-3">
+                      {canExpand ? (
+                        <button
+                          type="button"
+                          className="text-gray-500 hover:text-gray-800 p-1 rounded-md hover:bg-gray-100"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setExpandedBatches((prev) => ({ ...prev, [b.id]: !prev[b.id] }))
+                          }}
+                          aria-label={isExpanded ? 'Contraer lote' : 'Expandir lote'}
+                        >
+                          {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        </button>
+                      ) : (
+                        <div className="w-8" />
+                      )}
+                    </td>
+                    <td className="px-4 py-3 max-w-[240px] truncate">
                       <Link
                         to={buildBatchDetailUrl(b.id, filterAgentId || undefined)}
                         className="font-medium text-blue-600 hover:underline"
                         title={b.filename}
+                        onClick={(e) => e.stopPropagation()}
                       >
                         {b.filename}
                       </Link>
@@ -292,10 +325,118 @@ export default function BatchReports() {
                     </td>
                   </tr>
                 )
+
+                if (!canExpand || !isExpanded) return [batchRow]
+
+                const agentRows = (b.agentBreakdown ?? []).flatMap((a: BatchAgentBreakdownRow) => {
+                  const agentExpanded = !!expandedAgents[b.id]?.[a.agentId]
+                  const toggleAgent = () => {
+                    setExpandedAgents((prev) => ({
+                      ...prev,
+                      [b.id]: { ...(prev[b.id] ?? {}), [a.agentId]: !(prev[b.id]?.[a.agentId] ?? false) },
+                    }))
+                  }
+                  const agentKey = `${b.id}:${a.agentId}`
+
+                  const row = (
+                    <tr
+                      key={agentKey}
+                      className="bg-gray-50/40 hover:bg-gray-50 transition-colors cursor-pointer"
+                      onClick={toggleAgent}
+                    >
+                      <td className="px-2 py-2">
+                        <button
+                          type="button"
+                          className="text-gray-500 hover:text-gray-800 p-1 rounded-md hover:bg-gray-100"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            toggleAgent()
+                          }}
+                          aria-label={agentExpanded ? 'Contraer agente' : 'Expandir agente'}
+                        >
+                          {agentExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                        </button>
+                      </td>
+                      <td className="px-4 py-2 text-xs text-gray-700">
+                        <span className="inline-flex items-center gap-2">
+                          <span className="ml-4 font-medium text-gray-900">{a.agentName}</span>
+                          <span className="text-gray-400">·</span>
+                          <span className="text-gray-500">Asignadas: {a.assignedCompanies}</span>
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-xs text-gray-500">—</td>
+                      <td className="px-3 py-2 text-right text-xs">
+                        <span className="font-bold text-gray-900">{a.assignedCompanies}</span>
+                        <span className="text-gray-400 font-normal"> de </span>
+                        <span className="text-gray-500">{b.batchTotalCompanies}</span>
+                      </td>
+                      <td className="px-3 py-2 text-right text-gray-700 font-medium text-xs">{a.callCount}</td>
+                      <td className="px-3 py-2 text-right text-xs">
+                        <span className="text-blue-700 font-medium">{a.contactedCompanies}</span>
+                        <span className="text-gray-400 text-[11px] ml-1">({a.contactedPct}%)</span>
+                      </td>
+                      <td className="px-3 py-2 text-right text-green-700 font-medium text-xs">{a.inFunnel}</td>
+                      <td className="px-3 py-2 text-right text-emerald-700 font-medium text-xs">{a.ventaCerrada}</td>
+                      <td className="px-4 py-2">
+                        <Bar
+                          pct={a.contactedPct}
+                          color={a.contactedPct >= 70 ? 'bg-green-500' : a.contactedPct >= 40 ? 'bg-amber-400' : 'bg-blue-400'}
+                        />
+                      </td>
+                    </tr>
+                  )
+
+                  if (!agentExpanded) return [row]
+
+                  const runRows = (a.assignmentRuns ?? []).map((r: BatchAssignmentRunMetrics) => {
+                    const runKey = `${agentKey}:run:${r.id}`
+                    const assignedLabel = r.isLegacy
+                      ? 'Asignación anterior (legacy)'
+                      : `${formatAssignedAt(r.assignedAt)} · ${r.assignedBy?.name ?? '—'}`
+                    return (
+                      <tr key={runKey} className="hover:bg-white">
+                        <td className="px-2 py-2">
+                          <div className="w-8" />
+                        </td>
+                        <td className="px-4 py-2 text-[11px] text-gray-600">
+                          <div className="ml-10">
+                            <div className="font-medium text-gray-800">{assignedLabel}</div>
+                            <div className="text-gray-400">
+                              {r.isLegacy ? 'Sin runId histórico' : `Run · ${r.companyCount} empresas`}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2 text-[11px] text-gray-500">—</td>
+                        <td className="px-3 py-2 text-right text-[11px] text-gray-700">
+                          <span className="font-bold text-gray-900">{r.companyCount}</span>
+                          <span className="text-gray-400 font-normal"> de </span>
+                          <span className="text-gray-500">{a.assignedCompanies}</span>
+                        </td>
+                        <td className="px-3 py-2 text-right text-gray-700 font-medium text-[11px]">{r.callCount}</td>
+                        <td className="px-3 py-2 text-right text-[11px]">
+                          <span className="text-blue-700 font-medium">{r.contactedCompanies}</span>
+                          <span className="text-gray-400 text-[10px] ml-1">({r.contactedPct}%)</span>
+                        </td>
+                        <td className="px-3 py-2 text-right text-green-700 font-medium text-[11px]">{r.inFunnel}</td>
+                        <td className="px-3 py-2 text-right text-emerald-700 font-medium text-[11px]">{r.ventaCerrada}</td>
+                        <td className="px-4 py-2">
+                          <Bar
+                            pct={r.contactedPct}
+                            color={r.contactedPct >= 70 ? 'bg-green-500' : r.contactedPct >= 40 ? 'bg-amber-400' : 'bg-blue-400'}
+                          />
+                        </td>
+                      </tr>
+                    )
+                  })
+
+                  return [row, ...runRows]
+                })
+
+                return [batchRow, ...agentRows]
               })}
               {batchProgress.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-gray-400 text-sm">
+                  <td colSpan={9} className="px-4 py-8 text-center text-gray-400 text-sm">
                     Sin lotes importados
                   </td>
                 </tr>

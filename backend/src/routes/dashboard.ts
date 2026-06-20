@@ -350,6 +350,18 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
     ? { contacts: { some: { assignment: { agentId: filterAgentId } } } }
     : globalAssignedCompanyFilter
 
+  type AgentBreakdownRow = {
+    agentId: string
+    agentName: string
+    assignedCompanies: number
+    callCount: number
+    contactedCompanies: number
+    contactedPct: number
+    inFunnel: number
+    ventaCerrada: number
+    assignmentRuns: BatchAssignmentRun[]
+  }
+
   type BatchAssignmentRun = {
     id: string
     isLegacy?: boolean
@@ -428,6 +440,30 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
     }
   }
 
+  // When viewing all agents, build a per-batch/per-agent company set
+  // so we can compute the Level 2 / Level 3 breakdown efficiently.
+  const agentNameById = Object.fromEntries(agents.map((a) => [a.id, a.name]))
+  const agentCompanyIdsByBatchId: Record<string, Record<string, Set<string>>> = {}
+  if (!filterAgentId && batches.length > 0) {
+    const batchIds = batches.map((b) => b.id)
+    const assignmentRows = await prisma.assignment.findMany({
+      where: { contact: { company: { importBatchId: { in: batchIds } } } },
+      select: {
+        agentId: true,
+        contact: { select: { companyId: true, company: { select: { importBatchId: true } } } },
+      },
+    })
+
+    for (const row of assignmentRows) {
+      const batchId = row.contact.company.importBatchId
+      const agentId = row.agentId
+      const companyId = row.contact.companyId
+      if (!agentCompanyIdsByBatchId[batchId]) agentCompanyIdsByBatchId[batchId] = {}
+      if (!agentCompanyIdsByBatchId[batchId]![agentId]) agentCompanyIdsByBatchId[batchId]![agentId] = new Set()
+      agentCompanyIdsByBatchId[batchId]![agentId]!.add(companyId)
+    }
+  }
+
   const batchProgressData = await Promise.all(
     batches.map(async (b) => {
       const [batchTotalCompanies, assignedCompaniesCount, companyRows] = await Promise.all([
@@ -461,6 +497,59 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
         0
       )
       const ventaCerrada = companyPipeline.VENTA_CERRADA ?? 0
+
+      const agentBreakdown: AgentBreakdownRow[] | undefined = !filterAgentId
+        ? await (async () => {
+            const byAgent = agentCompanyIdsByBatchId[b.id] ?? {}
+            const agentIds = Object.keys(byAgent)
+            if (agentIds.length === 0) return []
+
+            const rows = await Promise.all(
+              agentIds.map(async (agentId) => {
+                const ids = [...(byAgent[agentId] ?? new Set<string>())]
+                const assignedCompanies = ids.length
+                if (assignedCompanies === 0) {
+                  return null
+                }
+
+                const [agentCallCount, lastByAgentCompany, assignmentRuns] = await Promise.all([
+                  prisma.callLog.count({
+                    where: { agentId, companyId: { in: ids } },
+                  }),
+                  getLastDispositionByCompanyIds(ids, agentId),
+                  buildBatchAssignmentRuns(b.id, agentId),
+                ])
+
+                const agentPipeline = buildCompanyPipelineCounts(lastByAgentCompany)
+                const agentPending = agentPipeline.PENDING ?? 0
+                const contacted = assignedCompanies - agentPending
+                const pct = assignedCompanies > 0 ? Math.round((contacted / assignedCompanies) * 100) : 0
+                const agentInFunnel = FUNNEL_PIPELINE_KEYS.reduce(
+                  (sum, key) => sum + (agentPipeline[key] ?? 0),
+                  0
+                )
+                const agentVentaCerrada = agentPipeline.VENTA_CERRADA ?? 0
+
+                return {
+                  agentId,
+                  agentName: agentNameById[agentId] ?? 'Desconocido',
+                  assignedCompanies,
+                  callCount: agentCallCount,
+                  contactedCompanies: contacted,
+                  contactedPct: pct,
+                  inFunnel: agentInFunnel,
+                  ventaCerrada: agentVentaCerrada,
+                  assignmentRuns,
+                } satisfies AgentBreakdownRow
+              })
+            )
+
+            return rows
+              .filter((r): r is AgentBreakdownRow => r != null)
+              .sort((a, b) => b.assignedCompanies - a.assignedCompanies)
+          })()
+        : undefined
+
       return {
         batchId: b.id,
         batchTotalCompanies,
@@ -475,6 +564,7 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
         pendingCompanies,
         companyPipeline,
         assignmentRuns: filterAgentId ? (runsByBatchId[b.id] ?? []) : undefined,
+        agentBreakdown,
       }
     })
   )
@@ -497,6 +587,7 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
       ventaCerrada: metrics?.ventaCerrada ?? 0,
       pendingCompanies: metrics?.pendingCompanies ?? 0,
       companyPipeline: metrics?.companyPipeline ?? {},
+      ...(!filterAgentId ? { agentBreakdown: metrics?.agentBreakdown ?? [] } : {}),
       ...(filterAgentId ? { assignmentRuns: metrics?.assignmentRuns ?? [] } : {}),
     }
   })

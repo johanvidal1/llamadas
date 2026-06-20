@@ -330,7 +330,87 @@ export const getDashboardStats = (batchId?: string) =>
     .then((r) => r.data)
 export const getAgentStats = () => api.get('/dashboard/agents-stats').then((r) => r.data)
 export const getReports = (agentId?: string) =>
-  api.get('/dashboard/reports', { params: agentId ? { agentId } : undefined }).then((r) => r.data)
+  api.get<ReportsResponse>('/dashboard/reports', { params: agentId ? { agentId } : undefined }).then((r) => r.data)
+
+export type BatchAgentBreakdownRow = {
+  agentId: string
+  agentName: string
+  assignedCompanies: number
+  callCount: number
+  contactedCompanies: number
+  contactedPct: number
+  inFunnel: number
+  ventaCerrada: number
+  assignmentRuns: BatchAssignmentRunMetrics[]
+}
+
+export type BatchProgressRow = {
+  id: string
+  filename: string
+  createdAt: string
+  batchTotalCompanies: number
+  assignedCompanies: number
+  assignedToAgentCompanies: number | null
+  unassignedCompanies: number
+  callCount: number
+  contactedCompanies: number
+  contactedPct: number
+  inFunnel: number
+  ventaCerrada: number
+  pendingCompanies: number
+  companyPipeline: Record<string, number>
+  assignmentRuns?: BatchAssignmentRunMetrics[]
+  agentBreakdown?: BatchAgentBreakdownRow[]
+}
+
+export type ReportsResponse = {
+  agentPerformance: Array<{
+    id: string
+    name: string
+    assigned: number
+    assignedCompanies: number
+    calledClients: number
+    calledContacts: number
+    companiesWithResponse: number
+    companiesInFunnel: number
+    totalCalls: number
+    interested: number
+    converted: number
+    notInterested: number
+    interestedRecords: number
+    convertedRecords: number
+    notInterestedRecords: number
+    pendingRecords: number
+    interestedCompanies: number
+    convertedCompanies: number
+    notInterestedCompanies: number
+    pendingCompanies: number
+    contactRate: number
+    companyContactRate: number
+    conversionRate: number
+    avgCallsPerClient: number
+    avgCallsPerContact: number
+    pendingCallbacks: number
+    overdueCallbacks: number
+  }>
+  callsByDay: { date: string; count: number }[]
+  dispositionBreakdown: { disposition: string; count: number }[]
+  batchProgress: BatchProgressRow[]
+  assignedCompanies: number
+  companyPipeline: Record<string, number>
+  funnel: {
+    companies: {
+      total: number
+      assigned: number
+      pending: number
+      inProgress: number
+      interested: number
+      converted: number
+      notInterested: number
+      doNotCall: number
+    }
+  }
+}
 
 export type CallActivityGranularity = 'day' | 'week' | 'month'
 
