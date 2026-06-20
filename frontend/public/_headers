@@ -1,2 +1,4 @@
-﻿/*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://llamadas-backend.onrender.com; font-src 'self' data:
+﻿# Netlify / Cloudflare Pages custom headers (Render ignores this file — use render.yaml).
+# Production CSP: no unsafe-eval (Vite prod bundles do not use eval).
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://llamadas-backend.onrender.com; font-src 'self' data:

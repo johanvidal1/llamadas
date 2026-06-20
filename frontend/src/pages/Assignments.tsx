@@ -6,17 +6,35 @@ import {
   getClients,
   createAssignment,
   previewAssignment,
+  getAssignmentRuns,
+  getAssignmentRunCompanies,
   type AssignmentPreview,
   type AssignmentResult,
+  type AssignmentRun,
+  type AssignmentRunCompany,
 } from '../api/client'
 import toast from 'react-hot-toast'
-import { UserCheck, Users, AlertCircle, X, Package, ChevronDown, ChevronRight } from 'lucide-react'
+import { UserCheck, Users, AlertCircle, X, ChevronDown, ChevronRight, History } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { StatusBadge, STATUS_CONFIG } from '../components/StatusBadge'
+import { StatusBadge } from '../components/StatusBadge'
 
 function batchLabel(batch: { displayName?: string | null; filename: string }) {
   return batch.displayName?.trim() || batch.filename
+}
+
+type AssignableImport = {
+  id: string
+  filename: string
+  displayName?: string | null
+  blocked?: boolean
+  companyCount: number
+  contactCount: number
+  unassignedCompanyCount: number
+}
+
+function importAvailabilityLabel(unassigned: number, total: number) {
+  return `${unassigned} sin asignar de ${total}`
 }
 
 export default function Assignments() {
@@ -26,27 +44,44 @@ export default function Assignments() {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewModal, setPreviewModal] = useState<AssignmentPreview | null>(null)
   const [pendingAssignCount, setPendingAssignCount] = useState<number | null>(null)
-  const [lastAssignment, setLastAssignment] = useState<{
-    count: number
-    agentName: string
-  } | null>(null)
   const qc = useQueryClient()
 
   type AssignVars = Parameters<typeof createAssignment>[0] & { expectedCount?: number }
 
   // Drawer state — agent detail
   const [drawerAgentId, setDrawerAgentId] = useState<string | null>(null)
-  const [expandedBatches, setExpandedBatches] = useState<Record<string, boolean>>({})
-  const [batchSearch, setBatchSearch] = useState<Record<string, string>>({})
+  const [expandedRuns, setExpandedRuns] = useState<Record<string, boolean>>({})
+  const [runCompanies, setRunCompanies] = useState<Record<string, AssignmentRunCompany[]>>({})
+  const [loadingRunCompanies, setLoadingRunCompanies] = useState<Record<string, boolean>>({})
 
-  const toggleBatch = (id: string) =>
-    setExpandedBatches((prev) => ({ ...prev, [id]: !prev[id] }))
+  const toggleRun = async (runId: string) => {
+    const willExpand = !expandedRuns[runId]
+    setExpandedRuns((prev) => ({ ...prev, [runId]: willExpand }))
+    if (willExpand && !runCompanies[runId]) {
+      setLoadingRunCompanies((prev) => ({ ...prev, [runId]: true }))
+      try {
+        const data = await getAssignmentRunCompanies(runId)
+        setRunCompanies((prev) => ({ ...prev, [runId]: data.companies }))
+      } catch {
+        toast.error('Error al cargar empresas de la asignación')
+        setExpandedRuns((prev) => ({ ...prev, [runId]: false }))
+      } finally {
+        setLoadingRunCompanies((prev) => ({ ...prev, [runId]: false }))
+      }
+    }
+  }
 
   const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: getUsers })
   const { data: imports = [] } = useQuery({ queryKey: ['imports'], queryFn: getImports })
 
-  const assignableImports = imports.filter(
-    (b: { blocked?: boolean }) => !b.blocked
+  const assignableImports = (imports as AssignableImport[]).filter((b) => !b.blocked)
+
+  const assignableImportTotals = assignableImports.reduce(
+    (acc, b) => ({
+      unassigned: acc.unassigned + (b.unassignedCompanyCount ?? 0),
+      total: acc.total + b.companyCount,
+    }),
+    { unassigned: 0, total: 0 }
   )
 
   useEffect(() => {
@@ -57,61 +92,27 @@ export default function Assignments() {
     }
   }, [imports, batchId])
 
-  // Query companies with assigned contacts for the selected agent in the drawer
-  const { data: drawerClientsData, isLoading: loadingDrawer } = useQuery({
-    queryKey: ['clients', 'agent-drawer', drawerAgentId],
-    queryFn: () => getClients({ agentId: drawerAgentId!, limit: 500 }),
+  const { data: latestRunsData } = useQuery({
+    queryKey: ['assignmentRuns', agentId],
+    queryFn: () => getAssignmentRuns(agentId),
+    enabled: !!agentId,
+  })
+  const latestRun = latestRunsData?.runs[0] ?? null
+
+  const { data: drawerRunsData, isLoading: loadingDrawerRuns } = useQuery({
+    queryKey: ['assignmentRuns', drawerAgentId],
+    queryFn: () => getAssignmentRuns(drawerAgentId!),
     enabled: !!drawerAgentId,
   })
 
-  type DrawerContact = {
-    id: string
-    name: string
-    phone: string
-    companyName: string
-    status: string
-    importBatch?: { id: string; filename: string; createdAt: string }
-    _count: { callLogs: number; callbacks: number }
-  }
-
-  const drawerContacts: DrawerContact[] = (drawerClientsData?.clients ?? []).flatMap(
-    (company: {
-      id: string
-      ruc: string
-      razonSocial?: string
-      status: string
-      contacts: { id: string; nombre: string; telefono?: string }[]
-      importBatch?: { id: string; filename: string; createdAt: string }
-      _count: { callLogs: number; callbacks: number }
-    }) =>
-      company.contacts.map((contact) => ({
-        id: contact.id,
-        name: contact.nombre,
-        phone: contact.telefono ?? '',
-        companyName: company.razonSocial || company.ruc,
-        status: company.status,
-        importBatch: company.importBatch,
-        _count: company._count,
-      }))
-  )
-
-  // Group drawer contacts by batch
-  type BatchGroup = {
-    id: string; filename: string; createdAt: string
-    contacts: DrawerContact[]
-  }
-  const drawerBatches: BatchGroup[] = []
-  const seenBatchIds = new Set<string>()
-  drawerContacts.forEach((c) => {
-    const b = c.importBatch
-    if (!b) return
-    if (!seenBatchIds.has(b.id)) {
-      seenBatchIds.add(b.id)
-      drawerBatches.push({ id: b.id, filename: b.filename, createdAt: b.createdAt, contacts: [] })
-    }
-    drawerBatches.find((bg) => bg.id === b.id)!.contacts.push(c)
-  })
-  drawerBatches.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  const drawerRuns: AssignmentRun[] = drawerRunsData?.runs ?? []
+  const drawerRunsSummary = drawerRuns.length > 0
+    ? {
+        totalCompanies: drawerRuns.reduce((sum, run) => sum + run.companyCount, 0),
+        assignmentCount: drawerRuns.length,
+        fileCount: new Set(drawerRuns.map((run) => run.importBatchId ?? 'none')).size,
+      }
+    : null
 
   const agents = users.filter(
     (u: { role: string; active: boolean }) => u.role === 'AGENT' && u.active
@@ -128,16 +129,14 @@ export default function Assignments() {
       }),
     enabled: true,
   })
-  const unassignedTotal = unassignedData?.total ?? 0
+  const unassignedCompanies = unassignedData?.total ?? 0
+  const unassignedContacts = unassignedData?.contactCount ?? 0
 
   const mutation = useMutation({
     mutationFn: ({ expectedCount: _, ...vars }: AssignVars) => createAssignment(vars),
     onSuccess: (data: AssignmentResult, variables: AssignVars) => {
-      const agentName =
-        agents.find((a: { id: string; name: string }) => a.id === variables.agentId)?.name ?? ''
-      setLastAssignment({ count: data.assigned, agentName })
       if (variables.expectedCount != null) {
-        setCount(data.assigned)
+        setCount(data.assignedCompanies)
       }
       setPendingAssignCount(null)
       setPreviewModal(null)
@@ -145,20 +144,30 @@ export default function Assignments() {
       const unassignedKey = ['clients', 'unassigned', batchId]
       qc.setQueryData(
         unassignedKey,
-        (old: { total?: number } | undefined) => {
+        (old: { total?: number; contactCount?: number } | undefined) => {
           if (old?.total == null) return old
-          return { ...old, total: Math.max(0, old.total - data.assigned) }
+          return {
+            ...old,
+            total: Math.max(0, old.total - data.assignedCompanies),
+            contactCount: Math.max(0, (old.contactCount ?? 0) - data.assignedContacts),
+          }
         }
       )
       qc.invalidateQueries({ queryKey: unassignedKey })
+      qc.invalidateQueries({ queryKey: ['imports'] })
+      qc.invalidateQueries({ queryKey: ['clients', 'unassigned'] })
       qc.invalidateQueries({ queryKey: ['clients'] })
       qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['assignmentRuns', variables.agentId] })
+      if (drawerAgentId) {
+        qc.invalidateQueries({ queryKey: ['assignmentRuns', drawerAgentId] })
+      }
 
-      toast.success(`✅ ${data.assigned} registros asignados`)
+      toast.success(`✅ ${data.assignedCompanies} empresas asignadas`)
     },
     onError: (err: { response?: { data?: { error?: string } } }) => {
       setPendingAssignCount(null)
-      toast.error(err?.response?.data?.error ?? 'Error al asignar registros')
+      toast.error(err?.response?.data?.error ?? 'Error al asignar empresas')
     },
   })
 
@@ -180,25 +189,24 @@ export default function Assignments() {
       return
     }
     setPreviewLoading(true)
-    setLastAssignment(null)
     try {
       const preview = await previewAssignment({
         agentId,
         batchId: batchId || undefined,
         count: count === '' ? undefined : count,
       })
-      if (preview.contactIds.length === 0) {
-        toast.error('No hay registros disponibles para asignar')
+      if (preview.companyIds.length === 0) {
+        toast.error('No hay empresas disponibles para asignar')
         return
       }
-      if (preview.completeBoundary) {
-        runAssign({
-          contactIds: preview.contactIds,
-          expectedCount: preview.contactIds.length,
-        })
+      if (preview.conflictWarning?.hasMixedAgents) {
+        setPreviewModal(preview)
         return
       }
-      setPreviewModal(preview)
+      runAssign({
+        contactIds: preview.contactIds,
+        expectedCount: preview.assignedCompanies,
+      })
     } catch (err: unknown) {
       const message =
         (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
@@ -209,40 +217,32 @@ export default function Assignments() {
     }
   }
 
-  const handlePreviewChoice = (choice: 'expand' | 'shrink' | 'as_requested') => {
-    if (!previewModal?.suggestions) return
-    if (choice === 'expand') {
-      runAssign({
-        contactIds: previewModal.suggestions.expandContactIds,
-        expectedCount: previewModal.suggestions.expandTo,
-      })
-    } else if (choice === 'shrink') {
-      runAssign({
-        contactIds: previewModal.suggestions.shrinkContactIds,
-        expectedCount: previewModal.suggestions.shrinkTo,
-      })
-    } else {
-      runAssign({
-        contactIds: previewModal.contactIds,
-        expectedCount: previewModal.contactIds.length,
-      })
-    }
+  const handlePreviewChoice = () => {
+    if (!previewModal) return
+    runAssign({
+      contactIds: previewModal.contactIds,
+      expectedCount: previewModal.assignedCompanies,
+    })
   }
 
   const selectedAgent = agents.find(
     (a: { id: string }) => a.id === agentId
   ) as { name: string } | undefined
 
+  const selectedBatch = batchId
+    ? assignableImports.find((b) => b.id === batchId)
+    : undefined
+
   const nextAssignCount =
     pendingAssignCount ??
-    (count === '' ? unassignedTotal : Math.min(count, unassignedTotal))
+    (count === '' ? unassignedCompanies : Math.min(count, unassignedCompanies))
 
   return (
     <div className="p-8 space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Asignar contactos a agentes</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Asignar empresas a agentes</h1>
         <p className="text-gray-500 text-sm mt-1">
-          Distribuye los contactos (teléfonos a llamar) entre tu equipo de trabajo
+          Distribuye empresas (RUC) entre tu equipo; todos los contactos de cada empresa se asignan juntos
         </p>
       </div>
 
@@ -258,9 +258,14 @@ export default function Assignments() {
               onChange={(e) => setAgentId(e.target.value)}
             >
               <option value="">Seleccionar agente...</option>
-              {agents.map((a: { id: string; name: string; _count?: { assignments: number } }) => (
+              {agents.map((a: {
+                id: string
+                name: string
+                assignedCompanies?: number
+                _count?: { assignments: number }
+              }) => (
                 <option key={a.id} value={a.id}>
-                  {a.name} ({a._count?.assignments ?? 0} asignados)
+                  {a.name} ({a.assignedCompanies ?? 0} empresas)
                 </option>
               ))}
             </select>
@@ -274,76 +279,96 @@ export default function Assignments() {
               value={batchId}
               onChange={(e) => setBatchId(e.target.value)}
             >
-              <option value="">Todos los archivos</option>
-              {assignableImports.map(
-                (b: {
-                  id: string
-                  filename: string
-                  displayName?: string | null
-                  sourceRowCount?: number | null
-                  contactCount: number
-                }) => (
-                  <option key={b.id} value={b.id}>
-                    {batchLabel(b)} ({b.sourceRowCount ?? b.contactCount} registros)
-                  </option>
-                )
-              )}
+              <option value="">
+                Todos los archivos ({importAvailabilityLabel(
+                  assignableImportTotals.unassigned,
+                  assignableImportTotals.total
+                )})
+              </option>
+              {assignableImports.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {batchLabel(b)} ({importAvailabilityLabel(
+                    b.unassignedCompanyCount ?? 0,
+                    b.companyCount
+                  )})
+                </option>
+              ))}
             </select>
           </div>
 
           {/* Count */}
           <div>
-            <label className="label">Cantidad de registros</label>
+            <label className="label">Cantidad de empresas</label>
             <input
               type="number"
               className="input"
               min={1}
-              max={unassignedTotal || 9999}
+              max={unassignedCompanies || 9999}
               value={count}
               placeholder="Todos los disponibles"
               onChange={(e) => setCount(e.target.value === '' ? '' : Number(e.target.value))}
             />
+            {unassignedCompanies > 0 && (
+              <p className="text-xs text-gray-500 mt-1">
+                Máx. {unassignedCompanies} sin asignar
+              </p>
+            )}
           </div>
         </div>
 
         {/* Info box */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
           <AlertCircle size={18} className="text-blue-500 shrink-0 mt-0.5" />
-          <div className="text-sm">
-            <p className="text-blue-800 font-medium">
-              Registros sin asignar disponibles:{' '}
-              <span className="font-bold">{unassignedTotal}</span>
-              {batchId && ' en esta importación'}
-            </p>
-            {lastAssignment && (
-              <p className="text-green-700 mt-1">
-                Última asignación:{' '}
-                <strong>{lastAssignment.count}</strong> registros a{' '}
-                <strong>{lastAssignment.agentName}</strong>
-              </p>
+          <dl className="text-sm space-y-2 flex-1 min-w-0">
+            {selectedAgent && (count === '' || count > 0) && unassignedCompanies > 0 && (
+              <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+                <dt className="text-blue-700 font-medium shrink-0">Próxima asignación</dt>
+                <dd className="text-blue-800 font-bold">
+                  {pendingAssignCount != null ? (
+                    <>
+                      Se asignarán {nextAssignCount} empresas a {selectedAgent.name}
+                    </>
+                  ) : (
+                    <>
+                      Se asignarán hasta {nextAssignCount} empresas a {selectedAgent.name}
+                    </>
+                  )}
+                </dd>
+              </div>
             )}
-            {selectedAgent && (count === '' || count > 0) && unassignedTotal > 0 && (
-              <p className="text-blue-600 mt-1">
-                {pendingAssignCount != null ? (
+            <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+              <dt className="text-blue-700 font-medium shrink-0">Disponibles</dt>
+              <dd className="text-blue-800 font-medium">
+                {selectedBatch ? (
                   <>
-                    Se asignarán <strong>{nextAssignCount}</strong> registros a{' '}
-                    <strong>{selectedAgent.name}</strong>
+                    {unassignedCompanies} sin asignar de {selectedBatch.companyCount} en{' '}
+                    {batchLabel(selectedBatch)}
                   </>
                 ) : (
                   <>
-                    Se asignarán hasta <strong>{nextAssignCount}</strong> registros a{' '}
-                    <strong>{selectedAgent.name}</strong>
+                    {unassignedCompanies} sin asignar de {assignableImportTotals.total} (todos los
+                    archivos)
                   </>
                 )}
-              </p>
+              </dd>
+            </div>
+            {latestRun && (
+              <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+                <dt className="text-green-700 font-medium shrink-0">Última asignación</dt>
+                <dd className="text-green-700">
+                  {latestRun.companyCount} empresas ·{' '}
+                  {format(new Date(latestRun.assignedAt), "d MMM yyyy, HH:mm", { locale: es })}
+                  {latestRun.assignedBy?.name && <> · por {latestRun.assignedBy.name}</>}
+                </dd>
+              </div>
             )}
-          </div>
+          </dl>
         </div>
 
         <div className="flex items-center gap-3">
           <button
             onClick={handleAssign}
-            disabled={previewLoading || mutation.isPending || !agentId || unassignedTotal === 0}
+            disabled={previewLoading || mutation.isPending || !agentId || unassignedCompanies === 0}
             className="btn-primary"
           >
             <UserCheck size={18} />
@@ -351,19 +376,19 @@ export default function Assignments() {
               ? 'Verificando...'
               : mutation.isPending
                 ? 'Asignando...'
-                : 'Asignar registros'}
+                : 'Asignar empresas'}
           </button>
-          {unassignedTotal === 0 && (
+          {unassignedCompanies === 0 && (
             <p className="text-sm text-amber-600 flex items-center gap-1">
               <AlertCircle size={14} />
-              No hay registros disponibles para asignar
+              No hay empresas disponibles para asignar
             </p>
           )}
         </div>
       </div>
 
-      {/* Boundary preview modal */}
-      {previewModal && !previewModal.completeBoundary && previewModal.suggestions && (
+      {/* Conflict warning modal (edge case) */}
+      {previewModal?.conflictWarning?.hasMixedAgents && (
         <>
           <div
             className="fixed inset-0 bg-black/40 z-40"
@@ -373,20 +398,9 @@ export default function Assignments() {
             <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Cierre de empresa incompleto</h2>
+                  <h2 className="text-lg font-semibold text-gray-900">Conflicto de asignación</h2>
                   <p className="text-sm text-gray-500 mt-1">
-                    La asignación termina en{' '}
-                    <strong>
-                      {previewModal.boundaryCompany?.razonSocial ||
-                        previewModal.boundaryCompany?.ruc ||
-                        'una empresa'}
-                    </strong>
-                    {previewModal.boundaryCompany?.ruc && (
-                      <> (RUC {previewModal.boundaryCompany.ruc})</>
-                    )}
-                    : incluyes{' '}
-                    <strong>{previewModal.boundaryCompany?.included ?? '?'}</strong> de{' '}
-                    <strong>{previewModal.boundaryCompany?.total ?? '?'}</strong> registros
+                    Algunas empresas seleccionadas ya tienen contactos asignados a otros agentes.
                   </p>
                 </div>
                 <button
@@ -399,45 +413,34 @@ export default function Assignments() {
                 </button>
               </div>
 
-              {previewModal.conflictWarning?.hasMixedAgents && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800 flex items-start gap-2">
-                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
-                  <p>
-                    Esta empresa ya tiene contactos asignados a{' '}
-                    <strong>
-                      {previewModal.conflictWarning.agents.map((a) => a.name).join(', ')}
-                    </strong>
-                    . Completar la empresa puede repartir contactos entre agentes.
-                  </p>
-                </div>
-              )}
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800 flex items-start gap-2">
+                <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                <p>
+                  Contactos asignados a{' '}
+                  <strong>
+                    {previewModal.conflictWarning.agents.map((a) => a.name).join(', ')}
+                  </strong>
+                  . Continuar puede repartir contactos de la misma empresa entre agentes.
+                </p>
+              </div>
 
               <div className="flex flex-col gap-2">
                 <button
                   type="button"
                   disabled={mutation.isPending}
-                  onClick={() => handlePreviewChoice('expand')}
+                  onClick={handlePreviewChoice}
                   className="btn-primary justify-center"
                 >
-                  Completar empresa ({previewModal.suggestions.expandTo} registros, +
-                  {previewModal.suggestions.expandAdd})
+                  Asignar de todos modos ({previewModal.assignedCompanies} empresas,{' '}
+                  {previewModal.assignedContacts} contactos)
                 </button>
                 <button
                   type="button"
                   disabled={mutation.isPending}
-                  onClick={() => handlePreviewChoice('shrink')}
+                  onClick={() => setPreviewModal(null)}
                   className="btn-secondary justify-center"
                 >
-                  Solo empresas cerradas ({previewModal.suggestions.shrinkTo} registros, -
-                  {previewModal.suggestions.shrinkRemove})
-                </button>
-                <button
-                  type="button"
-                  disabled={mutation.isPending}
-                  onClick={() => handlePreviewChoice('as_requested')}
-                  className="text-sm text-gray-600 hover:text-gray-900 py-2"
-                >
-                  Asignar {previewModal.requestedCount} igual
+                  Cancelar
                 </button>
               </div>
             </div>
@@ -454,12 +457,13 @@ export default function Assignments() {
               id: string
               name: string
               email: string
+              assignedCompanies?: number
               _count: { assignments: number; callLogs: number }
             }) => (
               <div
                 key={a.id}
                 className="card p-5 cursor-pointer hover:shadow-md hover:border-blue-200 transition-all"
-                onClick={() => { setDrawerAgentId(a.id); setExpandedBatches({}); setBatchSearch({}) }}
+                onClick={() => { setDrawerAgentId(a.id); setExpandedRuns({}) }}
               >
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-9 h-9 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold text-sm">
@@ -472,8 +476,8 @@ export default function Assignments() {
                 </div>
                 <div className="flex gap-4 text-sm">
                   <div>
-                    <p className="text-xl font-bold text-gray-900">{a._count.assignments}</p>
-                    <p className="text-xs text-gray-500">Asignados</p>
+                    <p className="text-xl font-bold text-gray-900">{a.assignedCompanies ?? 0}</p>
+                    <p className="text-xs text-gray-500">Empresas</p>
                   </div>
                   <div>
                     <p className="text-xl font-bold text-gray-900">{a._count.callLogs}</p>
@@ -496,6 +500,7 @@ export default function Assignments() {
       {drawerAgentId && (() => {
         const agent = agents.find((a: { id: string }) => a.id === drawerAgentId) as {
           id: string; name: string; email: string
+          assignedCompanies?: number
           _count: { assignments: number; callLogs: number }
         } | undefined
         return (
@@ -509,141 +514,141 @@ export default function Assignments() {
             {/* Panel */}
             <div className="fixed right-0 top-0 h-full w-full max-w-2xl bg-white shadow-2xl z-50 flex flex-col">
               {/* Header */}
-              <div className="flex items-center justify-between p-5 border-b bg-gray-50">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold">
-                    {agent?.name.charAt(0) ?? '?'}
+              <div className="p-5 border-b bg-gray-50 space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold shrink-0">
+                      {agent?.name.charAt(0) ?? '?'}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-900 truncate">{agent?.name}</p>
+                      <p className="text-xs text-gray-500 truncate">{agent?.email}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-semibold text-gray-900">{agent?.name}</p>
-                    <p className="text-xs text-gray-500">{agent?.email}</p>
-                  </div>
+                  <button
+                    onClick={() => setDrawerAgentId(null)}
+                    className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 shrink-0"
+                    aria-label="Cerrar"
+                  >
+                    <X size={20} />
+                  </button>
                 </div>
                 <div className="flex items-center gap-6 text-center">
                   <div>
-                    <p className="text-xl font-bold text-gray-900">{agent?._count.assignments ?? 0}</p>
-                    <p className="text-xs text-gray-500">Asignados</p>
+                    <p className="text-xl font-bold text-gray-900">{agent?.assignedCompanies ?? 0}</p>
+                    <p className="text-xs text-gray-500">Empresas</p>
+                  </div>
+                  <div>
+                    <p className="text-xl font-bold text-gray-900">{drawerRuns.length}</p>
+                    <p className="text-xs text-gray-500">Asignaciones</p>
                   </div>
                   <div>
                     <p className="text-xl font-bold text-gray-900">{agent?._count.callLogs ?? 0}</p>
                     <p className="text-xs text-gray-500">Llamadas</p>
                   </div>
-                  <div>
-                    <p className="text-xl font-bold text-gray-900">{drawerBatches.length}</p>
-                    <p className="text-xs text-gray-500">Lotes</p>
-                  </div>
-                  <button
-                    onClick={() => setDrawerAgentId(null)}
-                    className="p-2 rounded-lg hover:bg-gray-200 text-gray-500"
-                  >
-                    <X size={20} />
-                  </button>
                 </div>
               </div>
 
               {/* Body */}
-              <div className="flex-1 overflow-y-auto p-5 space-y-3">
-                {loadingDrawer && (
-                  <p className="text-center text-gray-400 py-12">Cargando lotes...</p>
-                )}
-                {!loadingDrawer && drawerBatches.length === 0 && (
-                  <div className="text-center text-gray-400 py-12">
-                    <Package size={36} className="mx-auto mb-2" />
-                    <p>Este agente no tiene contactos asignados</p>
+              <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                  <History size={16} className="text-blue-500" />
+                  Historial de asignaciones
+                </h3>
+
+                {drawerRunsSummary && (
+                  <div className="sticky top-0 z-10 -mx-5 px-5 py-2.5 bg-white/95 backdrop-blur border-b border-gray-100 text-sm text-gray-600">
+                    <strong className="text-gray-900">{drawerRunsSummary.totalCompanies}</strong> empresas en{' '}
+                    <strong className="text-gray-900">{drawerRunsSummary.assignmentCount}</strong> asignaciones desde{' '}
+                    <strong className="text-gray-900">{drawerRunsSummary.fileCount}</strong>{' '}
+                    {drawerRunsSummary.fileCount === 1 ? 'archivo' : 'archivos'}
                   </div>
                 )}
-                {drawerBatches.map((batch, idx) => {
-                  const isOpen = expandedBatches[batch.id] ?? idx === 0
-                  const search = (batchSearch[batch.id] ?? '').toLowerCase()
-                  const filtered = search
-                    ? batch.contacts.filter(
-                        (c) =>
-                          c.name.toLowerCase().includes(search) ||
-                          c.phone.toLowerCase().includes(search) ||
-                          c.companyName.toLowerCase().includes(search)
-                      )
-                    : batch.contacts
 
-                  // Status counts
-                  const statusCounts: Record<string, number> = {}
-                  batch.contacts.forEach((c) => {
-                    statusCounts[c.status] = (statusCounts[c.status] ?? 0) + 1
-                  })
+                {loadingDrawerRuns && (
+                  <p className="text-center text-gray-400 py-12">Cargando historial...</p>
+                )}
+                {!loadingDrawerRuns && drawerRuns.length === 0 && (
+                  <div className="text-center text-gray-400 py-12">
+                    <History size={36} className="mx-auto mb-2" />
+                    <p>Este agente no tiene asignaciones registradas</p>
+                    <p className="text-xs mt-1">Las asignaciones anteriores al historial no aparecen aquí</p>
+                  </div>
+                )}
+
+                {drawerRuns.map((run) => {
+                  const isOpen = expandedRuns[run.id] ?? false
+                  const companies = runCompanies[run.id] ?? []
+                  const loadingCompanies = loadingRunCompanies[run.id] ?? false
 
                   return (
-                    <div key={batch.id} className="border border-gray-200 rounded-xl overflow-hidden">
-                      {/* Batch header — clickable to expand */}
+                    <div key={run.id} className="border border-gray-200 rounded-xl overflow-hidden">
                       <button
                         className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
-                        onClick={() => toggleBatch(batch.id)}
+                        onClick={() => toggleRun(run.id)}
                       >
                         <div className="flex items-center gap-3 min-w-0">
-                          <Package size={16} className="text-blue-500 shrink-0" />
+                          <History size={16} className="text-blue-500 shrink-0" />
                           <div className="min-w-0">
-                            <p className="font-medium text-sm text-gray-900 truncate">
-                              {batch.filename}
+                            <p className="text-base font-bold text-gray-900">
+                              {run.companyCount} empresa{run.companyCount !== 1 ? 's' : ''}
                             </p>
-                            <p className="text-xs text-gray-500">
-                              {format(new Date(batch.createdAt), "d 'de' MMMM yyyy", { locale: es })}
-                              {' · '}{batch.contacts.length} contactos
+                            <p className="text-sm text-gray-600 mt-0.5">
+                              {format(new Date(run.assignedAt), "d MMM yyyy, HH:mm", { locale: es })}
                             </p>
+                            <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-gray-200/80 text-xs text-gray-700 truncate max-w-full">
+                                {run.filename ?? 'Todas las importaciones'}
+                              </span>
+                              <span className="text-xs text-gray-400">
+                                Por {run.assignedBy.name}
+                              </span>
+                            </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0 ml-3">
-                          {/* Mini status pills */}
-                          {Object.entries(statusCounts).map(([s, n]) => (
-                            <span
-                              key={s}
-                              className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_CONFIG[s]?.classes ?? 'bg-gray-100 text-gray-600'}`}
-                            >
-                              {STATUS_CONFIG[s]?.label ?? s} {n}
-                            </span>
-                          ))}
-                          {isOpen ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+                        <div className="shrink-0 ml-3">
+                          {isOpen ? (
+                            <ChevronDown size={16} className="text-gray-400" />
+                          ) : (
+                            <ChevronRight size={16} className="text-gray-400" />
+                          )}
                         </div>
                       </button>
 
-                      {/* Contact list */}
                       {isOpen && (
-                        <div>
-                          {batch.contacts.length > 6 && (
-                            <div className="px-4 py-2 border-b border-gray-100">
-                              <input
-                                type="text"
-                                placeholder="Buscar nombre o teléfono..."
-                                className="input py-1.5 text-sm"
-                                value={batchSearch[batch.id] ?? ''}
-                                onChange={(e) =>
-                                  setBatchSearch((prev) => ({ ...prev, [batch.id]: e.target.value }))
-                                }
-                              />
+                        <div className="border-t border-gray-100">
+                          {loadingCompanies && (
+                            <p className="text-center text-gray-400 py-6 text-sm">Cargando empresas...</p>
+                          )}
+                          {!loadingCompanies && companies.length === 0 && (
+                            <p className="text-center text-gray-400 py-6 text-sm">Sin empresas en esta asignación</p>
+                          )}
+                          {!loadingCompanies && companies.length > 0 && (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-sm">
+                                <thead>
+                                  <tr className="border-b border-gray-100 bg-gray-50/80 text-left text-xs text-gray-500 uppercase tracking-wide">
+                                    <th className="px-4 py-2 font-medium">RUC</th>
+                                    <th className="px-4 py-2 font-medium">Razón social</th>
+                                    <th className="px-4 py-2 font-medium">Estado</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                  {companies.map((company) => (
+                                    <tr key={company.id} className="hover:bg-gray-50">
+                                      <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{company.ruc}</td>
+                                      <td className="px-4 py-2 text-gray-900 truncate max-w-[200px]">
+                                        {company.razonSocial || '—'}
+                                      </td>
+                                      <td className="px-4 py-2">
+                                        <StatusBadge status={company.status} />
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
                             </div>
                           )}
-                          <div className="divide-y divide-gray-100">
-                            {filtered.slice(0, 100).map((c) => (
-                              <div key={c.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-gray-50 text-sm">
-                                <div className="min-w-0">
-                                  <p className="font-medium text-gray-800 truncate">{c.name}</p>
-                                  <p className="text-xs text-gray-500">{c.phone}</p>
-                                  <p className="text-xs text-gray-400 truncate">{c.companyName}</p>
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0 ml-2">
-                                  {c._count.callLogs > 0 && (
-                                    <span className="text-xs text-gray-400">{c._count.callLogs} llamada{c._count.callLogs !== 1 ? 's' : ''}</span>
-                                  )}
-                                  <StatusBadge status={c.status} />
-                                </div>
-                              </div>
-                            ))}
-                            {filtered.length === 0 && (
-                              <p className="text-center text-gray-400 py-6 text-sm">Sin resultados</p>
-                            )}
-                            {filtered.length > 100 && (
-                              <p className="text-center text-xs text-gray-400 py-2">
-                                Mostrando 100 de {filtered.length}. Usa el buscador para filtrar.
-                              </p>
-                            )}
-                          </div>
                         </div>
                       )}
                     </div>

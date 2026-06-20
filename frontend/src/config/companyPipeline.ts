@@ -27,3 +27,61 @@ export const AGENT_PIPELINE_FUNNEL = SALES_FUNNEL_STAGES.map((stage) => {
     fullLabel: stage.label,
   }
 })
+
+/** Cola de trabajo only — excludes OTROS (shown in detail). */
+export const AGENT_PIPELINE_QUEUE = AGENT_PIPELINE_OPERATIONAL.filter((row) => row.key !== 'OTROS')
+
+export function sumFunnelStages(pipeline: Record<string, number | undefined>): number {
+  return AGENT_PIPELINE_FUNNEL.reduce((sum, row) => sum + (pipeline[row.key] ?? 0), 0)
+}
+
+export function sumPipelineBarSegments(
+  pipeline: Record<string, number | undefined>,
+  total: number
+): Array<{ key: string; pct: number }> {
+  if (total <= 0) return []
+  const keys = [
+    'PENDING',
+    'VOLVER_A_LLAMAR',
+    ...AGENT_PIPELINE_FUNNEL.map((row) => row.key),
+    'OTROS',
+  ]
+  return keys
+    .map((key) => ({ key, pct: ((pipeline[key] ?? 0) / total) * 100 }))
+    .filter((s) => s.pct > 0)
+}
+
+export const PIPELINE_FILTER_OPERATIONAL = [
+  { value: '', label: 'Todos' },
+  { value: 'PENDING', label: 'Pendientes' },
+  { value: 'VOLVER_A_LLAMAR', label: 'Volver a llamar' },
+  { value: 'OTROS', label: 'Otros' },
+  { value: 'FUNNEL', label: 'En embudo comercial' },
+] as const
+
+export const VALID_PIPELINE_FILTERS = new Set([
+  'PENDING',
+  'VOLVER_A_LLAMAR',
+  'OTROS',
+  'FUNNEL',
+  ...SALES_FUNNEL_STAGES.map((stage) => stage.code),
+])
+
+export function getPipelineFilterLabel(filter: string): string | undefined {
+  return (
+    PIPELINE_FILTER_OPERATIONAL.find((f) => f.value === filter)?.label ??
+    AGENT_PIPELINE_FUNNEL.find((f) => f.key === filter)?.label
+  )
+}
+
+export function buildPipelineClientsUrl(
+  filter: string,
+  opts?: { agentId?: string; from?: 'reports' | 'dashboard' }
+): string {
+  const params = new URLSearchParams()
+  if (filter) params.set('filter', filter)
+  if (opts?.agentId) params.set('agentId', opts.agentId)
+  if (opts?.from) params.set('from', opts.from)
+  const query = params.toString()
+  return `/clients${query ? `?${query}` : ''}`
+}

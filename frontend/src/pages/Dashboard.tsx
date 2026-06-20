@@ -1,14 +1,17 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { getDashboardStats, getAgentStats, getMyBatches } from '../api/client'
+import { getDashboardStats, getMyBatches } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
-import { Users, Phone, CalendarClock, Calendar, PhoneCall, Layers, RefreshCw } from 'lucide-react'
+import { Users, Phone, CalendarClock, Calendar, PhoneCall, Layers, RefreshCw, ArrowRight } from 'lucide-react'
 import { DispositionBadge } from '../components/StatusBadge'
-import { StatusHelpPopover } from '../components/StatusHelpPopover'
-import { isStatusHelpKey } from '../config/statusHelp'
 import { DISPOSITION_BAR_COLORS } from '../config/responseOptions'
-import { AGENT_PIPELINE_FUNNEL, AGENT_PIPELINE_OPERATIONAL } from '../config/companyPipeline'
+import {
+  AGENT_PIPELINE_FUNNEL,
+  AGENT_PIPELINE_OPERATIONAL,
+  AGENT_PIPELINE_QUEUE,
+  buildPipelineClientsUrl,
+} from '../config/companyPipeline'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -39,25 +42,6 @@ function StatCard({
   )
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  PENDING: 'Pendiente',
-  IN_PROGRESS: 'En progreso',
-  INTERESTED: 'Interesado',
-  CONVERTED: 'Convertido',
-  NOT_INTERESTED: 'No interesado',
-  DO_NOT_CALL: 'No llamar',
-}
-
-const COMPANY_STATUS_EXCLUDE = new Set(['NOT_INTERESTED', 'DO_NOT_CALL'])
-
-function sumDispositions(map: Record<string, number>, codes: string[]): number {
-  return codes.reduce((sum, code) => sum + (map[code] ?? 0), 0)
-}
-
-const INTERESTED_DISP_CODES = ['INTERESADO', 'PROPUESTA_PRESENTADA', 'DISCUSION_PROPUESTA', 'ESPERA_RESPUESTA', 'VENTA_CERRADA', 'INTERESTED']
-const NO_ANSWER_DISP_CODES = ['NO_CONTESTA', 'NO_ANSWER']
-const CALLBACK_DISP_CODES = ['VOLVER_A_LLAMAR', 'CALLBACK']
-
 export default function Dashboard() {
   const { isAdmin, user } = useAuth()
   const navigate = useNavigate()
@@ -72,6 +56,13 @@ export default function Dashboard() {
     navigate(`/my-leads?${query}`)
   }
 
+  const goToClientsFilter = (filter: string) => {
+    navigate(buildPipelineClientsUrl(filter, { from: 'dashboard' }))
+  }
+
+  const onPipelineFilter = isAdmin ? goToClientsFilter : goToMyLeadsFilter
+  const pipelineListLabel = isAdmin ? 'Clientes' : 'Mis Clientes'
+
   const { data: myBatches } = useQuery({
     queryKey: ['my-batches'],
     queryFn: getMyBatches,
@@ -83,17 +74,10 @@ export default function Dashboard() {
     queryFn: () => getDashboardStats(selectedBatchId),
   })
 
-  const { data: agentStats, isFetching: isFetchingAgents, refetch: refetchAgents } = useQuery({
-    queryKey: ['dashboard', 'agents-stats'],
-    queryFn: getAgentStats,
-    enabled: isAdmin,
-  })
-
-  const isRefreshing = isFetchingStats || (isAdmin && isFetchingAgents)
+  const isRefreshing = isFetchingStats
 
   const handleRefresh = () => {
     refetchStats()
-    if (isAdmin) refetchAgents()
   }
 
   if (isLoading) {
@@ -173,12 +157,39 @@ export default function Dashboard() {
 
       {/* Stat cards */}
       {isAdmin ? (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard label="Total clientes" value={stats?.totalClients ?? 0} icon={Users} color="bg-blue-600" />
-          <StatCard label="Agentes activos" value={stats?.totalAgents ?? 0} icon={PhoneCall} color="bg-indigo-600" />
-          <StatCard label="Llamadas realizadas" value={stats?.totalCalls ?? 0} icon={Phone} color="bg-green-600" />
-          <StatCard label="Callbacks pendientes" value={stats?.pendingCallbacks ?? 0} icon={CalendarClock} color="bg-amber-500" />
-        </div>
+        (() => {
+          const pipeline = stats?.companyPipeline
+          const assignedCompanies = stats?.assignedCompanies ?? 0
+          const pendingCount = pipeline?.PENDING ?? 0
+          const companyContactPct =
+            assignedCompanies > 0
+              ? Math.round(((assignedCompanies - pendingCount) / assignedCompanies) * 100)
+              : (stats?.companyContactRate ?? 0)
+
+          return (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <StatCard
+                label="Empresas asignadas"
+                value={assignedCompanies}
+                subtitle={
+                  stats?.assignedContacts != null
+                    ? `${stats.assignedContacts} contactos`
+                    : undefined
+                }
+                icon={Users}
+                color="bg-blue-600"
+              />
+              <StatCard
+                label="Tasa contacto empresas"
+                value={`${companyContactPct}%`}
+                icon={Phone}
+                color="bg-emerald-600"
+              />
+              <StatCard label="Agentes activos" value={stats?.totalAgents ?? 0} icon={PhoneCall} color="bg-indigo-600" />
+              <StatCard label="Callbacks pendientes" value={stats?.pendingCallbacks ?? 0} icon={CalendarClock} color="bg-amber-500" />
+            </div>
+          )
+        })()
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
@@ -199,155 +210,113 @@ export default function Dashboard() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {isAdmin ? (
-          <>
-            {/* Record status breakdown (primary) */}
-            <div className="card p-6 overflow-visible">
-              <h2 className="font-semibold text-gray-900 mb-1">Estado de registros</h2>
-              <p className="text-xs text-gray-400 mb-4">Por contacto (cada fila del Excel)</p>
-              <div className="space-y-3">
-                {Object.entries(stats?.contactsByStatus ?? {}).map(([status, count]) => (
-                  <div key={status} className="flex items-center justify-between group/row">
-                    <div className="text-sm text-gray-600 flex items-center gap-1">
-                      {STATUS_LABELS[status] ?? status}
-                      {isStatusHelpKey(status) && <StatusHelpPopover helpKey={status} />}
-                    </div>
-                    <span className="text-sm font-semibold text-gray-900">{count as number}</span>
-                  </div>
-                ))}
-                {Object.keys(stats?.contactsByStatus ?? {}).length === 0 && (
-                  <p className="text-sm text-gray-400 text-center py-4">Sin datos todavía</p>
-                )}
-              </div>
-            </div>
+        {(() => {
+          const pipeline = stats?.companyPipeline
+          const totalCompanies = stats?.assignedCompanies ?? 0
+          const pendingCount = pipeline?.PENDING ?? 0
+          const withResponse = totalCompanies - pendingCount
+          const otrosRow = AGENT_PIPELINE_OPERATIONAL.find((row) => row.key === 'OTROS')
+          const queueRows = [
+            ...AGENT_PIPELINE_QUEUE,
+            ...((pipeline?.OTROS ?? 0) > 0 && otrosRow ? [otrosRow] : []),
+          ]
 
-            {/* Company status breakdown (supplementary) */}
-            <div className="card p-6 overflow-visible">
+          return (
+            <div className="card p-6 overflow-visible lg:col-span-2">
               <h2 className="font-semibold text-gray-900 mb-1">Por empresa (RUC)</h2>
-              <p className="text-xs text-gray-400 mb-4">Estado agregado por RUC (derivado de contactos)</p>
-              <div className="space-y-3">
-                {Object.entries(stats?.companiesByStatus ?? stats?.clientsByStatus ?? {})
-                  .filter(([status]) => !COMPANY_STATUS_EXCLUDE.has(status))
-                  .map(([status, count]) => (
-                  <div key={status} className="flex items-center justify-between group/row">
-                    <div className="text-sm text-gray-600 flex items-center gap-1">
-                      {STATUS_LABELS[status] ?? status}
-                      {isStatusHelpKey(status) && <StatusHelpPopover helpKey={status} companyLevel />}
-                    </div>
-                    <span className="text-sm font-semibold text-gray-500">{count as number}</span>
-                  </div>
-                ))}
-                {Object.entries(stats?.companiesByStatus ?? stats?.clientsByStatus ?? {})
-                  .filter(([status]) => !COMPANY_STATUS_EXCLUDE.has(status)).length === 0 && (
-                  <p className="text-sm text-gray-400 text-center py-4">Sin datos todavía</p>
-                )}
-              </div>
-            </div>
-          </>
-        ) : (
-          (() => {
-            const pipeline = stats?.companyPipeline
-            const totalCompanies = stats?.assignedCompanies ?? 0
-            const pendingCount = pipeline?.PENDING ?? 0
-            const withResponse = totalCompanies - pendingCount
-
-            return (
-              <div className="card p-6 overflow-visible lg:col-span-2">
-                <h2 className="font-semibold text-gray-900 mb-1">Por empresa (RUC)</h2>
-                <p className="text-xs text-gray-500 mb-5">
-                  {pipeline ? (
-                    <>
-                      <span className="font-medium text-gray-700">{totalCompanies} empresas</span>
-                      <span className="text-gray-300 mx-1.5">·</span>
-                      <span>{pendingCount} pendientes</span>
-                      <span className="text-gray-300 mx-1.5">·</span>
-                      <span>{withResponse} con respuesta</span>
-                    </>
-                  ) : (
-                    'Última respuesta registrada por el agente por empresa'
-                  )}
-                </p>
-
+              <p className="text-xs text-gray-500 mb-5">
                 {pipeline ? (
-                  <div className="grid grid-cols-1 md:grid-cols-[minmax(0,35%)_minmax(0,65%)] gap-6 md:gap-0">
-                    <div className="md:pr-6 md:border-r md:border-gray-200">
-                      <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
-                        Cola de trabajo
-                      </h3>
-                      <div className="space-y-2">
-                        {AGENT_PIPELINE_OPERATIONAL.filter(
-                          (row) => row.key !== 'OTROS' || (pipeline.OTROS ?? 0) > 0
-                        ).map((row) => {
-                          const count = pipeline[row.key] ?? 0
-                          return (
-                            <button
-                              key={row.key}
-                              type="button"
-                              onClick={() => goToMyLeadsFilter(row.key)}
-                              title={`Ver ${row.label.toLowerCase()} en Mis Clientes`}
-                              className={`w-full flex items-center justify-between rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${row.bgClass}`}
-                            >
-                              <div className="text-sm text-gray-700 text-left">
-                                {row.label}
-                                {'aclaracion' in row && (
-                                  <span className="ml-1.5 text-[10px] font-semibold text-gray-400">
-                                    {row.aclaracion}
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-sm font-semibold text-gray-900">{count}</span>
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
+                  <>
+                    <span className="font-medium text-gray-700">{totalCompanies} empresas</span>
+                    <span className="text-gray-300 mx-1.5">·</span>
+                    <span>{pendingCount} pendientes</span>
+                    <span className="text-gray-300 mx-1.5">·</span>
+                    <span>{withResponse} con respuesta</span>
+                  </>
+                ) : isAdmin ? (
+                  'Empresas con al menos un contacto asignado — última respuesta global por RUC'
+                ) : (
+                  'Última respuesta registrada por el agente por empresa'
+                )}
+              </p>
 
-                    <div className="md:pl-6">
-                      <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
-                        Embudo comercial (25%–100%)
-                      </h3>
-                      <div className="space-y-2.5">
-                        {AGENT_PIPELINE_FUNNEL.map((row) => {
-                          const count = pipeline[row.key] ?? 0
-                          return (
-                            <button
-                              key={row.key}
-                              type="button"
-                              onClick={() => goToMyLeadsFilter(row.key)}
-                              title={`Ver ${row.fullLabel.toLowerCase()} en Mis Clientes`}
-                              className="w-full space-y-0.5 cursor-pointer rounded-md px-1 -mx-1 py-0.5 hover:bg-gray-50 transition-colors text-left"
-                            >
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="text-gray-700">
-                                  <span title={row.fullLabel}>{row.shortLabel ?? row.label}</span>
-                                  <span className="text-gray-400"> ({row.aclaracion})</span>
+              {pipeline ? (
+                <div className="grid grid-cols-1 md:grid-cols-[minmax(0,35%)_minmax(0,65%)] gap-6 md:gap-0">
+                  <div className="md:pr-6 md:border-r md:border-gray-200">
+                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
+                      Cola de trabajo
+                    </h3>
+                    <div className="space-y-2">
+                      {queueRows.map((row) => {
+                        const count = pipeline[row.key] ?? 0
+                        return (
+                          <button
+                            key={row.key}
+                            type="button"
+                            onClick={() => onPipelineFilter(row.key)}
+                            title={`Ver ${row.label.toLowerCase()} en ${pipelineListLabel}`}
+                            className={`w-full flex items-center justify-between rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${row.bgClass}`}
+                          >
+                            <div className="text-sm text-gray-700 text-left">
+                              {row.label}
+                              {'aclaracion' in row && (
+                                <span className="ml-1.5 text-[10px] font-semibold text-gray-400">
+                                  {row.aclaracion}
                                 </span>
-                                <span className="font-semibold text-gray-900">{count}</span>
-                              </div>
-                              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                                <div
-                                  className={`h-full rounded-full ${DISPOSITION_BAR_COLORS[row.key] ?? 'bg-green-500'}`}
-                                  style={{
-                                    width: `${totalCompanies > 0 ? (count / totalCompanies) * 100 : 0}%`,
-                                  }}
-                                />
-                              </div>
-                            </button>
-                          )
-                        })}
-                        {AGENT_PIPELINE_FUNNEL.every((row) => (pipeline[row.key] ?? 0) === 0) && (
-                          <p className="text-sm text-gray-400 text-center py-4">Sin avance comercial registrado</p>
-                        )}
-                      </div>
+                              )}
+                            </div>
+                            <span className="text-sm font-semibold text-gray-900">{count}</span>
+                          </button>
+                        )
+                      })}
                     </div>
                   </div>
-                ) : (
-                  <p className="text-sm text-gray-400 text-center py-4">Sin datos todavía</p>
-                )}
-              </div>
-            )
-          })()
-        )}
+
+                  <div className="md:pl-6">
+                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
+                      Embudo comercial (25%–100%)
+                    </h3>
+                    <div className="space-y-2.5">
+                      {AGENT_PIPELINE_FUNNEL.map((row) => {
+                        const count = pipeline[row.key] ?? 0
+                        return (
+                          <button
+                            key={row.key}
+                            type="button"
+                            onClick={() => onPipelineFilter(row.key)}
+                            title={`Ver ${row.fullLabel.toLowerCase()} en ${pipelineListLabel}`}
+                            className="w-full space-y-0.5 cursor-pointer rounded-md px-1 -mx-1 py-0.5 hover:bg-gray-50 transition-colors text-left"
+                          >
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-gray-700">
+                                <span title={row.fullLabel}>{row.shortLabel ?? row.label}</span>
+                                <span className="text-gray-400"> ({row.aclaracion})</span>
+                              </span>
+                              <span className="font-semibold text-gray-900">{count}</span>
+                            </div>
+                            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${DISPOSITION_BAR_COLORS[row.key] ?? 'bg-green-500'}`}
+                                style={{
+                                  width: `${totalCompanies > 0 ? (count / totalCompanies) * 100 : 0}%`,
+                                }}
+                              />
+                            </div>
+                          </button>
+                        )
+                      })}
+                      {AGENT_PIPELINE_FUNNEL.every((row) => (pipeline[row.key] ?? 0) === 0) && (
+                        <p className="text-sm text-gray-400 text-center py-4">Sin avance comercial registrado</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400 text-center py-4">Sin datos todavía</p>
+              )}
+            </div>
+          )
+        })()}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -388,49 +357,16 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Agent performance table (admin only) */}
-      {isAdmin && agentStats && agentStats.length > 0 && (
-        <div className="card p-6">
-          <h2 className="font-semibold text-gray-900 mb-4">Rendimiento por agente</h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="text-left py-2 font-medium text-gray-600">Agente</th>
-                  <th className="text-center py-2 font-medium text-gray-600">Asignados</th>
-                  <th className="text-center py-2 font-medium text-gray-600">Llamadas</th>
-                  <th className="text-center py-2 font-medium text-gray-600">Interesados</th>
-                  <th className="text-center py-2 font-medium text-gray-600">No contesta</th>
-                  <th className="text-center py-2 font-medium text-gray-600">Callbacks</th>
-                </tr>
-              </thead>
-              <tbody>
-                {agentStats.map(
-                  (a: {
-                    id: string
-                    name: string
-                    _count: { assignments: number; callLogs: number; callbacks: number }
-                    dispositions: Record<string, number>
-                  }) => (
-                    <tr key={a.id} className="border-b border-gray-50 hover:bg-gray-50">
-                      <td className="py-3 font-medium text-gray-900">{a.name}</td>
-                      <td className="py-3 text-center text-gray-600">{a._count.assignments}</td>
-                      <td className="py-3 text-center text-gray-600">{a._count.callLogs}</td>
-                      <td className="py-3 text-center text-green-600 font-medium">
-                        {sumDispositions(a.dispositions, INTERESTED_DISP_CODES)}
-                      </td>
-                      <td className="py-3 text-center text-gray-400">
-                        {sumDispositions(a.dispositions, NO_ANSWER_DISP_CODES)}
-                      </td>
-                      <td className="py-3 text-center text-blue-600">
-                        {sumDispositions(a.dispositions, CALLBACK_DISP_CODES)}
-                      </td>
-                    </tr>
-                  )
-                )}
-              </tbody>
-            </table>
-          </div>
+      {isAdmin && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => navigate('/reports')}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline"
+          >
+            Ver reportes y análisis
+            <ArrowRight size={15} />
+          </button>
         </div>
       )}
     </div>

@@ -1,7 +1,11 @@
 import { Router, Response } from 'express'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma'
-import { getUnassignedContactsOrdered, BatchBlockedError } from '../lib/assignmentOrder'
+import {
+  getUnassignedCompaniesOrdered,
+  getContactIdsForCompanies,
+  BatchBlockedError,
+} from '../lib/assignmentOrder'
 import { buildAssignmentPreview } from '../lib/assignmentPreview'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
 
@@ -20,6 +24,16 @@ const previewSchema = z.object({
   batchId: z.string().optional(),
   count: z.number().int().positive().optional(),
 })
+
+async function countDistinctCompanies(contactIds: string[]): Promise<number> {
+  if (contactIds.length === 0) return 0
+  const rows = await prisma.contact.findMany({
+    where: { id: { in: contactIds } },
+    select: { companyId: true },
+    distinct: ['companyId'],
+  })
+  return rows.length
+}
 
 // GET /api/assignments
 router.get('/', requireAdmin, async (_req: AuthRequest, res: Response) => {
@@ -83,24 +97,21 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   if (contactIds && contactIds.length > 0) {
     idsToAssign = contactIds
   } else if (clientIds && clientIds.length > 0) {
-    const contacts = await prisma.contact.findMany({
-      where: { companyId: { in: clientIds } },
-      select: { id: true },
-    })
-    const contactIds = contacts.map((c) => c.id)
+    idsToAssign = await getContactIdsForCompanies(clientIds, batchId)
     const assigned =
-      contactIds.length === 0
+      idsToAssign.length === 0
         ? []
         : await prisma.assignment.findMany({
-            where: { contactId: { in: contactIds } },
+            where: { contactId: { in: idsToAssign } },
             select: { contactId: true },
           })
     const assignedIds = new Set(assigned.map((a) => a.contactId))
-    idsToAssign = contactIds.filter((id) => !assignedIds.has(id))
+    idsToAssign = idsToAssign.filter((id) => !assignedIds.has(id))
   } else {
     try {
-      const unassigned = await getUnassignedContactsOrdered(batchId, count ?? undefined)
-      idsToAssign = unassigned.map((c) => c.id)
+      const companies = await getUnassignedCompaniesOrdered(batchId, count ?? undefined)
+      const companyIds = companies.map((c) => c.id)
+      idsToAssign = await getContactIdsForCompanies(companyIds, batchId)
     } catch (err) {
       if (err instanceof BatchBlockedError) {
         res.status(400).json({ error: err.message })
@@ -111,7 +122,7 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   }
 
   if (idsToAssign.length === 0) {
-    res.status(400).json({ error: 'No hay contactos disponibles para asignar' })
+    res.status(400).json({ error: 'No hay empresas disponibles para asignar' })
     return
   }
 
@@ -140,11 +151,176 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     return
   }
 
-  await prisma.assignment.createMany({
-    data: newIds.map((contactId) => ({ contactId, agentId })),
+  const assignedCompanies = await countDistinctCompanies(newIds)
+
+  const run = await prisma.assignmentRun.create({
+    data: {
+      agentId,
+      importBatchId: batchId ?? null,
+      assignedById: req.user!.id,
+      companyCount: assignedCompanies,
+      contactCount: newIds.length,
+    },
   })
 
-  res.status(201).json({ assigned: newIds.length, skipped: idsToAssign.length - newIds.length })
+  await prisma.assignment.createMany({
+    data: newIds.map((contactId) => ({
+      contactId,
+      agentId,
+      assignmentRunId: run.id,
+    })),
+  })
+
+  res.status(201).json({
+    assignedCompanies,
+    assignedContacts: newIds.length,
+    skipped: idsToAssign.length - newIds.length,
+    runId: run.id,
+  })
+})
+
+// GET /api/assignments/runs
+router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : ''
+  if (!agentId) {
+    res.status(400).json({ error: 'agentId requerido' })
+    return
+  }
+
+  const batchId =
+    typeof req.query.batchId === 'string' && req.query.batchId.length > 0
+      ? req.query.batchId
+      : undefined
+
+  const runs = await prisma.assignmentRun.findMany({
+    where: {
+      agentId,
+      ...(batchId ? { importBatchId: batchId } : {}),
+    },
+    include: {
+      importBatch: { select: { filename: true, displayName: true } },
+      assignedBy: { select: { id: true, name: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  })
+
+  res.json({
+    runs: runs.map((run) => ({
+      id: run.id,
+      assignedAt: run.createdAt.toISOString(),
+      importBatchId: run.importBatchId,
+      filename: run.importBatch
+        ? run.importBatch.displayName?.trim() || run.importBatch.filename
+        : null,
+      companyCount: run.companyCount,
+      contactCount: run.contactCount,
+      assignedBy: run.assignedBy,
+    })),
+  })
+})
+
+// GET /api/assignments/untracked-companies
+router.get('/untracked-companies', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : ''
+  const batchId = typeof req.query.batchId === 'string' ? req.query.batchId : ''
+  if (!agentId || !batchId) {
+    res.status(400).json({ error: 'agentId y batchId requeridos' })
+    return
+  }
+
+  const assignments = await prisma.assignment.findMany({
+    where: {
+      agentId,
+      assignmentRunId: null,
+      contact: { company: { importBatchId: batchId } },
+    },
+    select: {
+      contact: {
+        select: {
+          company: {
+            select: { id: true, ruc: true, razonSocial: true, status: true },
+          },
+        },
+      },
+    },
+  })
+
+  const companyMap = new Map<
+    string,
+    { id: string; ruc: string; razonSocial: string | null; status: string; contactCount: number }
+  >()
+  for (const a of assignments) {
+    const company = a.contact.company
+    const existing = companyMap.get(company.id)
+    if (existing) {
+      existing.contactCount += 1
+    } else {
+      companyMap.set(company.id, {
+        id: company.id,
+        ruc: company.ruc,
+        razonSocial: company.razonSocial,
+        status: company.status,
+        contactCount: 1,
+      })
+    }
+  }
+
+  const companies = [...companyMap.values()].sort((a, b) =>
+    (a.razonSocial ?? a.ruc).localeCompare(b.razonSocial ?? b.ruc, 'es')
+  )
+
+  res.json({ companies })
+})
+
+// GET /api/assignments/runs/:id/companies
+router.get('/runs/:id/companies', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const run = await prisma.assignmentRun.findUnique({
+    where: { id: req.params.id },
+    select: { id: true },
+  })
+  if (!run) {
+    res.status(404).json({ error: 'Asignación no encontrada' })
+    return
+  }
+
+  const assignments = await prisma.assignment.findMany({
+    where: { assignmentRunId: req.params.id },
+    select: {
+      contact: {
+        select: {
+          company: {
+            select: { id: true, ruc: true, razonSocial: true, status: true },
+          },
+        },
+      },
+    },
+  })
+
+  const companyMap = new Map<
+    string,
+    { id: string; ruc: string; razonSocial: string | null; status: string; contactCount: number }
+  >()
+  for (const a of assignments) {
+    const company = a.contact.company
+    const existing = companyMap.get(company.id)
+    if (existing) {
+      existing.contactCount += 1
+    } else {
+      companyMap.set(company.id, {
+        id: company.id,
+        ruc: company.ruc,
+        razonSocial: company.razonSocial,
+        status: company.status,
+        contactCount: 1,
+      })
+    }
+  }
+
+  const companies = [...companyMap.values()].sort((a, b) =>
+    (a.razonSocial ?? a.ruc).localeCompare(b.razonSocial ?? b.ruc, 'es')
+  )
+
+  res.json({ companies })
 })
 
 // DELETE /api/assignments/:id

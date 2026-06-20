@@ -11,6 +11,7 @@ import { parseExcel, parseCsv, ParsedCompany, ParseResult, MissingContactosSheet
 import { requireAdmin, requireAuth, AuthRequest } from '../middleware/auth'
 import { getDispositionLabel } from '../lib/responseOptions'
 import { isSuperAdminOrOwner } from '../lib/userPermissions'
+import { countUnassignedCompanies } from '../lib/assignmentOrder'
 
 function parseFechaConsulta(raw?: string): Date | null {
   if (!raw) return null
@@ -153,9 +154,13 @@ router.get('/', requireAdmin, async (_req: AuthRequest, res: Response) => {
     batches.map(async (batch) => {
       const counts = await getBatchCounts(batch.id)
       const callLogCount = await getBatchCallLogCount(batch.id)
+      const unassignedCompanyCount = batch.blocked
+        ? 0
+        : (await countUnassignedCompanies(batch.id)).companies
       return {
         ...batch,
         ...counts,
+        unassignedCompanyCount,
         hasOriginalFile: batch.storagePath != null,
         hasUpdates: callLogCount > 0,
       }

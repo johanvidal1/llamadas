@@ -10,6 +10,8 @@ import Agents from './pages/Agents'
 import Callbacks from './pages/Callbacks'
 import MyLeads from './pages/MyLeads'
 import Reports from './pages/Reports'
+import BatchReports from './pages/BatchReports'
+import BatchDetail from './pages/BatchDetail'
 import Contacto from './pages/Contacto'
 
 function ProtectedRoute({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
@@ -93,6 +95,22 @@ export default function App() {
             element={
               <ProtectedRoute adminOnly>
                 <Reports />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="reports/lotes"
+            element={
+              <ProtectedRoute adminOnly>
+                <BatchReports />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="reports/lotes/:batchId"
+            element={
+              <ProtectedRoute adminOnly>
+                <BatchDetail />
               </ProtectedRoute>
             }
           />

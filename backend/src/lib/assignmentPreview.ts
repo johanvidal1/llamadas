@@ -1,26 +1,18 @@
 import { prisma } from './prisma'
-import { getUnassignedContactsOrdered } from './assignmentOrder'
+import {
+  getUnassignedCompaniesOrdered,
+  getContactIdsForCompanies,
+} from './assignmentOrder'
 
 export type AssignmentPreviewResult = {
-  requestedCount: number
+  requestedCompanyCount: number
+  companyIds: string[]
   contactIds: string[]
+  assignedCompanies: number
+  assignedContacts: number
   completeBoundary: boolean
-  boundaryCompany: {
-    id: string
-    ruc: string
-    razonSocial: string | null
-    included: number
-    total: number
-    missing: number
-  } | null
-  suggestions: {
-    expandTo: number
-    expandAdd: number
-    shrinkTo: number
-    shrinkRemove: number
-    expandContactIds: string[]
-    shrinkContactIds: string[]
-  } | null
+  boundaryCompany: null
+  suggestions: null
   conflictWarning: {
     hasMixedAgents: boolean
     assignedToOthers: number
@@ -28,33 +20,16 @@ export type AssignmentPreviewResult = {
   } | null
 }
 
-export async function buildAssignmentPreview(
+async function buildConflictWarning(
   agentId: string,
-  batchId?: string,
-  count?: number
-): Promise<AssignmentPreviewResult> {
-  const allOrdered = await getUnassignedContactsOrdered(batchId)
-  const requestedCount = count ?? allOrdered.length
-  const slice = count != null ? allOrdered.slice(0, count) : allOrdered
-
-  if (slice.length === 0) {
-    return {
-      requestedCount,
-      contactIds: [],
-      completeBoundary: true,
-      boundaryCompany: null,
-      suggestions: null,
-      conflictWarning: null,
-    }
-  }
-
-  const lastContact = slice[slice.length - 1]
-  const boundaryCompanyId = lastContact.companyId
-  const k = slice.filter((c) => c.companyId === boundaryCompanyId).length
+  companyIds: string[],
+  batchId?: string
+): Promise<AssignmentPreviewResult['conflictWarning']> {
+  if (companyIds.length === 0) return null
 
   const companyContacts = await prisma.contact.findMany({
     where: {
-      companyId: boundaryCompanyId,
+      companyId: { in: companyIds },
       ...(batchId ? { company: { importBatchId: batchId } } : {}),
     },
     select: {
@@ -67,7 +42,6 @@ export async function buildAssignmentPreview(
     },
   })
 
-  const T = companyContacts.length
   const assignedToOthers = companyContacts.filter(
     (c) => c.assignment && c.assignment.agentId !== agentId
   )
@@ -78,53 +52,51 @@ export async function buildAssignmentPreview(
     }
   }
   const conflictAgents = [...agentMap.values()]
-  const conflictWarning =
-    conflictAgents.length > 0
-      ? {
-          hasMixedAgents: true,
-          assignedToOthers: assignedToOthers.length,
-          agents: conflictAgents,
-        }
-      : null
+  return conflictAgents.length > 0
+    ? {
+        hasMixedAgents: true,
+        assignedToOthers: assignedToOthers.length,
+        agents: conflictAgents,
+      }
+    : null
+}
 
-  const boundaryCompany = {
-    id: lastContact.company.id,
-    ruc: lastContact.company.ruc,
-    razonSocial: lastContact.company.razonSocial,
-    included: k,
-    total: T,
-    missing: T - k,
-  }
+export async function buildAssignmentPreview(
+  agentId: string,
+  batchId?: string,
+  count?: number
+): Promise<AssignmentPreviewResult> {
+  const allOrdered = await getUnassignedCompaniesOrdered(batchId)
+  const requestedCompanyCount = count ?? allOrdered.length
+  const selected = count != null ? allOrdered.slice(0, count) : allOrdered
+  const companyIds = selected.map((c) => c.id)
+  const contactIds = await getContactIdsForCompanies(companyIds, batchId)
 
-  if (k === T) {
+  if (selected.length === 0) {
     return {
-      requestedCount,
-      contactIds: slice.map((c) => c.id),
+      requestedCompanyCount,
+      companyIds: [],
+      contactIds: [],
+      assignedCompanies: 0,
+      assignedContacts: 0,
       completeBoundary: true,
-      boundaryCompany,
+      boundaryCompany: null,
       suggestions: null,
-      conflictWarning,
+      conflictWarning: null,
     }
   }
 
-  const missing = T - k
-  const contactIds = slice.map((c) => c.id)
-  const shrinkContactIds = contactIds.slice(0, contactIds.length - k)
-  const expandContactIds = allOrdered.slice(0, requestedCount + missing).map((c) => c.id)
+  const conflictWarning = await buildConflictWarning(agentId, companyIds, batchId)
 
   return {
-    requestedCount,
+    requestedCompanyCount,
+    companyIds,
     contactIds,
-    completeBoundary: false,
-    boundaryCompany,
-    suggestions: {
-      expandTo: requestedCount + missing,
-      expandAdd: missing,
-      shrinkTo: requestedCount - k,
-      shrinkRemove: k,
-      expandContactIds,
-      shrinkContactIds,
-    },
+    assignedCompanies: selected.length,
+    assignedContacts: contactIds.length,
+    completeBoundary: true,
+    boundaryCompany: null,
+    suggestions: null,
     conflictWarning,
   }
 }

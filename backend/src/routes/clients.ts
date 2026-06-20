@@ -6,8 +6,10 @@ import { getAclaracionForDisposition, isValidDisposition } from '../lib/response
 import {
   dispositionMatchesFilter,
   getLastDispositionByCompanyIds,
+  matchesFunnelFilter,
   pipelineBucketForDisposition,
 } from '../lib/companyDisposition'
+import { countUnassignedCompanies, BatchBlockedError } from '../lib/assignmentOrder'
 
 const router = Router()
 
@@ -39,6 +41,17 @@ function contactCallLogCountForUser(userId: string) {
 function scopedAgentId(role: string, userId: string, agentId?: string): string {
   if (role === 'AGENT') return userId
   return agentId || userId
+}
+
+/** Last-disposition scope: global for ADMIN without agentId (matches Reports pipeline). */
+function dispositionScopeAgentId(
+  role: string,
+  userId: string,
+  agentId?: string
+): string | undefined {
+  if (role === 'AGENT') return userId
+  if (agentId) return agentId
+  return undefined
 }
 
 type CompanyRow = Awaited<ReturnType<typeof fetchCompanies>>[number]
@@ -80,7 +93,7 @@ async function fetchCompanies(
 
 async function enrichWithLastDisposition(
   companies: CompanyRow[],
-  agentUserId: string
+  agentUserId?: string
 ): Promise<
   (CompanyRow & { lastDisposition: string | null; lastAclaracion: string | null })[]
 > {
@@ -124,14 +137,20 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const take = Math.min(Number(limit) || 50, 500)
   const skip = (Math.max(Number(page) || 1, 1) - 1) * take
   const isAgent = req.user!.role === 'AGENT'
-  const agentUserId = scopedAgentId(req.user!.role, req.user!.id, agentId)
-  const agentScopedPending = status === 'PENDING'
-  const agentScopedOtros = disposition === 'OTROS'
+  const callLogAgentId = scopedAgentId(req.user!.role, req.user!.id, agentId)
+  const dispositionAgentId = dispositionScopeAgentId(req.user!.role, req.user!.id, agentId)
+  const filterParam = (req.query as Record<string, string>).filter
+  const effectiveDisposition = disposition || (filterParam && filterParam !== 'PENDING' ? filterParam : undefined)
+  const agentScopedPending = status === 'PENDING' || filterParam === 'PENDING'
+  const agentScopedOtros = effectiveDisposition === 'OTROS'
+  const agentScopedFunnel = effectiveDisposition === 'FUNNEL'
   const agentScopedDisposition =
-    disposition && !agentScopedOtros && isValidDisposition(disposition)
+    effectiveDisposition &&
+    !agentScopedOtros &&
+    !agentScopedFunnel &&
+    isValidDisposition(effectiveDisposition)
 
   if (unassigned === 'true' && !isAgent) {
-    let contactWhere: Record<string, unknown> = { company: { importBatch: { blocked: false } } }
     let sourceRowCount: number | null = null
 
     if (batchId) {
@@ -140,40 +159,30 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
         select: { blocked: true, sourceRowCount: true },
       })
       if (!batch || batch.blocked) {
-        res.json({ clients: [], total: 0, page: Number(page), limit: take })
+        res.json({ clients: [], total: 0, contactCount: 0, page: Number(page), limit: take })
         return
       }
       sourceRowCount = batch.sourceRowCount
-      contactWhere = { company: { importBatchId: batchId } }
     }
 
-    let assignedCount: number
-    if (batchId) {
-      const batchContacts = await prisma.contact.findMany({
-        where: contactWhere,
-        select: { id: true },
+    try {
+      const { companies, contactCount } = await countUnassignedCompanies(batchId || undefined)
+
+      res.json({
+        clients: [],
+        total: companies,
+        contactCount,
+        page: Number(page),
+        limit: take,
+        ...(batchId ? { sourceRowCount } : {}),
       })
-      const batchContactIds = batchContacts.map((c) => c.id)
-      assignedCount =
-        batchContactIds.length === 0
-          ? 0
-          : await prisma.assignment.count({
-              where: { contactId: { in: batchContactIds } },
-            })
-    } else {
-      assignedCount = await prisma.assignment.count()
+    } catch (err) {
+      if (err instanceof BatchBlockedError) {
+        res.json({ clients: [], total: 0, contactCount: 0, page: Number(page), limit: take })
+        return
+      }
+      throw err
     }
-
-    const totalContacts = await prisma.contact.count({ where: contactWhere })
-    const total = totalContacts - assignedCount
-
-    res.json({
-      clients: [],
-      total,
-      page: Number(page),
-      limit: take,
-      ...(batchId ? { sourceRowCount } : {}),
-    })
     return
   }
 
@@ -195,15 +204,18 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     ]
   }
 
-  if (agentScopedDisposition || agentScopedPending || agentScopedOtros) {
-    const allCompanies = await fetchCompanies(where, contactWhere, agentUserId)
-    const enriched = await enrichWithLastDisposition(allCompanies, agentUserId)
+  if (agentScopedDisposition || agentScopedPending || agentScopedOtros || agentScopedFunnel) {
+    const allCompanies = await fetchCompanies(where, contactWhere, callLogAgentId)
+    const enriched = await enrichWithLastDisposition(allCompanies, dispositionAgentId)
     const filtered = enriched.filter((c) => {
       if (agentScopedOtros) {
         return pipelineBucketForDisposition(c.lastDisposition) === 'OTROS'
       }
+      if (agentScopedFunnel) {
+        return matchesFunnelFilter(c.lastDisposition)
+      }
       if (agentScopedDisposition) {
-        return dispositionMatchesFilter(c.lastDisposition, disposition)
+        return dispositionMatchesFilter(c.lastDisposition, effectiveDisposition!)
       }
       return matchesPendingFilter(c)
     })
@@ -214,11 +226,11 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 
   const [companies, total] = await Promise.all([
-    fetchCompanies(where, contactWhere, agentUserId, take, skip),
+    fetchCompanies(where, contactWhere, callLogAgentId, take, skip),
     prisma.company.count({ where }),
   ])
 
-  const clients = await enrichWithLastDisposition(companies, agentUserId)
+  const clients = await enrichWithLastDisposition(companies, dispositionAgentId)
 
   res.json({ clients, total, page: Number(page), limit: take })
 })

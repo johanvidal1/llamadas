@@ -55,7 +55,27 @@ router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     },
     orderBy: { name: 'asc' },
   })
-  res.json(users)
+
+  const assignments = await prisma.assignment.findMany({
+    select: {
+      agentId: true,
+      contact: { select: { companyId: true } },
+    },
+  })
+  const companiesByAgent = new Map<string, Set<string>>()
+  for (const a of assignments) {
+    if (!companiesByAgent.has(a.agentId)) {
+      companiesByAgent.set(a.agentId, new Set())
+    }
+    companiesByAgent.get(a.agentId)!.add(a.contact.companyId)
+  }
+
+  const enriched = users.map((u) => ({
+    ...u,
+    assignedCompanies: companiesByAgent.get(u.id)?.size ?? 0,
+  }))
+
+  res.json(enriched)
 })
 
 // POST /api/users — create user

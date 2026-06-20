@@ -28,9 +28,11 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  imports     ImportBatch[]
-  assignments Assignment[]
-  callLogs    CallLog[]
+  imports              ImportBatch[]
+  assignments          Assignment[]
+  assignmentRunsAsAgent AssignmentRun[] @relation("AssignmentRunAgent")
+  assignmentRunsAssigned AssignmentRun[] @relation("AssignmentRunAssignedBy")
+  callLogs             CallLog[]
   callbacks   Callback[]
   sessions    UserSession[]
 }
@@ -68,8 +70,9 @@ model ImportBatch {
   importedBy    User      @relation(fields: [importedById], references: [id])
   createdAt     DateTime  @default(now())
 
-  companies   Company[]
-  mobileLines MobileLine[]
+  companies      Company[]
+  mobileLines    MobileLine[]
+  assignmentRuns AssignmentRun[]
 }
 
 model Company {
@@ -125,13 +128,32 @@ model Contact {
   callLogs   CallLog[]
 }
 
+model AssignmentRun {
+  id            String       @id @default(cuid())
+  agentId       String
+  agent         User         @relation("AssignmentRunAgent", fields: [agentId], references: [id])
+  importBatchId String?
+  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+  assignedById  String
+  assignedBy    User         @relation("AssignmentRunAssignedBy", fields: [assignedById], references: [id])
+  companyCount  Int
+  contactCount  Int
+  createdAt     DateTime     @default(now())
+  assignments   Assignment[]
+
+  @@index([agentId, createdAt])
+  @@index([importBatchId])
+}
+
 model Assignment {
-  id         String   @id @default(cuid())
-  contactId  String   @unique
-  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  agentId    String
-  agent      User     @relation(fields: [agentId], references: [id])
-  assignedAt DateTime @default(now())
+  id              String         @id @default(cuid())
+  contactId       String         @unique
+  contact         Contact        @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  agentId         String
+  agent           User           @relation(fields: [agentId], references: [id])
+  assignmentRunId String?
+  assignmentRun   AssignmentRun? @relation(fields: [assignmentRunId], references: [id])
+  assignedAt      DateTime       @default(now())
 }
 
 model CallLog {

@@ -24,6 +24,7 @@ import {
   AlignJustify,
   Copy,
   CheckCircle2,
+  X,
 } from 'lucide-react'
 import CallModal from '../components/CallModal'
 import DispositionSelector from '../components/DispositionSelector'
@@ -323,6 +324,7 @@ const VALID_LIST_FILTERS = new Set([
   'PENDING',
   'VOLVER_A_LLAMAR',
   'OTROS',
+  'FUNNEL',
   ...SALES_FUNNEL_STAGES.map((stage) => stage.code),
 ])
 
@@ -344,10 +346,19 @@ const LIST_FILTERS_FUNNEL = SALES_FUNNEL_STAGES.map((stage) => {
 })
 
 function getListFilterLabel(filter: string): string | undefined {
+  if (filter === 'FUNNEL') return 'Embudo comercial'
   return (
     LIST_FILTERS_OPERATIONAL.find((f) => f.value === filter)?.label ??
     LIST_FILTERS_FUNNEL.find((f) => f.value === filter)?.label
   )
+}
+
+function isFunnelAggregate(filter: string): boolean {
+  return filter === 'FUNNEL'
+}
+
+function isFunnelFilter(filter: string): boolean {
+  return SALES_FUNNEL_STAGES.some((stage) => stage.code === filter)
 }
 
 const AGENDADOS_SPLIT_STORAGE_KEY = 'myLeads-agendadosSplitPct'
@@ -372,6 +383,18 @@ function useIsLg() {
   return isLg
 }
 
+function countCompanies(list: ClientSummary[]) {
+  return list.length
+}
+
+function batchMetricsLabel(companyCount: number, contactCount: number) {
+  return `${companyCount} empresas · ${contactCount} contactos`
+}
+
+function batchLabelShort(batch: { filename: string }) {
+  return batch.filename.replace(/\.[^.]+$/, '')
+}
+
 // ─── Main Component ────────────────────────────────────────────────────────────
 
 export default function MyLeads() {
@@ -379,7 +402,7 @@ export default function MyLeads() {
   const navigate = useNavigate()
   const { user, isAdmin } = useAuth()
   const isLg = useIsLg()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const initialFilter = searchParams.get('filter') ?? ''
   const initialBatchId = searchParams.get('batchId') ?? ''
   const deepLinkFilter = VALID_LIST_FILTERS.has(initialFilter) ? initialFilter : ''
@@ -401,7 +424,7 @@ export default function MyLeads() {
 
   // ── List view state
   const [listSearch, setListSearch] = useState('')
-  const [listFilter, setListFilter] = useState(deepLinkFilter)
+  const [listFilter, setListFilter] = useState(deepLinkFilter || 'FUNNEL')
 
   // ── Grid view state
   const [gridSearch, setGridSearch] = useState('')
@@ -1020,7 +1043,32 @@ export default function MyLeads() {
     pendingContactIdxRef.current = null
     needsContactResolveRef.current = true
     setGridPage(1)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (batchId) next.set('batchId', batchId)
+        else next.delete('batchId')
+        return next
+      },
+      { replace: true }
+    )
   }
+
+  const setListFilterWithUrl = useCallback(
+    (filter: string) => {
+      setListFilter(filter)
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          if (filter && filter !== 'FUNNEL') next.set('filter', filter)
+          else next.delete('filter')
+          return next
+        },
+        { replace: true }
+      )
+    },
+    [setSearchParams]
+  )
 
   const goToClientById = (
     clientId: string,
@@ -1287,12 +1335,17 @@ export default function MyLeads() {
               onChange={(e) => switchBatch(e.target.value)}
               className="bg-blue-700 border border-blue-500 text-white text-xs rounded px-2 py-1 focus:outline-none focus:border-blue-300 max-w-[220px] truncate"
             >
-              <option value="">Todos los lotes ({allContactCount} registros)</option>
-              {batches.map((b, i) => (
-                <option key={b.id} value={b.id}>
-                  {i === 0 ? '★ ' : ''}{b.filename.replace(/\.[^.]+$/, '')} ({countContacts(allClients.filter(c => c.importBatch?.id === b.id))} registros)
-                </option>
-              ))}
+              <option value="">
+                Todos los lotes ({batchMetricsLabel(countCompanies(allClients), allContactCount)})
+              </option>
+              {batches.map((b, i) => {
+                const batchClients = allClients.filter((c) => c.importBatch?.id === b.id)
+                return (
+                  <option key={b.id} value={b.id}>
+                    {i === 0 ? '★ ' : ''}{batchLabelShort(b)} ({batchMetricsLabel(countCompanies(batchClients), countContacts(batchClients))})
+                  </option>
+                )
+              })}
             </select>
           )}
 
@@ -1942,6 +1995,31 @@ export default function MyLeads() {
                 onChange={(e) => { setGridSearch(e.target.value); setGridPage(1) }}
               />
             </div>
+            {batches.length > 0 && (
+              <div className="flex flex-col gap-1 shrink-0 w-full sm:w-auto sm:min-w-[160px]">
+                <label htmlFor="grid-batch-filter" className="text-xs text-gray-500 font-medium">
+                  Lote
+                </label>
+                <select
+                  id="grid-batch-filter"
+                  value={selectedBatchId}
+                  onChange={(e) => switchBatch(e.target.value)}
+                  className="input text-sm h-9 py-1.5 w-full"
+                >
+                  <option value="">
+                    Todos los lotes ({batchMetricsLabel(countCompanies(allClients), allContactCount)})
+                  </option>
+                  {batches.map((b, i) => {
+                    const batchClients = allClients.filter((c) => c.importBatch?.id === b.id)
+                    return (
+                      <option key={b.id} value={b.id}>
+                        {i === 0 ? '★ ' : ''}{batchLabelShort(b)} ({batchMetricsLabel(countCompanies(batchClients), countContacts(batchClients))})
+                      </option>
+                    )
+                  })}
+                </select>
+              </div>
+            )}
             <div className="flex gap-2 flex-wrap">
               {GRID_STATUS_FILTERS.map((f) => (
                 <button
@@ -2075,10 +2153,25 @@ export default function MyLeads() {
                 </label>
                 <select
                   id="list-queue-filter"
-                  value={LIST_FILTERS_OPERATIONAL.some((f) => f.value === listFilter) ? listFilter : ''}
-                  onChange={(e) => setListFilter(e.target.value)}
+                  value={
+                    isFunnelFilter(listFilter)
+                      ? '__embudo__'
+                      : isFunnelAggregate(listFilter)
+                      ? ''
+                      : LIST_FILTERS_OPERATIONAL.some((f) => f.value === listFilter)
+                      ? listFilter
+                      : ''
+                  }
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (v === '__embudo__') return
+                    setListFilterWithUrl(v === '' ? 'FUNNEL' : v)
+                  }}
                   className="input text-sm h-9 py-1.5 w-full"
                 >
+                  {isFunnelFilter(listFilter) && (
+                    <option value="__embudo__">Embudo activo</option>
+                  )}
                   {LIST_FILTERS_OPERATIONAL.map((f) => (
                     <option key={f.value || 'all'} value={f.value}>
                       {f.label}
@@ -2086,6 +2179,31 @@ export default function MyLeads() {
                   ))}
                 </select>
               </div>
+              {batches.length > 0 && (
+                <div className="flex flex-col gap-1 shrink-0 w-full sm:w-auto sm:min-w-[160px]">
+                  <label htmlFor="list-batch-filter" className="text-xs text-gray-500 font-medium">
+                    Lote
+                  </label>
+                  <select
+                    id="list-batch-filter"
+                    value={selectedBatchId}
+                    onChange={(e) => switchBatch(e.target.value)}
+                    className="input text-sm h-9 py-1.5 w-full"
+                  >
+                    <option value="">
+                      Todos los lotes ({batchMetricsLabel(countCompanies(allClients), allContactCount)})
+                    </option>
+                    {batches.map((b, i) => {
+                      const batchClients = allClients.filter((c) => c.importBatch?.id === b.id)
+                      return (
+                        <option key={b.id} value={b.id}>
+                          {i === 0 ? '★ ' : ''}{batchLabelShort(b)} ({batchMetricsLabel(countCompanies(batchClients), countContacts(batchClients))})
+                        </option>
+                      )
+                    })}
+                  </select>
+                </div>
+              )}
               <div
                 className="hidden sm:block w-px h-9 bg-gray-300 shrink-0"
                 aria-hidden
@@ -2093,18 +2211,23 @@ export default function MyLeads() {
               <div className="flex flex-wrap gap-2.5 sm:gap-3 w-full sm:w-auto min-w-0 sm:pl-1">
                 {LIST_FILTERS_FUNNEL.map((f) => {
                   const isActive = listFilter === f.value
+                  const funnelMode = isFunnelAggregate(listFilter)
                   const dispClasses = DISPOSITION_COLORS[f.value]
                   return (
                     <button
                       key={f.value}
                       type="button"
                       title={f.fullLabel}
-                      onClick={() => setListFilter(f.value)}
+                      onClick={() => setListFilterWithUrl(isActive ? 'FUNNEL' : f.value)}
                       className={`flex flex-col items-center gap-0.5 px-3 py-1.5 min-w-[5.5rem] text-center rounded-lg text-xs font-medium transition-colors border shrink-0 ${
                         isActive
                           ? dispClasses
                             ? `${dispClasses.split(' border-l-')[0]} border-current ring-2 ring-offset-1 ring-green-500`
                             : 'bg-blue-600 text-white border-blue-600'
+                          : funnelMode
+                          ? dispClasses
+                            ? `${dispClasses.split(' border-l-')[0]} border-current opacity-80`
+                            : 'bg-blue-50 text-blue-700 border-blue-200'
                           : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
                       }`}
                     >
@@ -2118,9 +2241,39 @@ export default function MyLeads() {
                   )
                 })}
               </div>
-              <span className="shrink-0 text-xs text-gray-400 pb-2">
-                {listFiltered.length} registros
-              </span>
+              <div className="flex items-center gap-2 shrink-0 pb-2">
+                {isFunnelFilter(listFilter) ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">
+                    Filtro:{' '}
+                    {LIST_FILTERS_FUNNEL.find((f) => f.value === listFilter)?.shortLabel}
+                    <button
+                      type="button"
+                      onClick={() => setListFilterWithUrl('FUNNEL')}
+                      className="p-0.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
+                      aria-label="Quitar filtro"
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ) : isFunnelAggregate(listFilter) ? (
+                  <span className="text-xs text-gray-400">Embudo comercial</span>
+                ) : listFilter ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">
+                    Filtro: {getListFilterLabel(listFilter)}
+                    <button
+                      type="button"
+                      onClick={() => setListFilterWithUrl('FUNNEL')}
+                      className="p-0.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
+                      aria-label="Quitar filtro"
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ) : null}
+                <span className="text-xs text-gray-400">
+                  {listFiltered.length} empresas
+                </span>
+              </div>
             </div>
 
             {/* Table */}

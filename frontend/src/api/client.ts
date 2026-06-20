@@ -88,6 +88,7 @@ export type AppUser = {
   isSystemOwner?: boolean
   active: boolean
   createdAt?: string
+  assignedCompanies?: number
   _count: {
     assignments: number
     callLogs: number
@@ -105,7 +106,24 @@ export const reactivateUser = (id: string) => updateUser(id, { active: true })
 export const deleteUser = (id: string) => api.delete(`/users/${id}`).then((r) => r.data)
 
 // ─── Imports ──────────────────────────────────────────────
-export const getImports = () => api.get('/imports').then((r) => r.data)
+export type ImportBatch = {
+  id: string
+  filename: string
+  displayName?: string | null
+  fileSizeBytes?: number | null
+  sourceRowCount?: number | null
+  totalRecords: number
+  blocked?: boolean
+  companyCount: number
+  contactCount: number
+  unassignedCompanyCount?: number
+  hasOriginalFile?: boolean
+  hasUpdates?: boolean
+  createdAt: string
+  importedBy: { name: string }
+}
+
+export const getImports = () => api.get<ImportBatch[]>('/imports').then((r) => r.data)
 export const getImport = (id: string) => api.get(`/imports/${id}`).then((r) => r.data)
 export const patchImport = (id: string, data: { blocked: boolean }) =>
   api.patch(`/imports/${id}`, data).then((r) => r.data)
@@ -181,25 +199,14 @@ export const downloadImportOriginal = async (id: string) => {
 export const getAssignments = () => api.get('/assignments').then((r) => r.data)
 
 export type AssignmentPreview = {
-  requestedCount: number
+  requestedCompanyCount: number
+  companyIds: string[]
   contactIds: string[]
+  assignedCompanies: number
+  assignedContacts: number
   completeBoundary: boolean
-  boundaryCompany: {
-    id: string
-    ruc: string
-    razonSocial: string | null
-    included: number
-    total: number
-    missing: number
-  } | null
-  suggestions: {
-    expandTo: number
-    expandAdd: number
-    shrinkTo: number
-    shrinkRemove: number
-    expandContactIds: string[]
-    shrinkContactIds: string[]
-  } | null
+  boundaryCompany: null
+  suggestions: null
   conflictWarning: {
     hasMixedAgents: boolean
     assignedToOthers: number
@@ -214,9 +221,48 @@ export const previewAssignment = (data: {
 }) => api.post<AssignmentPreview>('/assignments/preview', data).then((r) => r.data)
 
 export type AssignmentResult = {
-  assigned: number
+  assignedCompanies: number
+  assignedContacts: number
   skipped: number
+  runId?: string
 }
+
+export type AssignmentRun = {
+  id: string
+  assignedAt: string
+  importBatchId: string | null
+  filename: string | null
+  companyCount: number
+  contactCount: number
+  assignedBy: { id: string; name: string }
+}
+
+export type AssignmentRunCompany = {
+  id: string
+  ruc: string
+  razonSocial: string | null
+  status: string
+  contactCount: number
+}
+
+export const getAssignmentRuns = (agentId: string, batchId?: string) =>
+  api
+    .get<{ runs: AssignmentRun[] }>('/assignments/runs', {
+      params: { agentId, ...(batchId ? { batchId } : {}) },
+    })
+    .then((r) => r.data)
+
+export const getAssignmentRunCompanies = (runId: string) =>
+  api
+    .get<{ companies: AssignmentRunCompany[] }>(`/assignments/runs/${runId}/companies`)
+    .then((r) => r.data)
+
+export const getUntrackedCompanies = (agentId: string, batchId: string) =>
+  api
+    .get<{ companies: AssignmentRunCompany[] }>('/assignments/untracked-companies', {
+      params: { agentId, batchId },
+    })
+    .then((r) => r.data)
 
 export const createAssignment = (data: {
   agentId: string
@@ -246,11 +292,118 @@ export const updateCallback = (id: string, data: object) =>
   api.put(`/callbacks/${id}`, data).then((r) => r.data)
 
 // ─── Dashboard ────────────────────────────────────────────
+export type CompanyPipelineCounts = Record<string, number>
+
+export type DashboardRecentCall = {
+  id: string
+  disposition: string
+  calledAt: string
+  company: { ruc: string; razonSocial?: string }
+  contact?: { nombre: string } | null
+  agent?: { name: string }
+}
+
+/** Shape varies by role; fields are optional where not returned for that role. */
+export type DashboardStats = {
+  totalCalls: number
+  pendingCallbacks: number
+  recentCalls: DashboardRecentCall[]
+  companyPipeline?: CompanyPipelineCounts
+  assignedCompanies?: number
+  assignedContacts?: number
+  // admin
+  totalClients?: number
+  totalContacts?: number
+  totalAgents?: number
+  companyContactRate?: number
+  contactsByStatus?: Record<string, number>
+  companiesByStatus?: Record<string, number>
+  clientsByStatus?: Record<string, number>
+  // agent
+  assignedClients?: number
+  todayCallbacks?: number
+}
+
 export const getDashboardStats = (batchId?: string) =>
-  api.get('/dashboard/stats', { params: batchId ? { batchId } : undefined }).then((r) => r.data)
+  api
+    .get<DashboardStats>('/dashboard/stats', { params: batchId ? { batchId } : undefined })
+    .then((r) => r.data)
 export const getAgentStats = () => api.get('/dashboard/agents-stats').then((r) => r.data)
 export const getReports = (agentId?: string) =>
   api.get('/dashboard/reports', { params: agentId ? { agentId } : undefined }).then((r) => r.data)
+
+export type CallActivityGranularity = 'day' | 'week' | 'month'
+
+export type CallActivityAgentStats = {
+  agentId: string
+  name: string
+  totalCalls: number
+  avgGapMinutes: number | null
+  medianGapMinutes: number | null
+  gapCount: number
+}
+
+export type CallActivityResponse = {
+  series: { period: string; count: number }[]
+  byAgent: CallActivityAgentStats[]
+  totalCalls: number
+  avgGapMinutes: number | null
+  medianGapMinutes: number | null
+  gapCount: number
+  from: string
+  to: string
+  granularity: CallActivityGranularity
+}
+
+export type BatchAssignmentRunMetrics = {
+  id: string
+  isLegacy?: boolean
+  assignedAt: string | null
+  companyCount: number
+  assignedBy: { name: string }
+  callCount: number
+  contactedCompanies: number
+  contactedPct: number
+  inFunnel: number
+  ventaCerrada: number
+}
+
+export type BatchDetail = {
+  id: string
+  filename: string
+  createdAt: string
+  batchTotalCompanies: number
+  assignedCompanies: number
+  assignedToAgentCompanies: number | null
+  unassignedCompanies: number
+  callCount: number
+  contactedCompanies: number
+  contactedPct: number
+  inFunnel: number
+  ventaCerrada: number
+  pendingCompanies: number
+  companyPipeline: Record<string, number>
+  assignmentRuns?: BatchAssignmentRunMetrics[]
+}
+
+export type GetCallActivityParams = {
+  agentId?: string
+  batchId?: string
+  from?: string
+  to?: string
+  granularity?: CallActivityGranularity
+}
+
+export const getCallActivity = (params?: GetCallActivityParams) =>
+  api.get<CallActivityResponse>('/dashboard/call-activity', { params }).then((r) => r.data)
+
+export const getBatchDetail = (batchId: string, agentId?: string) =>
+  api
+    .get<BatchDetail>(`/dashboard/batch/${batchId}`, {
+      params: agentId ? { agentId } : undefined,
+    })
+    .then((r) => r.data)
+
 export const getMyBatches = () => api.get('/dashboard/my-batches').then((r) => r.data)
 
 // ─── Admin ─────────────────────────────────────────────────────────────────────

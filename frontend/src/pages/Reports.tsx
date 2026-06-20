@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, Fragment } from 'react'
+import { useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { getReports, getClients, getCallbacks } from '../api/client'
+import { getReports, getClients, getCallbacks, getAssignmentRunCompanies, getUntrackedCompanies } from '../api/client'
 import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
 import {
-  TrendingUp, Users, Phone, CalendarClock, Target,
+  Users, Phone, CalendarClock, Target,
   Award, AlertCircle, ChevronUp, ChevronDown, Package, Filter, X, RefreshCw, ChevronRight,
 } from 'lucide-react'
 import { StatusBadge } from '../components/StatusBadge'
@@ -16,34 +17,59 @@ import {
   getDispositionLabel,
   getResponseOption,
 } from '../config/responseOptions'
-import { AGENT_PIPELINE_FUNNEL, AGENT_PIPELINE_OPERATIONAL } from '../config/companyPipeline'
+import {
+  AGENT_PIPELINE_FUNNEL,
+  AGENT_PIPELINE_QUEUE,
+  buildPipelineClientsUrl,
+  sumFunnelStages,
+  sumPipelineBarSegments,
+} from '../config/companyPipeline'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface AgentPerf {
   id: string; name: string
-  assigned: number; calledClients: number; totalCalls: number
+  assigned: number; assignedCompanies: number
+  calledClients: number; totalCalls: number
+  companiesWithResponse: number; companiesInFunnel: number
   interested: number; converted: number; notInterested: number
   interestedRecords: number; convertedRecords: number; notInterestedRecords: number; pendingRecords: number
   interestedCompanies: number; convertedCompanies: number; notInterestedCompanies: number; pendingCompanies: number
-  contactRate: number; conversionRate: number; avgCallsPerClient: number
+  contactRate: number; companyContactRate: number
+  conversionRate: number; avgCallsPerClient: number
   pendingCallbacks: number; overdueCallbacks: number
 }
 interface DayCount { date: string; count: number }
 interface DispCount { disposition: string; count: number }
+interface BatchAssignmentRun {
+  id: string
+  isLegacy?: boolean
+  assignedAt: string | null
+  companyCount: number
+  assignedBy: { name: string }
+  callCount: number
+  contactedCompanies: number
+  contactedPct: number
+  inFunnel: number
+  ventaCerrada: number
+}
 interface BatchProgress {
-  id: string; filename: string; createdAt: string; totalRecords: number; totalCompanies: number
-  pending: number; inProgress: number; interested: number; interestedContactCount: number
-  converted: number; notInterested: number; doNotCall: number; contacted: number; callCount: number
-  pendingRecords: number; inProgressRecords: number; interestedRecords: number
-  convertedRecords: number; notInterestedRecords: number; doNotCallRecords: number; contactedRecords: number
+  id: string; filename: string; createdAt: string
+  batchTotalCompanies: number
+  assignedCompanies: number
+  assignedToAgentCompanies: number | null
+  unassignedCompanies: number
+  callCount: number
+  contactedCompanies: number; contactedPct: number
+  inFunnel: number; ventaCerrada: number; pendingCompanies: number
+  companyPipeline: Record<string, number>
+  assignmentRuns?: BatchAssignmentRun[]
 }
 interface FunnelSlice {
   total: number; assigned: number; pending: number; inProgress: number
   interested: number; converted: number; notInterested: number; doNotCall: number
 }
 interface Funnel {
-  records: FunnelSlice
   companies: FunnelSlice
 }
 interface ReportsData {
@@ -66,12 +92,90 @@ function Bar({ pct, color = 'bg-blue-500' }: { pct: number; color?: string }) {
   )
 }
 
-function StatCard({ label, value, sub, color = 'text-gray-900', icon: Icon, statusHelpKey, companyLevel }: {
-  label: string; value: string | number; sub?: string; color?: string; icon?: React.ElementType
-  statusHelpKey?: StatusHelpKey; companyLevel?: boolean
+function RunCompanyDetail({
+  runId,
+  expanded,
+  isLegacy,
+  agentId,
+  batchId,
+}: {
+  runId: string
+  expanded: boolean
+  isLegacy?: boolean
+  agentId?: string
+  batchId?: string
 }) {
+  const { data, isLoading } = useQuery({
+    queryKey: isLegacy
+      ? ['untrackedCompanies', agentId, batchId]
+      : ['assignmentRunCompanies', runId],
+    queryFn: () =>
+      isLegacy
+        ? getUntrackedCompanies(agentId!, batchId!)
+        : getAssignmentRunCompanies(runId),
+    enabled: expanded && (!isLegacy || (!!agentId && !!batchId)),
+    staleTime: 60_000,
+  })
+
+  if (isLoading) {
+    return (
+      <tr className="bg-gray-50/60">
+        <td colSpan={10} className="px-4 py-2 pl-14 text-xs text-gray-400">
+          Cargando empresas...
+        </td>
+      </tr>
+    )
+  }
+
+  const companies = data?.companies ?? []
+  if (companies.length === 0) {
+    return (
+      <tr className="bg-gray-50/60">
+        <td colSpan={10} className="px-4 py-2 pl-14 text-xs text-gray-400">
+          Sin empresas en esta asignación
+        </td>
+      </tr>
+    )
+  }
+
   return (
-    <div className="card p-4 flex items-start gap-3 overflow-visible">
+    <tr className="bg-gray-50/60">
+      <td colSpan={10} className="px-4 py-2 pl-14">
+        <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-gray-50 border-b border-gray-100">
+              <tr>
+                <th className="text-left px-3 py-1.5 font-medium text-gray-500">RUC</th>
+                <th className="text-left px-3 py-1.5 font-medium text-gray-500">Razón social</th>
+                <th className="text-left px-3 py-1.5 font-medium text-gray-500">Estado</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {companies.map((company) => (
+                <tr key={company.id} className="hover:bg-gray-50">
+                  <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{company.ruc}</td>
+                  <td className="px-3 py-1.5 text-gray-900 truncate max-w-[200px]">
+                    {company.razonSocial || '—'}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <StatusBadge status={company.status} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </td>
+    </tr>
+  )
+}
+
+function StatCard({ label, value, sub, color = 'text-gray-900', icon: Icon, statusHelpKey, companyLevel, onClick }: {
+  label: string; value: string | number; sub?: string; color?: string; icon?: React.ElementType
+  statusHelpKey?: StatusHelpKey; companyLevel?: boolean; onClick?: () => void
+}) {
+  const content = (
+    <>
       {Icon && <div className="w-9 h-9 bg-gray-100 rounded-lg flex items-center justify-center shrink-0"><Icon size={17} className="text-gray-600" /></div>}
       <div className="min-w-0">
         <p className={`text-2xl font-bold ${color}`}>{value}</p>
@@ -81,6 +185,29 @@ function StatCard({ label, value, sub, color = 'text-gray-900', icon: Icon, stat
         </div>
         {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
       </div>
+    </>
+  )
+  if (onClick) {
+    return (
+      <div
+        role="link"
+        tabIndex={0}
+        onClick={onClick}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onClick()
+          }
+        }}
+        className="card p-4 flex items-start gap-3 overflow-visible w-full text-left cursor-pointer hover:bg-gray-50 transition-colors"
+      >
+        {content}
+      </div>
+    )
+  }
+  return (
+    <div className="card p-4 flex items-start gap-3 overflow-visible">
+      {content}
     </div>
   )
 }
@@ -92,7 +219,7 @@ type MetricKey = 'contactRate' | 'conversionRate' | 'avgCallsPerClient' | 'inter
 interface DrillDown { agentId: string; agentName: string; metric: MetricKey }
 
 const METRIC_LABELS: Record<MetricKey, string> = {
-  contactRate: 'Tasa de contacto',
+  contactRate: 'Tasa de contacto (empresas)',
   conversionRate: 'Tasa de conversión',
   avgCallsPerClient: 'Llamadas por registro',
   interested: 'Registros interesados',
@@ -288,9 +415,28 @@ function useSortedAgents(agents: AgentPerf[]) {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Reports() {
+  const navigate = useNavigate()
   const [filterAgentId, setFilterAgentId] = useState('')
   const [drillDown, setDrillDown] = useState<DrillDown | null>(null)
   const [showStatusDetail, setShowStatusDetail] = useState(false)
+  const [expandedBatches, setExpandedBatches] = useState<Record<string, boolean>>({})
+  const [expandedRuns, setExpandedRuns] = useState<Record<string, boolean>>({})
+
+  const toggleBatchExpand = (batchId: string) => {
+    setExpandedBatches((prev) => ({ ...prev, [batchId]: !prev[batchId] }))
+  }
+
+  const toggleRunExpand = (runId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setExpandedRuns((prev) => ({ ...prev, [runId]: !prev[runId] }))
+  }
+
+  const goToClientsFilter = (filter: string) => {
+    navigate(buildPipelineClientsUrl(filter, {
+      agentId: filterAgentId || undefined,
+      from: 'reports',
+    }))
+  }
 
   const drill = (agentId: string, agentName: string, metric: MetricKey) =>
     setDrillDown({ agentId, agentName, metric })
@@ -331,10 +477,8 @@ export default function Reports() {
 
   const agents = allData?.agentPerformance ?? []
 
-  const { funnel, callsByDay, dispositionBreakdown, batchProgress, companyPipeline, assignedCompanies } = data
-  const records = funnel.records
+  const { funnel, dispositionBreakdown, batchProgress, companyPipeline, assignedCompanies } = data
   const companies = funnel.companies
-  const maxDay = Math.max(...callsByDay.map((d) => d.count), 1)
   const totalDisp = dispositionBreakdown.reduce((s, d) => s + d.count, 0)
   const pipelineTotal = assignedCompanies ?? 0
   const pipelinePending = companyPipeline?.PENDING ?? 0
@@ -353,12 +497,18 @@ export default function Reports() {
         count: d.count,
       })),
   ].filter((d) => d.count > 0)
-  const contactedPct = records.total > 0
-    ? Math.round((records.inProgress + records.interested + records.converted + records.notInterested + records.doNotCall) / records.total * 100)
+  const funnelCompanies = sumFunnelStages(companyPipeline ?? {})
+  const otrosCompanies = companyPipeline?.OTROS ?? 0
+  const ventaCerrada = companyPipeline?.VENTA_CERRADA ?? 0
+  const volverALlamar = companyPipeline?.VOLVER_A_LLAMAR ?? 0
+  const companyContactPct = pipelineTotal > 0
+    ? Math.round((pipelineWithResponse / pipelineTotal) * 100)
     : 0
-  const interestedPct = records.total > 0
-    ? Math.round((records.interested + records.converted) / records.total * 100)
-    : 0
+  const pipelineBarSegments = sumPipelineBarSegments(companyPipeline ?? {}, pipelineTotal)
+  const pipelineBarColor = (key: string) =>
+    key === 'PENDING' ? 'bg-gray-300'
+      : key === 'OTROS' ? 'bg-slate-400'
+        : (DISPOSITION_BAR_COLORS[key] ?? 'bg-gray-400')
 
   const SortIcon = ({ k }: { k: SortKey }) =>
     sortBy === k
@@ -436,16 +586,17 @@ export default function Reports() {
                   Cola de trabajo
                 </h3>
                 <div className="space-y-2">
-                  {AGENT_PIPELINE_OPERATIONAL.filter(
-                    (row) => row.key !== 'OTROS' || (companyPipeline.OTROS ?? 0) > 0
-                  ).map((row) => {
+                  {AGENT_PIPELINE_QUEUE.map((row) => {
                     const count = companyPipeline[row.key] ?? 0
                     return (
-                      <div
+                      <button
                         key={row.key}
-                        className={`flex items-center justify-between rounded-lg border px-3 py-2.5 ${row.bgClass}`}
+                        type="button"
+                        onClick={() => goToClientsFilter(row.key)}
+                        title={`Ver ${row.label.toLowerCase()} en Clientes`}
+                        className={`w-full flex items-center justify-between rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${row.bgClass}`}
                       >
-                        <div className="text-sm text-gray-700">
+                        <div className="text-sm text-gray-700 text-left">
                           {row.label}
                           {'aclaracion' in row && (
                             <span className="ml-1.5 text-[10px] font-semibold text-gray-400">
@@ -454,7 +605,7 @@ export default function Reports() {
                           )}
                         </div>
                         <span className="text-sm font-semibold text-gray-900">{count}</span>
-                      </div>
+                      </button>
                     )
                   })}
                 </div>
@@ -468,7 +619,13 @@ export default function Reports() {
                   {AGENT_PIPELINE_FUNNEL.map((row) => {
                     const count = companyPipeline[row.key] ?? 0
                     return (
-                      <div key={row.key} className="space-y-0.5">
+                      <button
+                        key={row.key}
+                        type="button"
+                        onClick={() => goToClientsFilter(row.key)}
+                        title={`Ver ${row.fullLabel.toLowerCase()} en Clientes`}
+                        className="w-full space-y-0.5 cursor-pointer rounded-md px-1 -mx-1 py-0.5 hover:bg-gray-50 transition-colors text-left"
+                      >
                         <div className="flex items-center justify-between text-xs">
                           <span className="text-gray-700">
                             <span title={row.fullLabel}>{row.shortLabel ?? row.label}</span>
@@ -484,7 +641,7 @@ export default function Reports() {
                             }}
                           />
                         </div>
-                      </div>
+                      </button>
                     )
                   })}
                   {AGENT_PIPELINE_FUNNEL.every((row) => (companyPipeline[row.key] ?? 0) === 0) && (
@@ -499,33 +656,35 @@ export default function Reports() {
         </div>
       </section>
 
-      {/* ── Funnel (records primary) ── */}
+      {/* ── Company KPI row ── */}
       <section>
-        <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Embudo de campaña — Registros</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 overflow-visible">
-          <StatCard label="Total registros" value={records.total} icon={Users} />
-          <StatCard label="Asignados" value={records.assigned} icon={UserCheck2} color="text-blue-700" sub="contactos" />
-          <StatCard label="Pendientes" value={records.pending} color="text-gray-600" statusHelpKey="PENDING" />
-          <StatCard label="En progreso" value={records.inProgress} color="text-blue-600" statusHelpKey="IN_PROGRESS" />
-          <StatCard label="Interesados" value={records.interested} color="text-green-600" icon={Target} statusHelpKey="INTERESTED" />
-          <StatCard label="Convertidos" value={records.converted} color="text-emerald-700" icon={Award} statusHelpKey="CONVERTED" />
-          <StatCard label="No interesados" value={records.notInterested} color="text-red-500" statusHelpKey="NOT_INTERESTED" />
+        <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Resumen por empresa (RUC)</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 overflow-visible">
+          <StatCard label="Total empresas" value={pipelineTotal} icon={Users} sub="empresas" />
+          <StatCard label="Pendientes" value={pipelinePending} color="text-gray-600" sub="empresas" statusHelpKey="PENDING" companyLevel onClick={() => goToClientsFilter('PENDING')} />
+          <StatCard label="Volver a llamar" value={volverALlamar} color="text-blue-600" sub="empresas" onClick={() => goToClientsFilter('VOLVER_A_LLAMAR')} />
+          <StatCard label="En embudo comercial" value={funnelCompanies} color="text-green-600" icon={Target} sub="empresas" onClick={() => goToClientsFilter('FUNNEL')} />
+          <StatCard label="Venta cerrada" value={ventaCerrada} color="text-emerald-700" icon={Award} sub="empresas" onClick={() => goToClientsFilter('VENTA_CERRADA')} />
+          <StatCard label="Otros" value={otrosCompanies} color="text-slate-600" sub="empresas" onClick={() => goToClientsFilter('OTROS')} />
         </div>
         <div className="card p-4 mt-3 space-y-2">
           <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-            <span>Tasa de contacto (registros)</span><span className="font-bold text-blue-700">{contactedPct}%</span>
+            <span>Tasa de contacto (empresas)</span>
+            <span className="font-bold text-blue-700">{companyContactPct}%</span>
           </div>
           <div className="h-3 bg-gray-100 rounded-full overflow-hidden flex">
-            {[
-              { pct: records.interested / (records.total || 1) * 100, cls: 'bg-green-500' },
-              { pct: records.converted / (records.total || 1) * 100, cls: 'bg-emerald-600' },
-              { pct: records.inProgress / (records.total || 1) * 100, cls: 'bg-blue-400' },
-              { pct: records.notInterested / (records.total || 1) * 100, cls: 'bg-red-300' },
-              { pct: records.doNotCall / (records.total || 1) * 100, cls: 'bg-red-600' },
-            ].map((s, i) => (
-              <div key={i} className={`h-full ${s.cls} transition-all`} style={{ width: `${s.pct}%` }} />
+            {pipelineBarSegments.map((s) => (
+              <div
+                key={s.key}
+                className={`h-full transition-all ${pipelineBarColor(s.key)}`}
+                style={{ width: `${s.pct}%` }}
+                title={`${s.key}: ${Math.round(s.pct)}%`}
+              />
             ))}
           </div>
+          <p className="text-[10px] text-gray-400">
+            {pipelineWithResponse} de {pipelineTotal} empresas con al menos una respuesta registrada
+          </p>
         </div>
 
         <button
@@ -537,20 +696,54 @@ export default function Reports() {
             size={14}
             className={`transition-transform ${showStatusDetail ? 'rotate-90' : ''}`}
           />
-          Detalle por status de contacto
+          Detalle y otras respuestas
         </button>
         {showStatusDetail && (
-          <>
-            <p className="text-xs text-gray-400 -mt-2 mb-3">Estado agregado por RUC (derivado de contactos)</p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 overflow-visible">
-              <StatCard label="Total empresas" value={companies.total} sub="RUC" />
-              <StatCard label="Asignadas" value={companies.assigned} color="text-blue-700" sub="empresas" />
-              <StatCard label="Pendientes" value={companies.pending} color="text-gray-500" sub="empresas" statusHelpKey="PENDING" companyLevel />
-              <StatCard label="En progreso" value={companies.inProgress} color="text-blue-500" sub="empresas" statusHelpKey="IN_PROGRESS" companyLevel />
-              <StatCard label="Interesados" value={companies.interested} color="text-green-600" sub="empresas" statusHelpKey="INTERESTED" companyLevel />
-              <StatCard label="Convertidos" value={companies.converted} color="text-emerald-600" sub="empresas" statusHelpKey="CONVERTED" companyLevel />
+          <div className="space-y-5">
+            <div>
+              <h3 className="text-xs font-semibold text-gray-600 mb-2">
+                Otros ({otrosCompanies} empresas)
+              </h3>
+              <div className="card p-4 space-y-2.5">
+                {zeroProgressBreakdown.length > 0 ? (
+                  zeroProgressBreakdown
+                    .sort((a, b) => b.count - a.count)
+                    .map((d) => (
+                      <div key={d.disposition} className="space-y-0.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-gray-700">{d.label}</span>
+                          <span className="font-semibold text-gray-900">
+                            {d.count}{' '}
+                            <span className="text-gray-400 font-normal">
+                              ({totalDisp > 0 ? Math.round(d.count / totalDisp * 100) : 0}%)
+                            </span>
+                          </span>
+                        </div>
+                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${DISPOSITION_BAR_COLORS[d.disposition] ?? 'bg-gray-400'}`}
+                            style={{ width: `${totalDisp > 0 ? (d.count / totalDisp) * 100 : 0}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))
+                ) : (
+                  <p className="text-sm text-gray-400 text-center py-2">Sin desglose de respuestas 0%</p>
+                )}
+              </div>
             </div>
-          </>
+
+            <div>
+              <p className="text-xs text-gray-400 mb-3">Estado legacy por RUC (derivado de contactos)</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 overflow-visible">
+                <StatCard label="En progreso" value={companies.inProgress} color="text-blue-500" sub="empresas" statusHelpKey="IN_PROGRESS" companyLevel />
+                <StatCard label="Interesados" value={companies.interested} color="text-green-600" sub="empresas" statusHelpKey="INTERESTED" companyLevel />
+                <StatCard label="Convertidos" value={companies.converted} color="text-emerald-600" sub="empresas" statusHelpKey="CONVERTED" companyLevel />
+                <StatCard label="No interesados" value={companies.notInterested} color="text-red-500" sub="empresas" statusHelpKey="NOT_INTERESTED" companyLevel />
+                <StatCard label="No llamar" value={companies.doNotCall} color="text-red-700" sub="empresas" />
+              </div>
+            </div>
+          </div>
         )}
       </section>
 
@@ -563,15 +756,14 @@ export default function Reports() {
               <tr>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Agente</th>
                 {[
-                  { k: 'assigned' as SortKey, l: 'Asignados' },
-                  { k: 'calledClients' as SortKey, l: 'Contactados' },
-                  { k: 'totalCalls' as SortKey, l: 'Llamadas' },
-                  { k: 'contactRate' as SortKey, l: 'Tasa contacto' },
-                  { k: 'conversionRate' as SortKey, l: 'Tasa conversión' },
-                  { k: 'avgCallsPerClient' as SortKey, l: 'Llamadas/reg.' },
-                  { k: 'interestedRecords' as SortKey, l: 'Int. reg.' },
+                  { k: 'assignedCompanies' as SortKey, l: 'Emp. asign.' },
+                  { k: 'companiesWithResponse' as SortKey, l: 'Con resp.' },
+                  { k: 'companyContactRate' as SortKey, l: 'Tasa contacto' },
+                  { k: 'companiesInFunnel' as SortKey, l: 'En embudo' },
                   { k: 'interestedCompanies' as SortKey, l: 'Int. emp.' },
-                  { k: 'pendingRecords' as SortKey, l: 'Pend. reg.' },
+                  { k: 'pendingCompanies' as SortKey, l: 'Pend. emp.' },
+                  { k: 'totalCalls' as SortKey, l: 'Llamadas' },
+                  { k: 'conversionRate' as SortKey, l: 'Tasa conv.' },
                   { k: 'overdueCallbacks' as SortKey, l: 'Callbacks venc.' },
                 ].map(({ k, l }) => (
                   <th key={k} className="px-3 py-3 font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none" onClick={() => toggle(k)}>
@@ -592,24 +784,31 @@ export default function Reports() {
                       {idx === 0 && <Award size={13} className="text-amber-500" aria-label="Mejor conversión" />}
                     </div>
                   </td>
-                  <td className="px-3 py-3 text-right text-gray-700">{a.assigned}</td>
                   <td className="px-3 py-3 text-right">
-                    <div className="flex flex-col items-end gap-1">
-                      <span className="text-gray-700">{a.calledClients}</span>
-                      <Bar pct={a.assigned > 0 ? (a.calledClients / a.assigned) * 100 : 0} color="bg-blue-400" />
-                    </div>
+                    <span className="text-gray-900 font-medium">{a.assignedCompanies}</span>
+                    <span className="text-gray-400 text-xs block leading-none" title="Contactos asignados">{a.assigned} cont.</span>
                   </td>
-                  <td className="px-3 py-3 text-right text-gray-700">{a.totalCalls}</td>
+                  <td className="px-3 py-3 text-right text-gray-700">{a.companiesWithResponse}</td>
                   <td
                     className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors group"
                     onClick={() => drill(a.id, a.name, 'contactRate')}
-                    title="Ver detalle de registros contactados"
+                    title="Ver detalle de empresas contactadas"
                   >
-                    <span className={`text-sm font-semibold group-hover:underline ${a.contactRate >= 70 ? 'text-green-700' : a.contactRate >= 40 ? 'text-amber-600' : 'text-red-500'}`}>
-                      {a.contactRate}%
+                    <span className={`text-sm font-semibold group-hover:underline ${a.companyContactRate >= 70 ? 'text-green-700' : a.companyContactRate >= 40 ? 'text-amber-600' : 'text-red-500'}`}>
+                      {a.companyContactRate}%
                     </span>
-                    <Bar pct={a.contactRate} color={a.contactRate >= 70 ? 'bg-green-500' : a.contactRate >= 40 ? 'bg-amber-400' : 'bg-red-400'} />
+                    <Bar pct={a.companyContactRate} color={a.companyContactRate >= 70 ? 'bg-green-500' : a.companyContactRate >= 40 ? 'bg-amber-400' : 'bg-red-400'} />
                   </td>
+                  <td className="px-3 py-3 text-right text-green-700 font-medium">{a.companiesInFunnel}</td>
+                  <td
+                    className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors group"
+                    onClick={() => drill(a.id, a.name, 'interested')}
+                    title="Ver empresas interesadas"
+                  >
+                    <span className="text-green-700 font-semibold group-hover:underline">{a.interestedCompanies}</span>
+                  </td>
+                  <td className="px-3 py-3 text-right text-gray-500">{a.pendingCompanies}</td>
+                  <td className="px-3 py-3 text-right text-gray-700">{a.totalCalls}</td>
                   <td
                     className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors group"
                     onClick={() => drill(a.id, a.name, 'conversionRate')}
@@ -619,31 +818,6 @@ export default function Reports() {
                       {a.conversionRate}%
                     </span>
                     <Bar pct={a.conversionRate * 3} color={a.conversionRate >= 20 ? 'bg-green-500' : a.conversionRate >= 10 ? 'bg-amber-400' : 'bg-red-400'} />
-                  </td>
-                  <td
-                    className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors group"
-                    onClick={() => drill(a.id, a.name, 'avgCallsPerClient')}
-                    title="Ver registros por nº de llamadas"
-                  >
-                    <span className="text-gray-700 group-hover:underline">{a.avgCallsPerClient}</span>
-                  </td>
-                  <td
-                    className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors group"
-                    onClick={() => drill(a.id, a.name, 'interested')}
-                    title="Ver registros interesados"
-                  >
-                    <div className="flex flex-col items-end gap-1">
-                      <span className="text-green-700 font-semibold group-hover:underline">{a.interestedRecords}</span>
-                      <Bar pct={a.assigned > 0 ? (a.interestedRecords / a.assigned) * 100 : 0} color="bg-green-500" />
-                    </div>
-                  </td>
-                  <td className="px-3 py-3 text-right text-green-600 text-xs">
-                    {a.interestedCompanies}
-                    <span className="text-gray-400 block leading-none">emp.</span>
-                  </td>
-                  <td className="px-3 py-3 text-right text-gray-500 text-xs">
-                    {a.pendingRecords}
-                    <span className="text-gray-400 block leading-none">reg.</span>
                   </td>
                   <td
                     className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors"
@@ -657,7 +831,7 @@ export default function Reports() {
                 </tr>
               ))}
               {sortedAgents.length === 0 && (
-                <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-400 text-sm">Sin datos de agentes</td></tr>
+                <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-400 text-sm">Sin datos de agentes</td></tr>
               )}
             </tbody>
           </table>
@@ -666,127 +840,171 @@ export default function Reports() {
 
       {drillDown && <DrillDownDrawer drill={drillDown} onClose={() => setDrillDown(null)} />}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <section>
-          <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
-            <span className="flex items-center gap-2"><TrendingUp size={14} />Llamadas últimos 30 días</span>
-          </h2>
-          <div className="card p-4">
-            <div className="flex items-end gap-0.5 h-28">
-              {callsByDay.slice(-14).map((d) => (
-                <div key={d.date} className="flex-1 flex flex-col items-center gap-0.5 group" title={`${d.date}: ${d.count} llamadas`}>
-                  <span className="text-[9px] text-gray-400 opacity-0 group-hover:opacity-100 whitespace-nowrap">{d.count}</span>
-                  <div
-                    className="w-full bg-blue-500 rounded-t hover:bg-blue-400 transition-colors"
-                    style={{ height: `${d.count > 0 ? Math.max((d.count / maxDay) * 80, 4) : 2}px` }}
-                  />
-                </div>
-              ))}
-            </div>
-            <div className="flex justify-between text-[10px] text-gray-400 mt-1 px-0.5">
-              <span>{callsByDay[callsByDay.length - 14]?.date ? format(new Date(callsByDay[callsByDay.length - 14].date), 'd MMM', { locale: es }) : ''}</span>
-              <span>Hoy</span>
-            </div>
-            <p className="text-xs text-gray-500 mt-2 text-right">
-              Total: <span className="font-semibold text-gray-700">{callsByDay.reduce((s, d) => s + d.count, 0)}</span> llamadas
-            </p>
-          </div>
-        </section>
-
-        <section>
-          <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
-            <span className="flex items-center gap-2"><Phone size={14} />Respuestas 0% y legacy</span>
-          </h2>
-          <div className="card p-4 space-y-2.5">
-            {zeroProgressBreakdown
-              .sort((a, b) => b.count - a.count)
-              .map((d) => (
-                <div key={d.disposition} className="space-y-0.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-gray-700">{d.label}</span>
-                    <span className="font-semibold text-gray-900">{d.count} <span className="text-gray-400 font-normal">({totalDisp > 0 ? Math.round(d.count / totalDisp * 100) : 0}%)</span></span>
-                  </div>
-                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${DISPOSITION_BAR_COLORS[d.disposition] ?? 'bg-gray-400'}`}
-                      style={{ width: `${totalDisp > 0 ? (d.count / totalDisp) * 100 : 0}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
-            {zeroProgressBreakdown.length === 0 && <p className="text-sm text-gray-400 text-center py-4">Sin llamadas registradas</p>}
-          </div>
-        </section>
-      </div>
-
       {/* ── Batch progress ── */}
       <section>
-        <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
-          <span className="flex items-center gap-2"><Package size={14} />Progreso por lote de importación</span>
-        </h2>
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+          <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider">
+            <span className="flex items-center gap-2 flex-wrap">
+              <Package size={14} />
+              Lotes y actividad
+              {filterAgentId && (
+                <span className="font-normal normal-case text-gray-500">
+                  — {agents.find((a) => a.id === filterAgentId)?.name ?? 'agente filtrado'}
+                </span>
+              )}
+            </span>
+          </h2>
+          <Link
+            to={filterAgentId ? `/reports/lotes?agentId=${filterAgentId}` : '/reports/lotes'}
+            title="Ver lotes y actividad"
+            className="text-gray-400 hover:text-blue-600 transition-colors p-1"
+          >
+            <ChevronRight size={18} />
+          </Link>
+        </div>
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
+                <th className="text-left px-4 py-3 font-medium text-gray-600 w-8" />
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Archivo</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Fecha</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600">Registros</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600">Empresas</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600">Asignadas / Total</th>
                 <th className="text-right px-3 py-3 font-medium text-gray-600">Llamadas</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600">Reg. contactados</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600 border-l border-gray-200">Int. reg.</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600">Int. emp.</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600">Conv. reg.</th>
-                <th className="text-right px-3 py-3 font-medium text-gray-600">No int. reg.</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600">Contactadas</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600">En embudo</th>
+                <th className="text-right px-3 py-3 font-medium text-gray-600">Venta cerrada</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600 min-w-[160px]">Progreso</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {batchProgress.map((b) => {
-                const contactedRecordsPct = b.totalRecords > 0 ? (b.contactedRecords / b.totalRecords) * 100 : 0
-                const intRecordsPct = b.totalRecords > 0 ? ((b.interestedRecords + b.convertedRecords) / b.totalRecords) * 100 : 0
+                const assigned = filterAgentId
+                  ? (b.assignedToAgentCompanies ?? 0)
+                  : b.assignedCompanies
+                const runs = b.assignmentRuns ?? []
+                const runCompanyTotal = runs.reduce((sum, r) => sum + r.companyCount, 0)
+                const legacyCount = runs.find((r) => r.isLegacy)?.companyCount ?? 0
+                const trackedTotal = runCompanyTotal - legacyCount
+                const showBreakdownHint = !!filterAgentId && assigned !== runCompanyTotal && runs.length > 0
+                const isExpandable = !!filterAgentId && runs.length >= 1
+                const isExpanded = expandedBatches[b.id] ?? false
+
                 return (
-                  <tr key={b.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium text-gray-900 max-w-[200px] truncate" title={b.filename}>
-                      {b.filename}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-gray-500">
-                      {format(new Date(b.createdAt), "d MMM yyyy", { locale: es })}
-                    </td>
-                    <td className="px-3 py-3 text-right text-gray-700">{b.totalRecords}</td>
-                    <td className="px-3 py-3 text-right text-gray-500">{b.totalCompanies}</td>
-                    <td className="px-3 py-3 text-right">
-                      <span className="text-gray-700 font-medium">{b.callCount}</span>
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      <span className="text-blue-700 font-medium">{b.contactedRecords}</span>
-                      <span className="text-gray-400 text-xs ml-1">({Math.round(contactedRecordsPct)}%)</span>
-                    </td>
-                    <td className="px-3 py-3 text-right border-l border-gray-100">
-                      <span className="text-green-600 font-medium">{b.interestedRecords}</span>
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      <span className="text-green-700 font-medium">{b.interested}</span>
-                      <span className="text-gray-400 text-xs ml-1 block leading-none">empresas</span>
-                    </td>
-                    <td className="px-3 py-3 text-right text-emerald-700 font-medium">{b.convertedRecords}</td>
-                    <td className="px-3 py-3 text-right text-red-500">{b.notInterestedRecords}</td>
-                    <td className="px-4 py-3">
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[10px] text-gray-400">
-                          <span>Registros</span><span>{Math.round(contactedRecordsPct)}%</span>
+                  <Fragment key={b.id}>
+                    <tr
+                      className={`hover:bg-gray-50 ${isExpandable ? 'cursor-pointer' : ''}`}
+                      onClick={isExpandable ? () => toggleBatchExpand(b.id) : undefined}
+                    >
+                      <td className="px-4 py-3 text-gray-400 w-8">
+                        {isExpandable && (
+                          <ChevronRight
+                            size={14}
+                            className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                          />
+                        )}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-gray-900 max-w-[200px] truncate" title={b.filename}>
+                        {b.filename}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-500">
+                        {format(new Date(b.createdAt), 'd MMM yyyy', { locale: es })}
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        <span className="font-bold text-gray-900">{assigned}</span>
+                        <span className="text-gray-400 font-normal"> de </span>
+                        <span className="text-gray-500">{b.batchTotalCompanies}</span>
+                        {!filterAgentId && b.unassignedCompanies > 0 && (
+                          <span className="text-gray-400 text-xs block leading-tight mt-0.5">
+                            {b.unassignedCompanies} sin asignar
+                          </span>
+                        )}
+                        {showBreakdownHint && (
+                          <span className="text-gray-400 text-xs block leading-tight mt-0.5">
+                            Desglose: {trackedTotal} en historial + {legacyCount} anterior
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        <span className="text-gray-700 font-medium">{b.callCount}</span>
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        <span className="text-blue-700 font-medium">{b.contactedCompanies}</span>
+                        <span className="text-gray-400 text-xs ml-1">({b.contactedPct}%)</span>
+                      </td>
+                      <td className="px-3 py-3 text-right text-green-700 font-medium">{b.inFunnel}</td>
+                      <td className="px-3 py-3 text-right text-emerald-700 font-medium">{b.ventaCerrada}</td>
+                      <td className="px-4 py-3">
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] text-gray-400">
+                            <span>Empresas</span><span>{b.contactedPct}%</span>
+                          </div>
+                          <Bar pct={b.contactedPct} color={b.contactedPct >= 70 ? 'bg-green-500' : b.contactedPct >= 40 ? 'bg-amber-400' : 'bg-blue-400'} />
                         </div>
-                        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden flex">
-                          <div className="bg-green-500 h-full" style={{ width: `${intRecordsPct}%` }} />
-                          <div className="bg-blue-400 h-full" style={{ width: `${Math.max(contactedRecordsPct - intRecordsPct, 0)}%` }} />
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
+                      </td>
+                    </tr>
+                    {isExpanded && runs.map((run) => {
+                      const runExpanded = expandedRuns[run.id] ?? false
+                      return (
+                        <Fragment key={run.id}>
+                          <tr
+                            className="bg-gray-50/80 text-xs cursor-pointer hover:bg-gray-100/80"
+                            onClick={(e) => toggleRunExpand(run.id, e)}
+                          >
+                            <td className="px-4 py-2 text-gray-400 w-8">
+                              <ChevronRight
+                                size={12}
+                                className={`transition-transform ${runExpanded ? 'rotate-90' : ''}`}
+                              />
+                            </td>
+                            <td className="px-4 py-2 pl-10 text-gray-600">
+                              {run.isLegacy ? (
+                                'Asignación anterior (sin historial)'
+                              ) : (
+                                <>
+                                  {format(new Date(run.assignedAt!), 'd MMM yyyy, HH:mm', { locale: es })}
+                                  {' · '}
+                                  por {run.assignedBy.name}
+                                </>
+                              )}
+                            </td>
+                            <td className="px-4 py-2" />
+                            <td className="px-3 py-2 text-right">
+                              <span className="font-bold text-gray-700">{run.companyCount}</span>
+                              <span className="text-gray-400 font-normal"> de </span>
+                              <span className="text-gray-500">{b.batchTotalCompanies}</span>
+                            </td>
+                            <td className="px-3 py-2 text-right text-gray-700 font-medium">{run.callCount}</td>
+                            <td className="px-3 py-2 text-right">
+                              <span className="text-blue-700 font-medium">{run.contactedCompanies}</span>
+                              <span className="text-gray-400 ml-1">({run.contactedPct}%)</span>
+                            </td>
+                            <td className="px-3 py-2 text-right text-green-700 font-medium">{run.inFunnel}</td>
+                            <td className="px-3 py-2 text-right text-emerald-700 font-medium">{run.ventaCerrada}</td>
+                            <td className="px-4 py-2">
+                              <Bar
+                                pct={run.contactedPct}
+                                color={run.contactedPct >= 70 ? 'bg-green-500' : run.contactedPct >= 40 ? 'bg-amber-400' : 'bg-blue-400'}
+                              />
+                            </td>
+                          </tr>
+                          {runExpanded && (
+                            <RunCompanyDetail
+                              runId={run.id}
+                              expanded={runExpanded}
+                              isLegacy={run.isLegacy}
+                              agentId={filterAgentId ?? undefined}
+                              batchId={b.id}
+                            />
+                          )}
+                        </Fragment>
+                      )
+                    })}
+                  </Fragment>
                 )
               })}
               {batchProgress.length === 0 && (
-                <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-400 text-sm">Sin lotes importados</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400 text-sm">Sin lotes importados</td></tr>
               )}
             </tbody>
           </table>
@@ -795,5 +1013,3 @@ export default function Reports() {
     </div>
   )
 }
-
-const UserCheck2 = Users

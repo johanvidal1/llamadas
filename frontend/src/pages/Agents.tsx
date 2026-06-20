@@ -30,6 +30,7 @@ import {
   ChevronDown,
   ChevronRight,
 } from 'lucide-react'
+import { PresenceDetailPopover, formatTimeAgo } from '../components/PresenceDetailPopover'
 
 interface FormState {
   name: string
@@ -70,13 +71,6 @@ function isAdminUser(u: AppUser) {
   return u.role === 'ADMIN' || u.isSuperAdmin === true || u.isSystemOwner === true
 }
 
-function formatTimeAgo(iso: string): string {
-  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000)
-  if (mins < 1) return 'ahora'
-  if (mins === 1) return 'hace 1 min'
-  return `hace ${mins} min`
-}
-
 function presenceLabel(status: AgentPresenceStatus): string {
   if (status === 'online') return '🟢 En línea'
   if (status === 'recent') return '🟡 Reciente'
@@ -87,17 +81,6 @@ function presenceBadgeClass(status: AgentPresenceStatus): string {
   if (status === 'online') return 'bg-green-100 text-green-800'
   if (status === 'recent') return 'bg-yellow-100 text-yellow-800'
   return 'bg-gray-100 text-gray-500'
-}
-
-function sessionSummary(session: AgentPresence['sessions'][number]): string {
-  const parts = [
-    session.os ?? 'SO desconocido',
-    session.browser ?? 'Navegador desconocido',
-    session.ipAddress ? `IP ${session.ipAddress}` : null,
-    session.currentRoute ? `Ruta ${session.currentRoute}` : null,
-    formatTimeAgo(session.lastSeenAt),
-  ].filter(Boolean)
-  return parts.join(' · ')
 }
 
 function deleteDisabledReason(u: AppUser) {
@@ -133,12 +116,24 @@ function UserTable({
   presenceByUserId?: Record<string, AgentPresence>
 }) {
   const [expandedPresenceId, setExpandedPresenceId] = useState<string | null>(null)
+  const [presencePopover, setPresencePopover] = useState<{
+    userId: string
+    anchor: HTMLElement
+  } | null>(null)
 
   if (users.length === 0) {
     return <div className="p-8 text-center text-gray-400 text-sm">No hay usuarios en esta sección</div>
   }
 
+  const activePopoverUser = presencePopover
+    ? users.find((u) => u.id === presencePopover.userId)
+    : undefined
+  const activePopoverPresence = presencePopover
+    ? presenceByUserId?.[presencePopover.userId]
+    : undefined
+
   return (
+    <>
     <table className="w-full text-sm">
       <thead className={`border-b border-gray-200 ${muted ? 'bg-gray-50/80' : 'bg-gray-50'}`}>
         <tr>
@@ -215,15 +210,15 @@ function UserTable({
                   ) : (
                     <button
                       type="button"
-                      onClick={() =>
-                        setExpandedPresenceId((prev) => (prev === u.id ? null : u.id))
-                      }
+                      aria-expanded={presencePopover?.userId === u.id}
+                      aria-haspopup="dialog"
+                      onClick={(e) => {
+                        const anchor = e.currentTarget
+                        setPresencePopover((prev) =>
+                          prev?.userId === u.id ? null : { userId: u.id, anchor },
+                        )
+                      }}
                       className={`badge ${presenceBadgeClass(presence?.status ?? 'offline')} cursor-pointer hover:opacity-90`}
-                      title={
-                        presence && presence.sessions.length > 0
-                          ? presence.sessions.map(sessionSummary).join('\n')
-                          : 'Sin sesiones activas'
-                      }
                     >
                       {presenceLabel(presence?.status ?? 'offline')}
                       {presence && presence.sessions.length > 1 && (
@@ -332,6 +327,21 @@ function UserTable({
         })}
       </tbody>
     </table>
+    <PresenceDetailPopover
+      open={presencePopover !== null}
+      anchorEl={presencePopover?.anchor ?? null}
+      presence={activePopoverPresence}
+      onClose={() => setPresencePopover(null)}
+      onExpandDevices={
+        activePopoverUser
+          ? () => {
+              setExpandedPresenceId(activePopoverUser.id)
+              setPresencePopover(null)
+            }
+          : undefined
+      }
+    />
+    </>
   )
 }
 
