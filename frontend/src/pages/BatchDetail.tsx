@@ -15,7 +15,8 @@ import {
   getUntrackedCompanies,
   type CallActivityGranularity,
 } from '../api/client'
-import { StatusBadge } from '../components/StatusBadge'
+import { DispositionBadge } from '../components/StatusBadge'
+import { getResponseOption } from '../config/responseOptions'
 import { CallActivityChart, formatGapMinutes, SMALL_SAMPLE_THRESHOLD } from '../components/CallActivityChart'
 import { buildLotesUrl } from './BatchReports'
 
@@ -84,21 +85,39 @@ function RunCompanyDetail({
               <tr>
                 <th className="text-left px-3 py-1.5 font-medium text-gray-500">RUC</th>
                 <th className="text-left px-3 py-1.5 font-medium text-gray-500">Razón social</th>
-                <th className="text-left px-3 py-1.5 font-medium text-gray-500">Estado</th>
+                <th className="text-left px-3 py-1.5 font-medium text-gray-500">Respuesta</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {companies.map((company) => (
+              {companies.map((company) => {
+                const aclaracion =
+                  company.lastAclaracion ??
+                  (company.lastDisposition
+                    ? getResponseOption(company.lastDisposition)?.aclaracion
+                    : undefined)
+                return (
                 <tr key={company.id} className="hover:bg-gray-50">
                   <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{company.ruc}</td>
                   <td className="px-3 py-1.5 text-gray-900 truncate max-w-[200px]">
                     {company.razonSocial || '—'}
                   </td>
                   <td className="px-3 py-1.5">
-                    <StatusBadge status={company.status} />
+                    {company.lastDisposition ? (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <DispositionBadge disposition={company.lastDisposition} />
+                        {aclaracion ? (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
+                            {aclaracion}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span className="text-gray-300 text-xs">Pendiente</span>
+                    )}
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>

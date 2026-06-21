@@ -18,8 +18,10 @@ import {
   buildLegacyBucketMetrics,
   buildRunMetrics,
   getAssignmentRunCompanyIds,
+  getLastDispositionByCompanyIds,
   getRunActivityDates,
 } from '../lib/companyDisposition'
+import { getAclaracionForDisposition } from '../lib/responseOptions'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
 
 const router = Router()
@@ -86,6 +88,30 @@ function sortCompaniesByImportOrder(companies: RunCompanyRow[]): RunCompanyRow[]
     const tb = new Date(b.createdAt).getTime()
     if (ta !== tb) return ta - tb
     return a.id.localeCompare(b.id)
+  })
+}
+
+async function enrichRunCompaniesWithLastDisposition(
+  companies: RunCompanyRow[],
+  agentId: string
+): Promise<
+  (RunCompanyRow & { lastDisposition: string | null; lastAclaracion: string | null })[]
+> {
+  if (companies.length === 0) return []
+
+  const lastByCompany = await getLastDispositionByCompanyIds(
+    companies.map((c) => c.id),
+    agentId
+  )
+
+  return companies.map((c) => {
+    const last = lastByCompany.get(c.id)
+    const disposition = last?.disposition ?? null
+    return {
+      ...c,
+      lastDisposition: disposition,
+      lastAclaracion: last?.aclaracion ?? getAclaracionForDisposition(disposition ?? '') ?? null,
+    }
   })
 }
 
@@ -473,7 +499,10 @@ router.get('/untracked-companies', requireAdmin, async (req: AuthRequest, res: R
     }
   }
 
-  const companies = sortCompaniesByImportOrder([...companyMap.values()])
+  const companies = await enrichRunCompaniesWithLastDisposition(
+    sortCompaniesByImportOrder([...companyMap.values()]),
+    agentId
+  )
 
   res.json({ companies })
 })
@@ -547,7 +576,7 @@ router.post('/release-legacy', requireAdmin, async (req: AuthRequest, res: Respo
 router.get('/runs/:id/companies', requireAdmin, async (req: AuthRequest, res: Response) => {
   const run = await prisma.assignmentRun.findUnique({
     where: { id: req.params.id },
-    select: { id: true },
+    select: { id: true, agentId: true },
   })
   if (!run) {
     res.status(404).json({ error: 'Asignación no encontrada' })
@@ -585,7 +614,10 @@ router.get('/runs/:id/companies', requireAdmin, async (req: AuthRequest, res: Re
     }
   }
 
-  const companies = sortCompaniesByImportOrder([...companyMap.values()])
+  const companies = await enrichRunCompaniesWithLastDisposition(
+    sortCompaniesByImportOrder([...companyMap.values()]),
+    run.agentId
+  )
 
   res.json({ companies })
 })

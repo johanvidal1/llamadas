@@ -252,6 +252,8 @@ export type AssignmentRunCompany = {
   status: string
   contactCount: number
   createdAt?: string
+  lastDisposition?: string | null
+  lastAclaracion?: string | null
 }
 
 export const getAssignmentRuns = (agentId: string, batchId?: string) =>

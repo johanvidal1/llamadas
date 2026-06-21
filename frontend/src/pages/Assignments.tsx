@@ -23,7 +23,8 @@ import toast from 'react-hot-toast'
 import { UserCheck, Users, AlertCircle, X, ChevronDown, ChevronRight, History, PackageOpen } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { StatusBadge } from '../components/StatusBadge'
+import { DispositionBadge } from '../components/StatusBadge'
+import { getResponseOption } from '../config/responseOptions'
 
 function batchLabel(batch: { displayName?: string | null; filename: string }) {
   return batch.displayName?.trim() || batch.filename
@@ -840,11 +841,17 @@ export default function Assignments() {
                                       <tr className="border-b border-gray-100 bg-gray-50/80 text-left text-xs text-gray-500 uppercase tracking-wide">
                                         <th className="px-4 py-2 font-medium">RUC</th>
                                         <th className="px-4 py-2 font-medium">Razón social</th>
-                                        <th className="px-4 py-2 font-medium">Estado</th>
+                                        <th className="px-4 py-2 font-medium">Respuesta</th>
                                       </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
-                                      {filteredCompanies.map((company) => (
+                                      {filteredCompanies.map((company) => {
+                                        const aclaracion =
+                                          company.lastAclaracion ??
+                                          (company.lastDisposition
+                                            ? getResponseOption(company.lastDisposition)?.aclaracion
+                                            : undefined)
+                                        return (
                                         <tr key={company.id} className="hover:bg-gray-50">
                                           <td className="px-4 py-2 text-gray-600 whitespace-nowrap">
                                             {company.ruc}
@@ -853,10 +860,22 @@ export default function Assignments() {
                                             {company.razonSocial || '—'}
                                           </td>
                                           <td className="px-4 py-2">
-                                            <StatusBadge status={company.status} />
+                                            {company.lastDisposition ? (
+                                              <div className="flex flex-wrap items-center gap-1.5">
+                                                <DispositionBadge disposition={company.lastDisposition} />
+                                                {aclaracion ? (
+                                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
+                                                    {aclaracion}
+                                                  </span>
+                                                ) : null}
+                                              </div>
+                                            ) : (
+                                              <span className="text-gray-300 text-xs">Pendiente</span>
+                                            )}
                                           </td>
                                         </tr>
-                                      ))}
+                                        )
+                                      })}
                                     </tbody>
                                   </table>
                                 </div>
