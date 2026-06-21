@@ -28,7 +28,9 @@ services:
       - key: JWT_SECRET
         generateValue: true   # Render genera un valor seguro automáticamente
       - key: FRONTEND_URL
-        sync: false           # ej. https://llamadas-frontend.onrender.com (coma para varios orígenes)
+        sync: false           # ej. https://crm.tudominio.com o varios orígenes separados por coma
+      - key: CORS_EXTRA_ORIGINS
+        sync: false           # opcional: https://llamadas-frontend.onrender.com durante migración
 
   # ── Frontend (React / Vite → Static Site) ───────────────────────────────────
   - type: web
@@ -42,11 +44,10 @@ services:
       - type: rewrite
         source: /*
         destination: /index.html
-    # CSP via HTTP header (public/_headers is not applied on Render)
-    headers:
-      - path: /*
-        name: Content-Security-Policy
-        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://llamadas-backend.onrender.com; font-src 'self' data:"
+    # CSP: se inyecta en index.html al hacer build desde VITE_API_URL (vite.config.ts).
+    # No dupliques Content-Security-Policy aquí — dos políticas se combinan y bloquean fetch.
     envVars:
       - key: VITE_API_URL
-        sync: false           # Se configura manualmente con la URL del backend
+        sync: false           # ej. https://api.tudominio.com (sin /api al final)
+      - key: VITE_CSP_EXTRA_ORIGINS
+        sync: false           # opcional: https://llamadas-backend.onrender.com durante migración

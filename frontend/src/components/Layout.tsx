@@ -108,69 +108,89 @@ export default function Layout() {
         />
       )}
 
-      {/* Sidebar — overlay drawer on mobile, static on lg+ */}
+      {/* Sidebar — overlay drawer on mobile, icon-only rail on lg+ */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-44 flex flex-col shadow-xl transform transition-transform duration-200 ease-in-out lg:static lg:translate-x-0 lg:z-auto ${sidebarBg} ${
+        className={`fixed inset-y-0 left-0 z-50 w-44 flex flex-col shadow-xl transform transition-transform duration-200 ease-in-out lg:static lg:w-16 lg:translate-x-0 lg:z-auto ${sidebarBg} ${
           menuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
         {/* Logo */}
-        <div className={`px-4 py-5 border-b ${isAdmin ? 'border-green-800 bg-green-950/40' : 'border-blue-800 bg-blue-950/40'}`}>
-          <OptickBrand variant="sidebar" />
+        <div
+          className={`px-4 py-5 border-b lg:px-0 lg:py-4 lg:flex lg:justify-center ${isAdmin ? 'border-green-800 bg-green-950/40' : 'border-blue-800 bg-blue-950/40'}`}
+        >
+          <div className="lg:hidden">
+            <OptickBrand variant="sidebar" />
+          </div>
+          <div className="hidden lg:flex lg:justify-center">
+            <OptickBrand variant="sidebarCompact" />
+          </div>
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto lg:px-2 lg:py-3">
           {navItems.map(({ to, icon: Icon, label, end }) => (
             <NavLink
               key={to}
               to={to}
               end={end}
+              title={label}
+              aria-label={label}
               onClick={closeMenu}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors lg:justify-center lg:gap-0 lg:w-10 lg:h-10 lg:mx-auto lg:px-0 lg:py-0 ${
                   isActive
                     ? isAdmin ? 'bg-green-700 text-white' : 'bg-blue-700 text-white'
                     : isAdmin ? 'text-green-200 hover:bg-green-800 hover:text-white' : 'text-blue-200 hover:bg-blue-800 hover:text-white'
                 }`
               }
             >
-              <Icon size={18} />
-              {label}
+              <Icon size={18} className="shrink-0" />
+              <span className="lg:hidden">{label}</span>
             </NavLink>
           ))}
         </nav>
 
         {/* User info */}
-        <div className={`p-4 border-t ${isAdmin ? 'border-green-800' : 'border-blue-800'}`}>
+        <div className={`p-4 border-t lg:p-2 lg:space-y-2 ${isAdmin ? 'border-green-800' : 'border-blue-800'}`}>
           <Link
             to="/contacto"
             state={{ from: 'app' }}
+            title="Contáctenos"
+            aria-label="Contáctenos"
             onClick={closeMenu}
-            className={`flex items-center gap-2 px-3 py-2 mb-3 rounded-lg text-xs transition-colors ${
+            className={`flex items-center gap-2 px-3 py-2 mb-3 rounded-lg text-xs transition-colors lg:justify-center lg:w-10 lg:h-10 lg:mx-auto lg:px-0 lg:py-0 lg:mb-0 ${
               isAdmin
                 ? 'text-green-300/80 hover:text-white hover:bg-green-800/50'
                 : 'text-blue-300/80 hover:text-white hover:bg-blue-800/50'
             }`}
           >
-            <Mail size={14} />
-            Contáctenos
+            <Mail size={14} className="lg:w-[18px] lg:h-[18px]" />
+            <span className="lg:hidden">Contáctenos</span>
           </Link>
-          <div className="flex items-center gap-3 mb-3">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold ${isAdmin ? 'bg-green-600' : 'bg-blue-600'}`}>
+          <div className="flex items-center gap-3 mb-3 lg:justify-center lg:mb-0">
+            <div
+              className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0 ${isAdmin ? 'bg-green-600' : 'bg-blue-600'}`}
+              title={user?.name}
+              aria-label={user?.name}
+            >
               {user?.name.charAt(0).toUpperCase()}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 lg:hidden">
               <p className="text-white text-sm font-medium truncate">{user?.name}</p>
               <p className={`text-xs ${isAdmin ? 'text-green-300' : 'text-blue-300'}`}>{isAdmin ? 'Administrador' : 'Agente'}</p>
             </div>
           </div>
           <button
+            type="button"
             onClick={handleLogout}
-            className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm transition-colors ${isAdmin ? 'text-green-300 hover:text-white hover:bg-green-800' : 'text-blue-300 hover:text-white hover:bg-blue-800'}`}
+            title="Cerrar sesión"
+            aria-label="Cerrar sesión"
+            className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm transition-colors lg:justify-center lg:w-10 lg:h-10 lg:mx-auto lg:px-0 lg:py-0 ${
+              isAdmin ? 'text-green-300 hover:text-white hover:bg-green-800' : 'text-blue-300 hover:text-white hover:bg-blue-800'
+            }`}
           >
-            <LogOut size={16} />
-            Cerrar sesión
+            <LogOut size={16} className="shrink-0" />
+            <span className="lg:hidden">Cerrar sesión</span>
           </button>
         </div>
       </aside>

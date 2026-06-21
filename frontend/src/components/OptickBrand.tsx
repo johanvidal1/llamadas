@@ -1,5 +1,5 @@
 type OptickBrandProps = {
-  variant: 'sidebar' | 'login' | 'contact'
+  variant: 'sidebar' | 'sidebarCompact' | 'login' | 'contact'
   showSubtitle?: boolean
 }
 
@@ -20,6 +20,16 @@ export default function OptickBrand({ variant, showSubtitle = true }: OptickBran
           <p className="text-slate-400 text-sm sm:text-base mt-2">CRM en la nube</p>
         )}
       </div>
+    )
+  }
+
+  if (variant === 'sidebarCompact') {
+    return (
+      <img
+        src="/logo-optick.png"
+        alt="Optick Cloud"
+        className="w-9 h-9 rounded-lg object-contain shrink-0 bg-white/10 p-0.5"
+      />
     )
   }
 

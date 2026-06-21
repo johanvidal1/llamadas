@@ -26,28 +26,25 @@ function normalizeOrigin(url: string): string {
   return url.trim().replace(/\/+$/, '')
 }
 
-const parsedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
-  .split(',')
-  .map((o) => normalizeOrigin(o))
-  .filter(Boolean)
-
-const allowedOrigins = [...parsedOrigins]
-
-// Safety net on Render when FRONTEND_URL is missing or has a trailing-slash typo.
-const PRODUCTION_FRONTEND_ORIGIN = 'https://llamadas-frontend.onrender.com'
-if (
-  process.env.NODE_ENV === 'production' &&
-  !allowedOrigins.includes(normalizeOrigin(PRODUCTION_FRONTEND_ORIGIN))
-) {
-  allowedOrigins.push(normalizeOrigin(PRODUCTION_FRONTEND_ORIGIN))
+function parseOriginList(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((o) => normalizeOrigin(o))
+    .filter(Boolean)
 }
 
-const localhostOnly = parsedOrigins.every(
+const parsedOrigins = parseOriginList(
+  process.env.FRONTEND_URL || 'http://localhost:5173'
+)
+const extraOrigins = parseOriginList(process.env.CORS_EXTRA_ORIGINS)
+const allowedOrigins = [...new Set([...parsedOrigins, ...extraOrigins])]
+
+const localhostOnly = allowedOrigins.every(
   (o) => o.includes('localhost') || o.includes('127.0.0.1')
 )
 if (process.env.NODE_ENV === 'production' && localhostOnly) {
   console.warn(
-    'FRONTEND_URL should include https://llamadas-frontend.onrender.com'
+    'FRONTEND_URL should list your production frontend origin(s), e.g. https://crm.tudominio.com'
   )
 }
 
