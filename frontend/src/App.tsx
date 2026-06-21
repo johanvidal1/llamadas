@@ -12,6 +12,7 @@ import MyLeads from './pages/MyLeads'
 import Reports from './pages/Reports'
 import BatchReports from './pages/BatchReports'
 import BatchDetail from './pages/BatchDetail'
+import CallHistory from './pages/CallHistory'
 import Contacto from './pages/Contacto'
 
 function ProtectedRoute({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
@@ -54,6 +55,7 @@ export default function App() {
         >
           <Route index element={<Dashboard />} />
           <Route path="callbacks" element={<Callbacks />} />
+          <Route path="calls" element={<CallHistory />} />
           {/* Admin routes */}
           <Route
             path="imports"

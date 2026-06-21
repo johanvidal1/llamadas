@@ -235,6 +235,14 @@ export type AssignmentRun = {
   companyCount: number
   contactCount: number
   assignedBy: { id: string; name: string }
+  status?: 'ACTIVE' | 'PARTIALLY_RELEASED' | 'PAUSED' | 'CLOSED'
+  releasedAt?: string | null
+  isLegacy?: boolean
+  callCount: number
+  contactedCompanies: number
+  pendingCompanies: number
+  firstCallAt: string | null
+  lastCallAt: string | null
 }
 
 export type AssignmentRunCompany = {
@@ -243,6 +251,7 @@ export type AssignmentRunCompany = {
   razonSocial: string | null
   status: string
   contactCount: number
+  createdAt?: string
 }
 
 export const getAssignmentRuns = (agentId: string, batchId?: string) =>
@@ -264,6 +273,51 @@ export const getUntrackedCompanies = (agentId: string, batchId: string) =>
     })
     .then((r) => r.data)
 
+export type ReleasePreview = {
+  run: {
+    id: string | null
+    isLegacy: boolean
+    agentId: string
+    importBatchId: string | null
+    status: string | null
+    companyCount: number
+    contactCount: number
+  }
+  releasableCompanies: AssignmentRunCompany[]
+  retainedCompanies: AssignmentRunCompany[]
+  releasableCount: number
+  retainedCount: number
+  releasableContactCount: number
+  blockedByCallbacks?: number
+}
+
+export type ReleaseResult = {
+  releasedCompanies: number
+  releasedContacts: number
+  retainedCompanies: number
+  status?: string
+}
+
+export const previewReleaseRun = (runId: string) =>
+  api
+    .post<ReleasePreview>(`/assignments/runs/${runId}/release-preview`)
+    .then((r) => r.data)
+
+export const releaseRunRemainder = (runId: string, reason?: string) =>
+  api
+    .post<ReleaseResult>(`/assignments/runs/${runId}/release-remainder`, { reason })
+    .then((r) => r.data)
+
+export const previewReleaseLegacy = (agentId: string, batchId: string) =>
+  api
+    .post<ReleasePreview>('/assignments/release-legacy-preview', { agentId, batchId })
+    .then((r) => r.data)
+
+export const releaseLegacyRemainder = (agentId: string, batchId: string, reason?: string) =>
+  api
+    .post<ReleaseResult>('/assignments/release-legacy', { agentId, batchId, reason })
+    .then((r) => r.data)
+
 export const createAssignment = (data: {
   agentId: string
   batchId?: string
@@ -277,8 +331,36 @@ export const deleteAssignment = (id: string) =>
   api.delete(`/assignments/${id}`).then((r) => r.data)
 
 // ─── Calls ────────────────────────────────────────────────
-export const getCalls = (params?: object) =>
-  api.get('/calls', { params }).then((r) => r.data)
+export type CallLogListItem = {
+  id: string
+  disposition: string
+  calledAt: string
+  companyId: string
+  company: { id: string; ruc: string; razonSocial?: string | null }
+  contact?: { id: string; nombre: string; tipoContacto?: string | null } | null
+  agent?: { name: string }
+}
+
+export type CallLogListResponse = {
+  calls: CallLogListItem[]
+  total: number
+}
+
+export type GetCallsParams = {
+  clientId?: string
+  agentId?: string
+  limit?: number
+  from?: string
+  to?: string
+  disposition?: string
+  funnel?: boolean
+  batchId?: string
+  timeFrom?: string
+  timeTo?: string
+}
+
+export const getCalls = (params?: GetCallsParams) =>
+  api.get<CallLogListResponse>('/calls', { params }).then((r) => r.data)
 export const logCall = (data: object) => api.post('/calls', data).then((r) => r.data)
 export const updateCall = (id: string, data: object) =>
   api.put(`/calls/${id}`, data).then((r) => r.data)
@@ -298,7 +380,7 @@ export type DashboardRecentCall = {
   id: string
   disposition: string
   calledAt: string
-  company: { ruc: string; razonSocial?: string }
+  company: { id: string; ruc: string; razonSocial?: string }
   contact?: { nombre: string } | null
   agent?: { name: string }
 }
@@ -518,6 +600,9 @@ export const sendHeartbeat = (payload: {
   platform?: string
   deviceLabel?: string
 }) => api.post('/presence/heartbeat', payload)
+
+export const sendPresenceLogout = (deviceId: string) =>
+  api.post('/presence/logout', { deviceId })
 
 export const getAgentPresence = () =>
   api.get<AgentPresence[]>('/presence/agents').then((r) => r.data)

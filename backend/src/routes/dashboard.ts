@@ -54,7 +54,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
         take: 5,
         orderBy: { calledAt: 'desc' },
         include: {
-          company: { select: { ruc: true, razonSocial: true } },
+          company: { select: { id: true, ruc: true, razonSocial: true } },
           contact: { select: { nombre: true } },
           agent: { select: { name: true } },
         },
@@ -133,7 +133,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
           take: 5,
           orderBy: { calledAt: 'desc' },
           include: {
-            company: { select: { ruc: true, razonSocial: true } },
+            company: { select: { id: true, ruc: true, razonSocial: true } },
             contact: { select: { nombre: true } },
           },
         }),

@@ -8,19 +8,80 @@ import {
   previewAssignment,
   getAssignmentRuns,
   getAssignmentRunCompanies,
+  getUntrackedCompanies,
+  previewReleaseRun,
+  previewReleaseLegacy,
+  releaseRunRemainder,
+  releaseLegacyRemainder,
   type AssignmentPreview,
   type AssignmentResult,
   type AssignmentRun,
   type AssignmentRunCompany,
+  type ReleasePreview,
 } from '../api/client'
 import toast from 'react-hot-toast'
-import { UserCheck, Users, AlertCircle, X, ChevronDown, ChevronRight, History } from 'lucide-react'
+import { UserCheck, Users, AlertCircle, X, ChevronDown, ChevronRight, History, PackageOpen } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { StatusBadge } from '../components/StatusBadge'
 
 function batchLabel(batch: { displayName?: string | null; filename: string }) {
   return batch.displayName?.trim() || batch.filename
+}
+
+function normalizeSearch(s: string) {
+  return s.trim().toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')
+}
+
+function matchesCompanySearch(c: AssignmentRunCompany, q: string) {
+  const needle = normalizeSearch(q)
+  if (!needle) return true
+  return (
+    normalizeSearch(c.ruc).includes(needle) ||
+    normalizeSearch(c.razonSocial ?? '').includes(needle)
+  )
+}
+
+function formatRunActivityDates(firstCallAt: string | null, lastCallAt: string | null): string | null {
+  if (!lastCallAt) return null
+  const last = new Date(lastCallAt)
+  if (!firstCallAt) {
+    return `Última: ${format(last, 'd MMM HH:mm', { locale: es })}`
+  }
+  const first = new Date(firstCallAt)
+  const sameDay = format(first, 'yyyy-MM-dd') === format(last, 'yyyy-MM-dd')
+  if (sameDay) {
+    return `Última: ${format(last, 'd MMM HH:mm', { locale: es })}`
+  }
+  return `Primera–última: ${format(first, 'd MMM', { locale: es })} – ${format(last, 'd MMM', { locale: es })}`
+}
+
+function RunActivityMetrics({ run }: { run: AssignmentRun }) {
+  const showReleasedHint =
+    (run.status === 'PARTIALLY_RELEASED' || run.status === 'CLOSED') && run.releasedAt
+  const releasedHint = showReleasedHint
+    ? `Liberada ${format(new Date(run.releasedAt!), 'd MMM yyyy, HH:mm', { locale: es })}`
+    : null
+  const dateLine = formatRunActivityDates(run.firstCallAt, run.lastCallAt)
+
+  if (run.callCount === 0) {
+    return (
+      <div className="text-xs text-gray-500 leading-snug">
+        <p>Sin registros aún</p>
+        {releasedHint && <p className="text-gray-400 mt-0.5">{releasedHint}</p>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="text-xs text-gray-600 leading-snug">
+      <p className="whitespace-nowrap">
+        {run.callCount} llam. · {run.contactedCompanies} contact. · {run.pendingCompanies} pend.
+      </p>
+      {dateLine && <p className="text-gray-500 mt-0.5 whitespace-nowrap">{dateLine}</p>}
+      {releasedHint && <p className="text-gray-400 mt-0.5 whitespace-nowrap">{releasedHint}</p>}
+    </div>
+  )
 }
 
 type AssignableImport = {
@@ -53,14 +114,27 @@ export default function Assignments() {
   const [expandedRuns, setExpandedRuns] = useState<Record<string, boolean>>({})
   const [runCompanies, setRunCompanies] = useState<Record<string, AssignmentRunCompany[]>>({})
   const [loadingRunCompanies, setLoadingRunCompanies] = useState<Record<string, boolean>>({})
+  const [runCompanyFilter, setRunCompanyFilter] = useState<Record<string, string>>({})
 
-  const toggleRun = async (runId: string) => {
+  const [releaseModal, setReleaseModal] = useState<{
+    run: AssignmentRun
+    agentId: string
+  } | null>(null)
+  const [releasePreview, setReleasePreview] = useState<ReleasePreview | null>(null)
+  const [releaseReason, setReleaseReason] = useState('')
+  const [releaseLoading, setReleaseLoading] = useState(false)
+  const [releaseSubmitting, setReleaseSubmitting] = useState(false)
+
+  const toggleRun = async (run: AssignmentRun, agentIdForRun: string) => {
+    const runId = run.id
     const willExpand = !expandedRuns[runId]
     setExpandedRuns((prev) => ({ ...prev, [runId]: willExpand }))
     if (willExpand && !runCompanies[runId]) {
       setLoadingRunCompanies((prev) => ({ ...prev, [runId]: true }))
       try {
-        const data = await getAssignmentRunCompanies(runId)
+        const data = run.isLegacy && run.importBatchId
+          ? await getUntrackedCompanies(agentIdForRun, run.importBatchId)
+          : await getAssignmentRunCompanies(runId)
         setRunCompanies((prev) => ({ ...prev, [runId]: data.companies }))
       } catch {
         toast.error('Error al cargar empresas de la asignación')
@@ -69,6 +143,78 @@ export default function Assignments() {
         setLoadingRunCompanies((prev) => ({ ...prev, [runId]: false }))
       }
     }
+  }
+
+  const openReleaseModal = async (run: AssignmentRun, agentIdForRun: string) => {
+    setReleaseModal({ run, agentId: agentIdForRun })
+    setReleasePreview(null)
+    setReleaseReason('')
+    setReleaseLoading(true)
+    try {
+      const preview = run.isLegacy && run.importBatchId
+        ? await previewReleaseLegacy(agentIdForRun, run.importBatchId)
+        : await previewReleaseRun(run.id)
+      setReleasePreview(preview)
+    } catch (err: unknown) {
+      const message =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+        'Error al previsualizar la liberación'
+      toast.error(message)
+      setReleaseModal(null)
+    } finally {
+      setReleaseLoading(false)
+    }
+  }
+
+  const closeReleaseModal = () => {
+    if (releaseSubmitting) return
+    setReleaseModal(null)
+    setReleasePreview(null)
+    setReleaseReason('')
+  }
+
+  const handleReleaseConfirm = async () => {
+    if (!releaseModal || !releasePreview) return
+    if (releasePreview.blockedByCallbacks && releasePreview.blockedByCallbacks > 0) return
+    if (releasePreview.releasableCount === 0) {
+      toast.error('No hay empresas pendientes para liberar')
+      return
+    }
+
+    setReleaseSubmitting(true)
+    try {
+      const { run, agentId: agentIdForRun } = releaseModal
+      const reason = releaseReason.trim() || undefined
+      const result = run.isLegacy && run.importBatchId
+        ? await releaseLegacyRemainder(agentIdForRun, run.importBatchId, reason)
+        : await releaseRunRemainder(run.id, reason)
+
+      closeReleaseModal()
+      qc.invalidateQueries({ queryKey: ['assignmentRuns', agentIdForRun] })
+      qc.invalidateQueries({ queryKey: ['assignmentRuns'] })
+      qc.invalidateQueries({ queryKey: ['clients', 'unassigned'] })
+      qc.invalidateQueries({ queryKey: ['imports'] })
+      qc.invalidateQueries({ queryKey: ['clients'] })
+      qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+
+      toast.success(
+        `Liberadas ${result.releasedCompanies} empresas (${result.releasedContacts} contactos). ` +
+          `${result.retainedCompanies} empresas retenidas por trabajo del agente.`
+      )
+    } catch (err: unknown) {
+      const data = (err as { response?: { data?: { error?: string; blockedByCallbacks?: number } } })
+        ?.response?.data
+      toast.error(data?.error ?? 'Error al liberar remanente')
+    } finally {
+      setReleaseSubmitting(false)
+    }
+  }
+
+  const canReleaseRun = (run: AssignmentRun) => {
+    if (run.isLegacy) return true
+    return !run.status || run.status === 'ACTIVE'
   }
 
   const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: getUsers })
@@ -579,41 +725,79 @@ export default function Assignments() {
                 {drawerRuns.map((run) => {
                   const isOpen = expandedRuns[run.id] ?? false
                   const companies = runCompanies[run.id] ?? []
+                  const filterQuery = runCompanyFilter[run.id] ?? ''
+                  const filteredCompanies = companies.filter((c) =>
+                    matchesCompanySearch(c, filterQuery)
+                  )
                   const loadingCompanies = loadingRunCompanies[run.id] ?? false
+                  const showRelease = canReleaseRun(run) && drawerAgentId
 
                   return (
                     <div key={run.id} className="border border-gray-200 rounded-xl overflow-hidden">
-                      <button
-                        className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
-                        onClick={() => toggleRun(run.id)}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <History size={16} className="text-blue-500 shrink-0" />
-                          <div className="min-w-0">
-                            <p className="text-base font-bold text-gray-900">
-                              {run.companyCount} empresa{run.companyCount !== 1 ? 's' : ''}
-                            </p>
-                            <p className="text-sm text-gray-600 mt-0.5">
-                              {format(new Date(run.assignedAt), "d MMM yyyy, HH:mm", { locale: es })}
-                            </p>
-                            <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-gray-200/80 text-xs text-gray-700 truncate max-w-full">
-                                {run.filename ?? 'Todas las importaciones'}
-                              </span>
-                              <span className="text-xs text-gray-400">
-                                Por {run.assignedBy.name}
-                              </span>
+                      <div className="flex items-stretch bg-gray-50">
+                        <button
+                          className="flex-1 flex items-center justify-between p-4 hover:bg-gray-100 transition-colors text-left min-w-0"
+                          onClick={() => toggleRun(run, drawerAgentId!)}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <History size={16} className="text-blue-500 shrink-0" />
+                            <div className="min-w-0">
+                              <p className="text-base font-bold text-gray-900">
+                                {run.companyCount} empresa{run.companyCount !== 1 ? 's' : ''}
+                                {run.isLegacy && (
+                                  <span className="ml-2 text-xs font-normal text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+                                    Anterior
+                                  </span>
+                                )}
+                                {!run.isLegacy && run.status && run.status !== 'ACTIVE' && (
+                                  <span className="ml-2 text-xs font-normal text-gray-600 bg-gray-200/80 px-1.5 py-0.5 rounded">
+                                    {run.status === 'PARTIALLY_RELEASED'
+                                      ? 'Parcialmente liberada'
+                                      : run.status === 'CLOSED'
+                                        ? 'Cerrada'
+                                        : run.status}
+                                  </span>
+                                )}
+                              </p>
+                              <p className="text-sm text-gray-600 mt-0.5">
+                                {format(new Date(run.assignedAt), "d MMM yyyy, HH:mm", { locale: es })}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-gray-200/80 text-xs text-gray-700 truncate max-w-full">
+                                  {run.filename ?? 'Todas las importaciones'}
+                                </span>
+                                <span className="text-xs text-gray-400">
+                                  Por {run.assignedBy.name}
+                                </span>
+                              </div>
                             </div>
                           </div>
+                          <div className="shrink-0 ml-3">
+                            {isOpen ? (
+                              <ChevronDown size={16} className="text-gray-400" />
+                            ) : (
+                              <ChevronRight size={16} className="text-gray-400" />
+                            )}
+                          </div>
+                        </button>
+                        <div className="hidden sm:flex shrink-0 flex-col justify-center px-3 border-l border-gray-200 min-w-0 max-w-[12rem]">
+                          <RunActivityMetrics run={run} />
                         </div>
-                        <div className="shrink-0 ml-3">
-                          {isOpen ? (
-                            <ChevronDown size={16} className="text-gray-400" />
-                          ) : (
-                            <ChevronRight size={16} className="text-gray-400" />
-                          )}
-                        </div>
-                      </button>
+                        {showRelease && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openReleaseModal(run, drawerAgentId!)
+                            }}
+                            className="shrink-0 px-3 border-l border-gray-200 text-xs font-medium text-amber-800 hover:bg-amber-50 flex flex-col items-center justify-center gap-1 min-w-[5.5rem]"
+                            title="Liberar empresas no trabajadas"
+                          >
+                            <PackageOpen size={16} />
+                            Liberar remanente
+                          </button>
+                        )}
+                      </div>
 
                       {isOpen && (
                         <div className="border-t border-gray-100">
@@ -624,29 +808,59 @@ export default function Assignments() {
                             <p className="text-center text-gray-400 py-6 text-sm">Sin empresas en esta asignación</p>
                           )}
                           {!loadingCompanies && companies.length > 0 && (
-                            <div className="overflow-x-auto">
-                              <table className="w-full text-sm">
-                                <thead>
-                                  <tr className="border-b border-gray-100 bg-gray-50/80 text-left text-xs text-gray-500 uppercase tracking-wide">
-                                    <th className="px-4 py-2 font-medium">RUC</th>
-                                    <th className="px-4 py-2 font-medium">Razón social</th>
-                                    <th className="px-4 py-2 font-medium">Estado</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-100">
-                                  {companies.map((company) => (
-                                    <tr key={company.id} className="hover:bg-gray-50">
-                                      <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{company.ruc}</td>
-                                      <td className="px-4 py-2 text-gray-900 truncate max-w-[200px]">
-                                        {company.razonSocial || '—'}
-                                      </td>
-                                      <td className="px-4 py-2">
-                                        <StatusBadge status={company.status} />
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+                            <div>
+                              <div className="px-4 py-2 border-b border-gray-100">
+                                <input
+                                  type="text"
+                                  placeholder="Buscar por RUC o razón social"
+                                  value={filterQuery}
+                                  onChange={(e) =>
+                                    setRunCompanyFilter((prev) => ({
+                                      ...prev,
+                                      [run.id]: e.target.value,
+                                    }))
+                                  }
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="w-full border border-gray-200 rounded px-3 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                                />
+                                {filterQuery.trim() && (
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    Mostrando {filteredCompanies.length} de {companies.length}
+                                  </p>
+                                )}
+                              </div>
+                              {filteredCompanies.length === 0 ? (
+                                <p className="text-center text-gray-400 py-6 text-sm">
+                                  Ninguna empresa coincide
+                                </p>
+                              ) : (
+                                <div className="overflow-x-auto">
+                                  <table className="w-full text-sm">
+                                    <thead>
+                                      <tr className="border-b border-gray-100 bg-gray-50/80 text-left text-xs text-gray-500 uppercase tracking-wide">
+                                        <th className="px-4 py-2 font-medium">RUC</th>
+                                        <th className="px-4 py-2 font-medium">Razón social</th>
+                                        <th className="px-4 py-2 font-medium">Estado</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                      {filteredCompanies.map((company) => (
+                                        <tr key={company.id} className="hover:bg-gray-50">
+                                          <td className="px-4 py-2 text-gray-600 whitespace-nowrap">
+                                            {company.ruc}
+                                          </td>
+                                          <td className="px-4 py-2 text-gray-900 truncate max-w-[200px]">
+                                            {company.razonSocial || '—'}
+                                          </td>
+                                          <td className="px-4 py-2">
+                                            <StatusBadge status={company.status} />
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -659,6 +873,129 @@ export default function Assignments() {
           </>
         )
       })()}
+
+      {/* Release remainder modal */}
+      {releaseModal && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/40 z-[60]"
+            onClick={closeReleaseModal}
+          />
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Liberar remanente</h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Las empresas sin llamadas del agente volverán al pool sin asignar.
+                    Las empresas ya trabajadas se mantienen asignadas.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeReleaseModal}
+                  disabled={releaseSubmitting}
+                  className="p-1 rounded-lg hover:bg-gray-100 text-gray-400"
+                  aria-label="Cerrar"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {releaseLoading && (
+                <p className="text-center text-gray-400 py-6 text-sm">Calculando remanente...</p>
+              )}
+
+              {!releaseLoading && releasePreview && (
+                <>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      <p className="text-2xl font-bold text-amber-900">{releasePreview.releasableCount}</p>
+                      <p className="text-amber-800 text-xs mt-0.5">Empresas a liberar</p>
+                      <p className="text-amber-700/80 text-xs">{releasePreview.releasableContactCount} contactos</p>
+                    </div>
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                      <p className="text-2xl font-bold text-green-900">{releasePreview.retainedCount}</p>
+                      <p className="text-green-800 text-xs mt-0.5">Empresas retenidas</p>
+                      <p className="text-green-700/80 text-xs">Con llamadas del agente</p>
+                    </div>
+                  </div>
+
+                  {releasePreview.blockedByCallbacks != null && releasePreview.blockedByCallbacks > 0 && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800 flex items-start gap-2">
+                      <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                      <p>
+                        No se puede liberar:{' '}
+                        <strong>{releasePreview.blockedByCallbacks}</strong>{' '}
+                        empresa{releasePreview.blockedByCallbacks !== 1 ? 's' : ''} con devoluciones
+                        de llamada pendientes del agente. Complete o reasigne esas devoluciones primero.
+                      </p>
+                    </div>
+                  )}
+
+                  {releasePreview.releasableCount === 0 && (
+                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm text-gray-600">
+                      No hay empresas pendientes para liberar en esta asignación.
+                    </div>
+                  )}
+
+                  {releasePreview.releasableCompanies.length > 0 && (
+                    <details className="text-sm">
+                      <summary className="cursor-pointer text-gray-600 hover:text-gray-900">
+                        Ver empresas a liberar ({releasePreview.releasableCompanies.length})
+                      </summary>
+                      <ul className="mt-2 max-h-32 overflow-y-auto border border-gray-100 rounded-lg divide-y divide-gray-100">
+                        {releasePreview.releasableCompanies.map((c) => (
+                          <li key={c.id} className="px-3 py-1.5 text-xs text-gray-700">
+                            <span className="font-medium">{c.ruc}</span>
+                            {c.razonSocial && <span className="text-gray-500"> · {c.razonSocial}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+
+                  <div>
+                    <label className="label">Motivo (opcional)</label>
+                    <textarea
+                      className="input min-h-[4rem] resize-y"
+                      value={releaseReason}
+                      onChange={(e) => setReleaseReason(e.target.value)}
+                      placeholder="Ej.: Agente de baja, reasignación de cartera..."
+                      disabled={releaseSubmitting}
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      disabled={
+                        releaseSubmitting ||
+                        releasePreview.releasableCount === 0 ||
+                        (releasePreview.blockedByCallbacks != null && releasePreview.blockedByCallbacks > 0)
+                      }
+                      onClick={handleReleaseConfirm}
+                      className="btn-primary justify-center"
+                    >
+                      {releaseSubmitting
+                        ? 'Liberando...'
+                        : `Confirmar liberación (${releasePreview.releasableCount} empresas)`}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={releaseSubmitting}
+                      onClick={closeReleaseModal}
+                      className="btn-secondary justify-center"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

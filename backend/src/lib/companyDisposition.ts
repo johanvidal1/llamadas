@@ -135,6 +135,49 @@ export async function buildRunMetrics(
   return { callCount, contactedCompanies, contactedPct, inFunnel, ventaCerrada }
 }
 
+export async function getAssignmentRunCompanyIds(runId: string): Promise<string[]> {
+  const assignments = await prisma.assignment.findMany({
+    where: { assignmentRunId: runId },
+    select: { contact: { select: { companyId: true } } },
+  })
+  return [...new Set(assignments.map((a) => a.contact.companyId))]
+}
+
+export type RunActivityDates = {
+  firstCallAt: Date | null
+  lastCallAt: Date | null
+  companiesWithCalls: number
+}
+
+/** Min/max call timestamps and distinct companies with calls for an agent scope. */
+export async function getRunActivityDates(
+  companyIds: string[],
+  agentId: string
+): Promise<RunActivityDates> {
+  if (companyIds.length === 0) {
+    return { firstCallAt: null, lastCallAt: null, companiesWithCalls: 0 }
+  }
+
+  const [aggregate, distinctCompanies] = await Promise.all([
+    prisma.callLog.aggregate({
+      where: { companyId: { in: companyIds }, agentId },
+      _min: { calledAt: true },
+      _max: { calledAt: true },
+    }),
+    prisma.callLog.findMany({
+      where: { companyId: { in: companyIds }, agentId },
+      select: { companyId: true },
+      distinct: ['companyId'],
+    }),
+  ])
+
+  return {
+    firstCallAt: aggregate._min.calledAt,
+    lastCallAt: aggregate._max.calledAt,
+    companiesWithCalls: distinctCompanies.length,
+  }
+}
+
 export type LegacyBucketResult = RunMetrics & {
   companyIds: string[]
   companyCount: number

@@ -1,6 +1,8 @@
 import { Router, Response } from 'express'
 import { z } from 'zod'
+import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
+import { parseDateParam } from '../lib/callActivity'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { recomputeContactStatus, statusForDisposition } from '../lib/contactStatus'
 import {
@@ -8,9 +10,54 @@ import {
   CALLBACK_DISPOSITIONS,
   getAclaracionForDisposition,
   isValidDisposition,
+  SALES_FUNNEL_DISPOSITIONS,
 } from '../lib/responseOptions'
 
 const router = Router()
+
+const callLogInclude = {
+  company: { select: { id: true, ruc: true, razonSocial: true } },
+  contact: { select: { id: true, nombre: true, tipoContacto: true } },
+  agent: { select: { name: true } },
+} satisfies Prisma.CallLogInclude
+
+function parseTimeHm(value: string | undefined): number | null {
+  if (!value?.trim()) return null
+  const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(value.trim())
+  if (!match) return null
+  return Number(match[1]) * 60 + Number(match[2])
+}
+
+function matchesTimeOfDay(calledAt: Date, timeMin: number | null, timeMax: number | null): boolean {
+  const mins = calledAt.getHours() * 60 + calledAt.getMinutes()
+  if (timeMin != null && mins < timeMin) return false
+  if (timeMax != null && mins > timeMax) return false
+  return true
+}
+
+function buildCalledAtRange(from?: string, to?: string): Prisma.DateTimeFilter | undefined {
+  if (!from && !to) return undefined
+
+  const now = new Date()
+  const defaultFrom = new Date()
+  defaultFrom.setDate(defaultFrom.getDate() - 30)
+  defaultFrom.setHours(0, 0, 0, 0)
+
+  const range: Prisma.DateTimeFilter = {}
+
+  if (from) {
+    const fromDate = parseDateParam(from, defaultFrom)
+    fromDate.setHours(0, 0, 0, 0)
+    range.gte = fromDate
+  }
+  if (to) {
+    const toDate = parseDateParam(to, now)
+    toDate.setHours(23, 59, 59, 999)
+    range.lte = toDate
+  }
+
+  return range
+}
 
 const dispositionEnum = z.enum(ALL_DISPOSITION_CODES as [string, ...string[]])
 
@@ -44,27 +91,82 @@ const updateCallSchema = z.object({
 
 // GET /api/calls
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
-  const { clientId, agentId, limit = '50' } = req.query as Record<string, string>
+  const {
+    clientId,
+    agentId,
+    limit = '50',
+    from,
+    to,
+    disposition,
+    funnel,
+    batchId,
+    timeFrom,
+    timeTo,
+  } = req.query as Record<string, string>
 
-  const where: Record<string, unknown> = {}
+  const take = Math.min(Number(limit) || 50, 200)
+  const timeMin = parseTimeHm(timeFrom)
+  const timeMax = parseTimeHm(timeTo)
+  const hasTimeFilter = timeMin != null || timeMax != null
+
+  const where: Prisma.CallLogWhereInput = {}
   if (req.user!.role === 'AGENT') {
     where.agentId = req.user!.id
   } else if (agentId) {
     where.agentId = agentId
   }
   if (clientId) where.companyId = clientId
+  if (batchId) where.company = { importBatchId: batchId }
 
-  const logs = await prisma.callLog.findMany({
-    where,
-    include: {
-      company: { select: { ruc: true, razonSocial: true } },
-      contact: { select: { nombre: true, tipoContacto: true } },
-      agent: { select: { name: true } },
-    },
-    orderBy: { calledAt: 'desc' },
-    take: Math.min(Number(limit) || 50, 200),
-  })
-  res.json(logs)
+  const funnelActive = funnel === 'true' || funnel === '1'
+  if (funnelActive) {
+    where.disposition = { in: [...SALES_FUNNEL_DISPOSITIONS] }
+  } else if (disposition && isValidDisposition(disposition)) {
+    where.disposition = disposition
+  }
+
+  let calledAt = buildCalledAtRange(from, to)
+  if (hasTimeFilter && !from && !to) {
+    const now = new Date()
+    const defaultFrom = new Date()
+    defaultFrom.setDate(defaultFrom.getDate() - 30)
+    defaultFrom.setHours(0, 0, 0, 0)
+    now.setHours(23, 59, 59, 999)
+    calledAt = { gte: defaultFrom, lte: now }
+  }
+  if (calledAt) where.calledAt = calledAt
+
+  if (hasTimeFilter) {
+    const candidates = await prisma.callLog.findMany({
+      where,
+      select: { id: true, calledAt: true },
+      orderBy: { calledAt: 'desc' },
+    })
+    const filtered = candidates.filter((row) => matchesTimeOfDay(row.calledAt, timeMin, timeMax))
+    const total = filtered.length
+    const pageIds = filtered.slice(0, take).map((row) => row.id)
+    const calls =
+      pageIds.length > 0
+        ? await prisma.callLog.findMany({
+            where: { id: { in: pageIds } },
+            include: callLogInclude,
+            orderBy: { calledAt: 'desc' },
+          })
+        : []
+    res.json({ calls, total })
+    return
+  }
+
+  const [calls, total] = await Promise.all([
+    prisma.callLog.findMany({
+      where,
+      include: callLogInclude,
+      orderBy: { calledAt: 'desc' },
+      take,
+    }),
+    prisma.callLog.count({ where }),
+  ])
+  res.json({ calls, total })
 })
 
 // POST /api/calls

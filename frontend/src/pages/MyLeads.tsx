@@ -26,6 +26,7 @@ import {
   CheckCircle2,
   X,
 } from 'lucide-react'
+import { dedupeMobileLinesByNumber } from '../lib/mobileLine'
 import CallModal from '../components/CallModal'
 import DispositionSelector from '../components/DispositionSelector'
 import { format, isPast, isToday } from 'date-fns'
@@ -122,6 +123,13 @@ function contactNameParts(nombre?: string) {
     segundoNombre: parts[1] ?? '',
     tercerNombre: parts[2] ?? '',
   }
+}
+
+function truncateGraphemes(text: string, max: number): string {
+  if (!text) return text
+  const chars = [...text]
+  if (chars.length <= max) return text
+  return chars.slice(0, max - 1).join('') + '…'
 }
 
 class SaveCancelled extends Error {
@@ -226,11 +234,32 @@ function snapshotFromLog(
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function ReadField({ label, value }: { label: string; value?: string }) {
+function ReadField({
+  label,
+  value,
+  className,
+  valueClassName,
+  mono = true,
+}: {
+  label: string
+  value?: string
+  className?: string
+  valueClassName?: string
+  mono?: boolean
+}) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className={['flex flex-col gap-0.5', className].filter(Boolean).join(' ')}>
       <span className="text-xs text-gray-500 font-medium">{label}</span>
-      <div className="bg-gray-100 border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-700 min-h-[34px] select-all font-mono">
+      <div
+        className={[
+          'bg-gray-100 border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-700 min-h-[34px] select-all',
+          mono ? 'font-mono' : '',
+          valueClassName,
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        title={value || undefined}
+      >
         {value || <span className="text-gray-400 italic font-sans">—</span>}
       </div>
     </div>
@@ -405,6 +434,8 @@ export default function MyLeads() {
   const [searchParams, setSearchParams] = useSearchParams()
   const initialFilter = searchParams.get('filter') ?? ''
   const initialBatchId = searchParams.get('batchId') ?? ''
+  const initialCompanyId = searchParams.get('companyId') ?? ''
+  const initialContactId = searchParams.get('contactId') ?? ''
   const deepLinkFilter = VALID_LIST_FILTERS.has(initialFilter) ? initialFilter : ''
   const initialFromDashboard = searchParams.get('from') === 'dashboard'
 
@@ -502,6 +533,7 @@ export default function MyLeads() {
   const pendingContactIdRef = useRef<string | null>(null)
   const pendingContactIdxRef = useRef<number | null>(null)
   const needsContactResolveRef = useRef(false)
+  const companyDeepLinkHandledRef = useRef(false)
   const [editTelefono, setEditTelefono] = useState('')
   const [editEmail, setEditEmail] = useState('')
   const [editDni, setEditDni] = useState('')
@@ -509,6 +541,7 @@ export default function MyLeads() {
   const [exporting, setExporting] = useState(false)
   const savedContactRef = useRef<{ id: string; telefono: string; email: string; dni: string } | null>(null)
   const lastSyncedContactKey = useRef<string | null>(null)
+  const contactTabRefs = useRef<(HTMLButtonElement | null)[]>([])
 
   // Load ALL clients without batch filter — used only to derive available batches
   const { data: allClientsData } = useQuery({
@@ -572,26 +605,53 @@ export default function MyLeads() {
   const total = clients.length
   const currentClient = clients[currentIndex]
 
-  // Load detail for current client
-  const { data: clientDetail, isFetching: loadingDetail } = useQuery({
+  // Load detail for current client — placeholderData keeps previous record visible during nav
+  const { data: clientDetail, isFetching: fetchingDetail } = useQuery({
     queryKey: ['client-detail', currentClient?.id],
     queryFn: () => getClient(currentClient!.id),
     enabled: !!currentClient?.id,
+    placeholderData: (previousData) => previousData,
+    staleTime: 30_000,
   })
   const detail = clientDetail as ClientDetail | undefined
+  const displayDetail = detail
+  const visibleMobileLines = useMemo(
+    () => dedupeMobileLinesByNumber(displayDetail?.mobileLines ?? []),
+    [displayDetail?.mobileLines]
+  )
+  const showingStale = Boolean(displayDetail && currentClient && displayDetail.id !== currentClient.id)
+  const isInitialDetailLoad = Boolean(
+    !displayDetail && fetchingDetail && !loadingList && clients.length > 0
+  )
 
-  // Prefer detail contacts for the active company only; fall back to list summary while loading
+  // Prefetch adjacent clients for instant prev/next navigation
+  useEffect(() => {
+    if (!currentClient?.id || clients.length === 0) return
+    const prefetchClient = (id: string) => {
+      void qc.prefetchQuery({
+        queryKey: ['client-detail', id],
+        queryFn: () => getClient(id),
+        staleTime: 30_000,
+      })
+    }
+    if (currentIndex > 0) prefetchClient(clients[currentIndex - 1].id)
+    if (currentIndex < clients.length - 1) prefetchClient(clients[currentIndex + 1].id)
+  }, [currentClient?.id, currentIndex, clients, qc])
+
+  // Prefer detail contacts; during stale placeholder keep showing previous client's contacts
   const displayContacts: ClientDetail['contacts'] =
-    detail != null && detail.id === currentClient?.id && (detail.contacts?.length ?? 0) > 0
+    detail != null && (detail.contacts?.length ?? 0) > 0
       ? detail.contacts
-      : (currentClient?.contacts ?? []).map((ct, idx) => ({
-          id: (ct as { id?: string }).id ?? `summary-${currentClient?.id ?? 'x'}-${idx}`,
-          nombre: ct.nombre ?? '',
-          tipoContacto: ct.tipoContacto,
-          telefono: ct.telefono,
-          email: ct.email,
-          dni: ct.dni,
-        }))
+      : detail?.id === currentClient?.id
+        ? (currentClient?.contacts ?? []).map((ct, idx) => ({
+            id: (ct as { id?: string }).id ?? `summary-${currentClient?.id ?? 'x'}-${idx}`,
+            nombre: ct.nombre ?? '',
+            tipoContacto: ct.tipoContacto,
+            telefono: ct.telefono,
+            email: ct.email,
+            dni: ct.dni,
+          }))
+        : []
 
   // Load pending callbacks for Agendados panel
   const { data: agendados = [] } = useQuery({
@@ -620,13 +680,34 @@ export default function MyLeads() {
     needsContactResolveRef.current = true
   }, [selectedBatchId])
 
-  // Sync company fields when company changes
   useEffect(() => {
-    if (detail) {
+    if (
+      !initialCompanyId ||
+      companyDeepLinkHandledRef.current ||
+      loadingList ||
+      clients.length === 0
+    ) {
+      return
+    }
+    const idx = clients.findIndex((c) => c.id === initialCompanyId)
+    if (idx < 0) return
+    companyDeepLinkHandledRef.current = true
+    if (initialContactId) {
+      pendingContactIdRef.current = initialContactId
+      pendingContactIdxRef.current = null
+      needsContactResolveRef.current = false
+    }
+    setCurrentIndex(idx)
+    switchView('detail', { persist: false })
+  }, [initialCompanyId, initialContactId, loadingList, clients])
+
+  // Sync company fields when company changes (skip stale placeholder from previous record)
+  useEffect(() => {
+    if (detail && currentClient && detail.id === currentClient.id) {
       setEditPlan(detail.plan ?? '')
       setHistorialScope('contact')
     }
-  }, [detail?.id])
+  }, [detail?.id, currentClient?.id])
 
   const clearEditableCallFields = useCallback(() => {
     setDisposition('')
@@ -644,7 +725,8 @@ export default function MyLeads() {
 
   // Hydrate call log view/edit state when contact or detail changes
   useEffect(() => {
-    if (!detail || !user?.id) return
+    if (!detail || !user?.id || !currentClient?.id) return
+    if (detail.id !== currentClient.id) return
 
     let contactIdx = activeContactIdx
     if (needsContactResolveRef.current && detail.id === currentClient?.id) {
@@ -1301,6 +1383,56 @@ export default function MyLeads() {
       : 0
   const activeContact = displayContacts[safeContactIdx]
 
+  useEffect(() => {
+    contactTabRefs.current[safeContactIdx]?.scrollIntoView({
+      inline: 'nearest',
+      block: 'nearest',
+      behavior: 'smooth',
+    })
+  }, [safeContactIdx])
+
+  useEffect(() => {
+    if (viewMode !== 'detail' || displayContacts.length <= 1) return
+
+    const isEditableTarget = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false
+      const tag = target.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+      return target.isContentEditable
+    }
+
+    const switchToContact = (idx: number) => {
+      void navigateWithSave(async () => {
+        await saveActiveContactIfDirty()
+        setActiveContactIdx(idx)
+      })()
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return
+
+      if (e.key === 'ArrowLeft' && safeContactIdx > 0) {
+        e.preventDefault()
+        switchToContact(safeContactIdx - 1)
+      } else if (e.key === 'ArrowRight' && safeContactIdx < displayContacts.length - 1) {
+        e.preventDefault()
+        switchToContact(safeContactIdx + 1)
+      } else if (e.key === 'Home' && safeContactIdx !== 0) {
+        e.preventDefault()
+        switchToContact(0)
+      } else if (e.key === 'End') {
+        const lastIdx = displayContacts.length - 1
+        if (safeContactIdx !== lastIdx) {
+          e.preventDefault()
+          switchToContact(lastIdx)
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [viewMode, displayContacts.length, safeContactIdx, navigateWithSave, saveActiveContactIfDirty])
+
   const exportBatchId = selectedBatchId || detail?.importBatch?.id
 
   const handleExport = async () => {
@@ -1481,7 +1613,7 @@ export default function MyLeads() {
       {viewMode === 'detail' && (
         <div className="flex flex-col lg:flex-row flex-1 overflow-hidden min-h-0">
           {/* ── Left: Form (scrollable) ── */}
-          <div className="flex-1 overflow-y-auto bg-gray-50 p-3 lg:p-4 min-h-0">
+          <div className="flex-1 overflow-y-auto [scrollbar-gutter:stable] bg-gray-50 p-3 lg:p-4 min-h-0">
             {/* Loading state */}
             {loadingList && (
               <div className="flex items-center justify-center h-full text-gray-400">
@@ -1505,13 +1637,27 @@ export default function MyLeads() {
                 </div>
               </div>
             )}
-            {!detail && !loadingList && clients.length > 0 && loadingDetail && (
-              <div className="flex items-center justify-center h-40 text-gray-400 text-sm">
-                Cargando datos del cliente...
-              </div>
-            )}
-            {detail && (
-              <div className="space-y-3 h-full flex flex-col">
+            {!loadingList && clients.length > 0 && (
+              <div className="relative min-h-[480px]">
+                {fetchingDetail && displayDetail && (
+                  <div className="absolute top-0 left-0 right-0 z-10 h-0.5 overflow-hidden bg-blue-100">
+                    <div className="h-full w-full bg-blue-500 animate-pulse" />
+                  </div>
+                )}
+                {isInitialDetailLoad ? (
+                  <div className="flex items-center justify-center min-h-[480px] text-gray-400">
+                    <div className="text-center">
+                      <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                      <p className="text-sm">Cargando datos del cliente...</p>
+                    </div>
+                  </div>
+                ) : displayDetail ? (
+                  <div
+                    className={`relative transition-opacity duration-200 ease-out ${
+                      fetchingDetail && showingStale ? 'opacity-50 pointer-events-none' : 'opacity-100'
+                    }`}
+                  >
+                    <div className="space-y-3 h-full flex flex-col">
 
                 {/* ── Datos de la Empresa ── */}
                 <div className="bg-white border border-gray-200 rounded-lg p-4 shrink-0">
@@ -1520,24 +1666,31 @@ export default function MyLeads() {
                     <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                       <AlertCircle size={15} className="text-amber-600 shrink-0 mt-0.5" />
                       <p className="text-xs text-amber-800">
-                        Hay {duplicateRucCount} registros con el mismo RUC ({detail.ruc}) en tu lista.
+                        Hay {duplicateRucCount} registros con el mismo RUC ({displayDetail.ruc}) en tu lista.
                         Revisá el lote de importación para distinguirlos.
                       </p>
                     </div>
                   )}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    <ReadField label="RUC" value={detail.ruc} />
-                    <div className="col-span-full sm:col-span-2">
-                      <ReadField label="Razón Social" value={detail.razonSocial} />
-                    </div>
+                  <div className="flex flex-col sm:flex-row gap-3 items-start">
+                    <ReadField label="RUC" value={displayDetail.ruc} className="sm:w-40 shrink-0" mono />
+                    <ReadField
+                      label="Razón Social"
+                      value={displayDetail.razonSocial}
+                      className="flex-1 min-w-0 w-full"
+                      mono={false}
+                      valueClassName="font-sans break-words line-clamp-2"
+                    />
                   </div>
                 </div>
 
                 {/* ── Contacto (tabs) ── */}
                 <div className="bg-white border border-gray-200 rounded-lg shrink-0">
                   {displayContacts.length > 0 && (
-                    <div className="flex border-b border-gray-200 bg-gray-50 overflow-x-auto">
+                    <div
+                      role="tablist"
+                      className="flex h-16 shrink-0 overflow-x-auto overflow-y-hidden flex-nowrap border-b border-gray-200 bg-gray-50 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                       {displayContacts.map((ct, idx) => {
+                        const fullName = (ct.nombre ?? '').trim() || 'Contacto'
                         const { primerNombre, segundoNombre, tercerNombre } = contactNameParts(ct.nombre)
                         const isRegistered = contactHasAgentLogByContactId(ct.id, currentIndex)
                         const isActive = safeContactIdx === idx
@@ -1548,26 +1701,31 @@ export default function MyLeads() {
                           : isActive
                             ? 'text-blue-700 border-blue-600 bg-white border-b-2'
                             : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-100 border-b-2'
+                        const tabTitle = isRegistered ? `${fullName} — Contacto registrado` : fullName
                         return (
                           <button
                             key={ct.id ?? idx}
-                            title={isRegistered ? 'Contacto registrado' : undefined}
+                            ref={(el) => {
+                              contactTabRefs.current[idx] = el
+                            }}
+                            role="tab"
+                            aria-selected={isActive}
+                            title={tabTitle}
                             onClick={navigateWithSave(async () => {
                               await saveActiveContactIfDirty()
                               setActiveContactIdx(idx)
                             })}
-                            className={`px-4 py-2 text-xs font-medium whitespace-nowrap transition-colors flex flex-col items-center leading-tight min-w-[100px] ${tabClass}`}>
-                            <span className="flex items-center gap-1">
+                            className={`flex h-full min-w-[100px] max-w-[120px] shrink-0 flex-col items-center justify-center gap-0 px-3 py-0.5 text-xs font-medium leading-tight transition-colors ${tabClass}`}>
+                            <span className="flex items-center gap-1 overflow-hidden max-w-full">
                               {isRegistered && <CheckCircle2 size={12} className="shrink-0 text-emerald-700" />}
-                              {primerNombre || 'Contacto'}
+                              <span className="overflow-hidden">{truncateGraphemes(primerNombre || 'Contacto', 14)}</span>
                             </span>
-                            {(segundoNombre || tercerNombre) && (
-                              <span className="flex items-center gap-1 text-[10px] font-normal opacity-75 mt-0.5">
-                                {segundoNombre && <span>{segundoNombre}</span>}
-                                {tercerNombre && <span>{tercerNombre}</span>}
-                              </span>
-                            )}
-                            {ct.tipoContacto && <span className="text-[10px] font-normal opacity-60 mt-0.5 truncate max-w-full">{ct.tipoContacto}</span>}
+                            <span className="min-h-[12px] text-[10px] font-normal opacity-75 overflow-hidden max-w-[110px] text-center leading-tight">
+                              {truncateGraphemes([segundoNombre, tercerNombre].filter(Boolean).join(' '), 20) || '\u00A0'}
+                            </span>
+                            <span className="min-h-[12px] text-[10px] font-normal opacity-60 overflow-hidden max-w-[110px] text-center leading-tight">
+                              {truncateGraphemes(ct.tipoContacto ?? '', 22) || '\u00A0'}
+                            </span>
                           </button>
                         )
                       })}
@@ -1599,7 +1757,7 @@ export default function MyLeads() {
                 <div className="flex flex-col gap-3 flex-1">
 
                   {/* Resultado de esta llamada */}
-                  <div className={`border border-gray-200 rounded-lg p-4 space-y-3 ${previousSnapshot ? 'bg-slate-50 border-l-4 border-l-blue-500' : 'bg-white'}`}>
+                  <div className={`border border-gray-200 rounded-lg p-4 space-y-3 border-l-4 ${previousSnapshot ? 'bg-slate-50 border-l-blue-500' : 'bg-white border-l-transparent'}`}>
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Resultado de esta llamada</p>
                     <div className="flex flex-col gap-0.5">
                       <label className="text-xs text-gray-500 font-medium">Respuesta</label>
@@ -1621,16 +1779,18 @@ export default function MyLeads() {
                     </div>
                   </div>
 
-                  {previousSnapshot && (
-                    <div className="relative flex items-center gap-3 py-1 px-1 -my-0.5" aria-hidden>
-                      <div className="h-0.5 flex-1 rounded-full bg-gradient-to-r from-transparent via-blue-500/80 to-blue-500/40" />
-                      <span className="flex items-center gap-1.5 shrink-0 text-xs font-medium text-blue-600">
-                        <CheckCircle2 size={12} className="text-blue-500" />
-                        Registro guardado
-                      </span>
-                      <div className="h-0.5 flex-1 rounded-full bg-gradient-to-l from-transparent via-blue-500/80 to-blue-500/40" />
-                    </div>
-                  )}
+                  <div className="relative h-0 shrink-0 z-10">
+                    {previousSnapshot && (
+                      <div className="absolute inset-x-0 top-0 -translate-y-1/2 flex items-center gap-3 px-1 pointer-events-none" aria-hidden>
+                        <div className="h-0.5 flex-1 rounded-full bg-gradient-to-r from-transparent via-blue-500/80 to-blue-500/40" />
+                        <span className="flex items-center gap-1.5 shrink-0 text-xs font-medium text-blue-600 bg-gray-50 px-1">
+                          <CheckCircle2 size={12} className="text-blue-500" />
+                          Registro guardado
+                        </span>
+                        <div className="h-0.5 flex-1 rounded-full bg-gradient-to-l from-transparent via-blue-500/80 to-blue-500/40" />
+                      </div>
+                    )}
+                  </div>
 
                   {/* Agendar */}
                   <div className={`border border-gray-200 rounded-lg overflow-hidden transition-opacity ${agendarDisabled ? 'opacity-40 pointer-events-none select-none' : ''} ${previousSnapshot ? 'bg-amber-50' : 'bg-white'}`}>
@@ -1678,30 +1838,32 @@ export default function MyLeads() {
                     </div>
                   </div>
 
-                  <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 py-3">
-                    <button onClick={() => saveMutation.mutate(false)} disabled={saveMutation.isPending || !canSaveCallResult}
-                      className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
-                      <Save size={15} />
-                      {saveMutation.isPending ? 'Guardando...' : editingCallLogId ? 'Guardar actualización' : 'Guardar resultado'}
-                    </button>
-                    <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || isLast || !canSaveCallResult}
-                      className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
-                      Guardar y siguiente empresa <ChevronRight size={15} />
-                    </button>
-                    <div className="flex gap-2 sm:ml-auto">
-                      <DetailRecordNav
-                        variant="footer"
-                        onFirstRegistered={navigateWithSave(goToFirstRegistered)}
-                        onPrev={navigateWithSave(goPrev)}
-                        onNext={navigateWithSave(goNext)}
-                        onFirstEmpty={navigateWithSave(goToFirstEmpty)}
-                        isFirst={isFirst}
-                        isLast={isLast}
-                        atFirstRegistered={atFirstRegistered}
-                        atFirstEmpty={atFirstEmpty}
-                        noRegistered={!firstRegisteredTarget}
-                        noEmpty={!firstEmptyTarget}
-                      />
+                  <div className="sticky bottom-0 z-10 border-t border-gray-200 bg-gray-50/95 px-3 py-3 backdrop-blur-sm lg:px-4">
+                    <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
+                      <button onClick={() => saveMutation.mutate(false)} disabled={saveMutation.isPending || !canSaveCallResult}
+                        className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
+                        <Save size={15} />
+                        {saveMutation.isPending ? 'Guardando...' : editingCallLogId ? 'Guardar actualización' : 'Guardar resultado'}
+                      </button>
+                      <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || isLast || !canSaveCallResult}
+                        className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
+                        Guardar y siguiente empresa <ChevronRight size={15} />
+                      </button>
+                      <div className="flex gap-2 sm:ml-auto">
+                        <DetailRecordNav
+                          variant="footer"
+                          onFirstRegistered={navigateWithSave(goToFirstRegistered)}
+                          onPrev={navigateWithSave(goPrev)}
+                          onNext={navigateWithSave(goNext)}
+                          onFirstEmpty={navigateWithSave(goToFirstEmpty)}
+                          isFirst={isFirst}
+                          isLast={isLast}
+                          atFirstRegistered={atFirstRegistered}
+                          atFirstEmpty={atFirstEmpty}
+                          noRegistered={!firstRegisteredTarget}
+                          noEmpty={!firstEmptyTarget}
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -1711,7 +1873,7 @@ export default function MyLeads() {
                       <span className="text-sm font-semibold text-gray-600">Líneas móviles</span>
                     </div>
                     <div className="p-4 overflow-x-auto">
-                      {detail.mobileLines.length === 0 ? (
+                      {visibleMobileLines.length === 0 ? (
                         <p className="text-sm text-gray-400 italic">Sin líneas móviles registradas</p>
                       ) : (
                         <table className="w-full text-sm min-w-[320px]">
@@ -1724,7 +1886,7 @@ export default function MyLeads() {
                             </tr>
                           </thead>
                           <tbody>
-                            {detail.mobileLines.map((line) => (
+                            {visibleMobileLines.map((line) => (
                               <tr key={line.id} className="border-b border-gray-100 last:border-0">
                                 <td className="py-2 pr-3 font-mono text-gray-800">
                                   {line.numeroTelefono || <span className="text-gray-400 italic font-sans">—</span>}
@@ -1741,6 +1903,9 @@ export default function MyLeads() {
                   </div>
 
                 </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             )}
           </div>
@@ -1824,7 +1989,7 @@ export default function MyLeads() {
                 </div>
               )}
 
-              <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1.5">
+              <div className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] p-2 space-y-1.5">
                 {activeList.length === 0 ? (
                   <div className="text-center text-gray-400 py-4 text-xs px-2">
                     <CalendarClock size={20} className="mx-auto mb-1.5 opacity-40" />
@@ -1910,7 +2075,7 @@ export default function MyLeads() {
                   </div>
                 </div>
               ) : (
-                <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-gray-50">
+                <div className="flex-1 overflow-y-auto [scrollbar-gutter:stable] p-3 space-y-2 bg-gray-50">
                   {(() => {
                     const activeContactId = activeContact?.id
                     const logs = [...detail.callLogs]

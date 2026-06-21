@@ -15,6 +15,14 @@ datasource db {
 // CompanyStatus values: PENDING | IN_PROGRESS | INTERESTED | CONVERTED | NOT_INTERESTED | DO_NOT_CALL
 // ContactStatus values: same as CompanyStatus
 // ImportStatus values: OK | NO_ENCONTRADO | SIN_CONTACTOS
+// AssignmentRunStatus values: ACTIVE | PARTIALLY_RELEASED | PAUSED | CLOSED
+
+enum AssignmentRunStatus {
+  ACTIVE
+  PARTIALLY_RELEASED
+  PAUSED
+  CLOSED
+}
 
 model User {
   id        String   @id @default(cuid())
@@ -35,6 +43,7 @@ model User {
   callLogs             CallLog[]
   callbacks   Callback[]
   sessions    UserSession[]
+  assignmentReleases AssignmentRelease[] @relation("AssignmentReleaseBy")
 }
 
 model UserSession {
@@ -129,20 +138,41 @@ model Contact {
 }
 
 model AssignmentRun {
-  id            String       @id @default(cuid())
+  id            String              @id @default(cuid())
   agentId       String
-  agent         User         @relation("AssignmentRunAgent", fields: [agentId], references: [id])
+  agent         User                @relation("AssignmentRunAgent", fields: [agentId], references: [id])
   importBatchId String?
-  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+  importBatch   ImportBatch?        @relation(fields: [importBatchId], references: [id])
   assignedById  String
-  assignedBy    User         @relation("AssignmentRunAssignedBy", fields: [assignedById], references: [id])
+  assignedBy    User                @relation("AssignmentRunAssignedBy", fields: [assignedById], references: [id])
   companyCount  Int
   contactCount  Int
-  createdAt     DateTime     @default(now())
+  status        AssignmentRunStatus @default(ACTIVE)
+  releasedAt    DateTime?
+  releaseNote   String?
+  createdAt     DateTime            @default(now())
   assignments   Assignment[]
+  releases      AssignmentRelease[]
 
   @@index([agentId, createdAt])
   @@index([importBatchId])
+}
+
+model AssignmentRelease {
+  id              String         @id @default(cuid())
+  assignmentRunId String?
+  assignmentRun   AssignmentRun? @relation(fields: [assignmentRunId], references: [id])
+  releasedById    String
+  releasedBy      User           @relation("AssignmentReleaseBy", fields: [releasedById], references: [id])
+  agentId         String
+  importBatchId   String?
+  companyCount    Int
+  contactCount    Int
+  reason          String?
+  createdAt       DateTime       @default(now())
+
+  @@index([assignmentRunId])
+  @@index([agentId, createdAt])
 }
 
 model Assignment {

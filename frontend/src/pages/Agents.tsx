@@ -212,6 +212,13 @@ function UserTable({
                       type="button"
                       aria-expanded={presencePopover?.userId === u.id}
                       aria-haspopup="dialog"
+                      title={
+                        presence &&
+                        (presence.status === 'offline' || presence.status === 'recent') &&
+                        presence.sessions.length > 0
+                          ? `Última actividad ${formatTimeAgo(presence.sessions[0].lastSeenAt)}`
+                          : undefined
+                      }
                       onClick={(e) => {
                         const anchor = e.currentTarget
                         setPresencePopover((prev) =>
@@ -220,10 +227,21 @@ function UserTable({
                       }}
                       className={`badge ${presenceBadgeClass(presence?.status ?? 'offline')} cursor-pointer hover:opacity-90`}
                     >
-                      {presenceLabel(presence?.status ?? 'offline')}
-                      {presence && presence.sessions.length > 1 && (
-                        <span className="ml-1 text-[10px] opacity-75">({presence.sessions.length})</span>
-                      )}
+                      <span className="inline-flex flex-col items-start leading-tight">
+                        <span>
+                          {presenceLabel(presence?.status ?? 'offline')}
+                          {presence && presence.sessions.length > 1 && (
+                            <span className="ml-1 text-[10px] opacity-75">({presence.sessions.length})</span>
+                          )}
+                        </span>
+                        {presence &&
+                          (presence.status === 'offline' || presence.status === 'recent') &&
+                          presence.sessions.length > 0 && (
+                            <span className="text-[10px] font-normal opacity-75">
+                              {formatTimeAgo(presence.sessions[0].lastSeenAt)}
+                            </span>
+                          )}
+                      </span>
                     </button>
                   )}
                 </td>

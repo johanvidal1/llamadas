@@ -94,6 +94,15 @@ export const LEGACY_DISPOSITION_CODES = Object.keys(LEGACY_DISPOSITION_LABELS) a
 
 export const ALL_DISPOSITION_CODES = [...RESPONSE_CODES, ...LEGACY_DISPOSITION_CODES] as DispositionCode[]
 
+/** Sales funnel stage dispositions (commercial pipeline). */
+export const SALES_FUNNEL_DISPOSITIONS = [
+  'INTERESADO',
+  'PROPUESTA_PRESENTADA',
+  'DISCUSION_PROPUESTA',
+  'ESPERA_RESPUESTA',
+  'VENTA_CERRADA',
+] as const
+
 /** Dispositions mapped to INTERESTED contact status (new + legacy). */
 export const INTERESTED_DISPOSITIONS = [
   'INTERESADO',

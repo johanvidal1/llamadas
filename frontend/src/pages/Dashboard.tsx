@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getDashboardStats, getMyBatches } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { Users, Phone, CalendarClock, Calendar, PhoneCall, Layers, RefreshCw, ArrowRight } from 'lucide-react'
-import { DispositionBadge } from '../components/StatusBadge'
+import { RecentCallRow } from '../components/RecentCallRow'
 import { DISPOSITION_BAR_COLORS } from '../config/responseOptions'
 import {
   AGENT_PIPELINE_FUNNEL,
@@ -12,7 +12,7 @@ import {
   AGENT_PIPELINE_QUEUE,
   buildPipelineClientsUrl,
 } from '../config/companyPipeline'
-import { format } from 'date-fns'
+import { format, startOfMonth } from 'date-fns'
 import { es } from 'date-fns/locale'
 
 function StatCard({
@@ -94,6 +94,14 @@ export default function Dashboard() {
       </div>
     )
   }
+
+  const callsLinkSearch = new URLSearchParams()
+  const today = format(new Date(), 'yyyy-MM-dd')
+  const monthStart = format(startOfMonth(new Date()), 'yyyy-MM-dd')
+  callsLinkSearch.set('from', monthStart)
+  callsLinkSearch.set('to', today)
+  callsLinkSearch.set('disposition', 'FUNNEL')
+  if (selectedBatchId) callsLinkSearch.set('batchId', selectedBatchId)
 
   return (
     <div className="p-4 md:p-8 space-y-8">
@@ -322,34 +330,19 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Recent calls */}
         <div className="card p-6 lg:col-span-2">
-          <h2 className="font-semibold text-gray-900 mb-4">Últimas llamadas</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-gray-900">Últimas llamadas</h2>
+            <Link
+              to={`/calls?${callsLinkSearch.toString()}`}
+              className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline"
+            >
+              Ver más →
+            </Link>
+          </div>
           <div className="space-y-3">
-            {stats?.recentCalls?.map(
-              (call: {
-                id: string
-                disposition: string
-                calledAt: string
-                company: { ruc: string; razonSocial?: string }
-                contact?: { nombre: string } | null
-                agent?: { name: string }
-              }) => (
-                <div key={call.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">{call.company.razonSocial || call.company.ruc}</p>
-                    <p className="text-xs text-gray-400">
-                      {call.contact ? call.contact.nombre : call.company.ruc}
-                      {call.agent ? ` · ${call.agent.name}` : ''}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <DispositionBadge disposition={call.disposition} />
-                    <p className="text-xs text-gray-400 mt-1">
-                      {format(new Date(call.calledAt), 'dd/MM HH:mm')}
-                    </p>
-                  </div>
-                </div>
-              )
-            )}
+            {stats?.recentCalls?.map((call) => (
+              <RecentCallRow key={call.id} call={call} showAgent={isAdmin} />
+            ))}
             {!stats?.recentCalls?.length && (
               <p className="text-sm text-gray-400 text-center py-4">Sin llamadas registradas</p>
             )}

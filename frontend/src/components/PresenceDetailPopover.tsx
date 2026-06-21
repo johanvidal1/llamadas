@@ -164,14 +164,29 @@ export function PresenceDetailPopover({
             <p className="font-semibold text-gray-900">Presencia del agente</p>
             <p className="text-gray-500 mt-0.5">
               Estado actual:{' '}
-              <span className="font-medium text-gray-700">{presenceStatusLabel(status)}</span>
+              <span
+                className={`font-medium ${
+                  status === 'online'
+                    ? 'text-green-700'
+                    : status === 'recent'
+                      ? 'text-yellow-700'
+                      : 'text-gray-600'
+                }`}
+              >
+                {presenceStatusLabel(status)}
+              </span>
             </p>
+            {status === 'offline' && (
+              <p className="text-amber-700 mt-1 font-medium">
+                Sin actividad reciente · {formatTimeAgo(session.lastSeenAt)}
+              </p>
+            )}
           </div>
 
           <dl className="space-y-1.5 text-gray-600">
             <div>
               <dt className="text-gray-500">Última actividad</dt>
-              <dd className="font-medium text-gray-800">
+              <dd className={`font-medium ${status === 'offline' ? 'text-gray-900' : 'text-gray-800'}`}>
                 {formatPresenceDateTime(session.lastSeenAt)}{' '}
                 <span className="font-normal text-gray-500">
                   ({formatTimeAgo(session.lastSeenAt)})

@@ -12,6 +12,7 @@ import { requireAdmin, requireAuth, AuthRequest } from '../middleware/auth'
 import { getDispositionLabel } from '../lib/responseOptions'
 import { isSuperAdminOrOwner } from '../lib/userPermissions'
 import { countUnassignedCompanies } from '../lib/assignmentOrder'
+import { isValidMobileLineNumber, mobileDigits } from '../lib/mobileLine'
 
 function parseFechaConsulta(raw?: string): Date | null {
   if (!raw) return null
@@ -556,9 +557,18 @@ router.post(
               }
             })
             .filter((row): row is NonNullable<typeof row> => row !== null)
+            .filter((row) => isValidMobileLineNumber(row.numeroTelefono))
 
-          if (mobileLineData.length > 0) {
-            await tx.mobileLine.createMany({ data: mobileLineData })
+          const seenMobileKeys = new Set<string>()
+          const dedupedMobileLineData = mobileLineData.filter((row) => {
+            const key = `${row.companyId}:${mobileDigits(row.numeroTelefono)}`
+            if (seenMobileKeys.has(key)) return false
+            seenMobileKeys.add(key)
+            return true
+          })
+
+          if (dedupedMobileLineData.length > 0) {
+            await tx.mobileLine.createMany({ data: dedupedMobileLineData })
           }
         }
 

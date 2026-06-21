@@ -7,6 +7,19 @@ import {
   BatchBlockedError,
 } from '../lib/assignmentOrder'
 import { buildAssignmentPreview } from '../lib/assignmentPreview'
+import {
+  buildReleasePreviewForContext,
+  executeReleaseRemainder,
+  resolveRunContext,
+  ReleaseBlockedError,
+  ReleaseNothingError,
+} from '../lib/assignmentRelease'
+import {
+  buildLegacyBucketMetrics,
+  buildRunMetrics,
+  getAssignmentRunCompanyIds,
+  getRunActivityDates,
+} from '../lib/companyDisposition'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
 
 const router = Router()
@@ -19,11 +32,62 @@ const assignSchema = z.object({
   contactIds: z.array(z.string()).optional(),
 })
 
+const releaseReasonSchema = z.object({
+  reason: z.string().optional(),
+})
+
+const legacyReleaseSchema = z.object({
+  agentId: z.string().min(1, 'Agente requerido'),
+  batchId: z.string().min(1, 'Lote requerido'),
+  reason: z.string().optional(),
+})
+
 const previewSchema = z.object({
   agentId: z.string().min(1, 'Agente requerido'),
   batchId: z.string().optional(),
   count: z.number().int().positive().optional(),
 })
+
+function handleReleaseError(err: unknown, res: Response): boolean {
+  if (err instanceof ReleaseBlockedError) {
+    res.status(400).json({
+      error: err.message,
+      blockedByCallbacks: err.blockedByCallbacks,
+    })
+    return true
+  }
+  if (err instanceof ReleaseNothingError) {
+    res.status(400).json({ error: err.message })
+    return true
+  }
+  if (err instanceof Error && err.message === 'Asignación no encontrada') {
+    res.status(404).json({ error: err.message })
+    return true
+  }
+  if (err instanceof Error && err.message === 'Esta asignación ya fue liberada o cerrada') {
+    res.status(400).json({ error: err.message })
+    return true
+  }
+  return false
+}
+
+type RunCompanyRow = {
+  id: string
+  ruc: string
+  razonSocial: string | null
+  status: string
+  contactCount: number
+  createdAt: Date
+}
+
+function sortCompaniesByImportOrder(companies: RunCompanyRow[]): RunCompanyRow[] {
+  return companies.sort((a, b) => {
+    const ta = new Date(a.createdAt).getTime()
+    const tb = new Date(b.createdAt).getTime()
+    if (ta !== tb) return ta - tb
+    return a.id.localeCompare(b.id)
+  })
+}
 
 async function countDistinctCompanies(contactIds: string[]): Promise<number> {
   if (contactIds.length === 0) return 0
@@ -204,19 +268,165 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
     orderBy: { createdAt: 'desc' },
   })
 
-  res.json({
-    runs: runs.map((run) => ({
-      id: run.id,
-      assignedAt: run.createdAt.toISOString(),
-      importBatchId: run.importBatchId,
-      filename: run.importBatch
-        ? run.importBatch.displayName?.trim() || run.importBatch.filename
-        : null,
-      companyCount: run.companyCount,
-      contactCount: run.contactCount,
-      assignedBy: run.assignedBy,
-    })),
-  })
+  type RunListItem = {
+    id: string
+    assignedAt: string
+    importBatchId: string | null
+    filename: string | null
+    companyCount: number
+    contactCount: number
+    assignedBy: { id: string; name: string }
+    status: string
+    releasedAt: string | null
+    isLegacy: boolean
+    callCount: number
+    contactedCompanies: number
+    pendingCompanies: number
+    firstCallAt: string | null
+    lastCallAt: string | null
+  }
+
+  async function enrichRunActivity(
+    base: Omit<
+      RunListItem,
+      'callCount' | 'contactedCompanies' | 'pendingCompanies' | 'firstCallAt' | 'lastCallAt'
+    >,
+    metrics: { callCount: number; contactedCompanies: number },
+    companyIds: string[],
+    companyCount: number
+  ): Promise<RunListItem> {
+    const activity = await getRunActivityDates(companyIds, agentId)
+    return {
+      ...base,
+      callCount: metrics.callCount,
+      contactedCompanies: metrics.contactedCompanies,
+      pendingCompanies: companyCount - activity.companiesWithCalls,
+      firstCallAt: activity.firstCallAt?.toISOString() ?? null,
+      lastCallAt: activity.lastCallAt?.toISOString() ?? null,
+    }
+  }
+
+  const mappedRuns: RunListItem[] = await Promise.all(
+    runs.map(async (run) => {
+      const [metrics, companyIds] = await Promise.all([
+        buildRunMetrics(run.id, agentId, run.companyCount),
+        getAssignmentRunCompanyIds(run.id),
+      ])
+      return enrichRunActivity(
+        {
+          id: run.id,
+          assignedAt: run.createdAt.toISOString(),
+          importBatchId: run.importBatchId,
+          filename: run.importBatch
+            ? run.importBatch.displayName?.trim() || run.importBatch.filename
+            : null,
+          companyCount: run.companyCount,
+          contactCount: run.contactCount,
+          assignedBy: run.assignedBy,
+          status: run.status,
+          releasedAt: run.releasedAt?.toISOString() ?? null,
+          isLegacy: false,
+        },
+        metrics,
+        companyIds,
+        run.companyCount
+      )
+    })
+  )
+
+  const legacyRuns: RunListItem[] = []
+  if (batchId) {
+    const legacy = await buildLegacyBucketMetrics(agentId, batchId)
+    if (legacy.companyCount > 0) {
+      const batch = await prisma.importBatch.findUnique({
+        where: { id: batchId },
+        select: { filename: true, displayName: true },
+      })
+      legacyRuns.push(
+        await enrichRunActivity(
+          {
+            id: `legacy-${batchId}`,
+            assignedAt: legacy.earliestAssignedAt?.toISOString() ?? new Date(0).toISOString(),
+            importBatchId: batchId,
+            filename: batch
+              ? batch.displayName?.trim() || batch.filename
+              : null,
+            companyCount: legacy.companyCount,
+            contactCount: legacy.companyIds.length,
+            assignedBy: { id: '', name: 'Asignación anterior' },
+            status: 'ACTIVE',
+            releasedAt: null,
+            isLegacy: true,
+          },
+          legacy,
+          legacy.companyIds,
+          legacy.companyCount
+        )
+      )
+    }
+  } else {
+    const legacyAssignments = await prisma.assignment.findMany({
+      where: { agentId, assignmentRunId: null },
+      select: {
+        contact: {
+          select: {
+            company: {
+              select: { importBatchId: true },
+            },
+          },
+        },
+      },
+    })
+    const legacyBatchIds = [
+      ...new Set(
+        legacyAssignments
+          .map((a) => a.contact.company.importBatchId)
+          .filter((id): id is string => id != null)
+      ),
+    ]
+    if (legacyBatchIds.length > 0) {
+      const batches = await prisma.importBatch.findMany({
+        where: { id: { in: legacyBatchIds } },
+        select: { id: true, filename: true, displayName: true },
+      })
+      const batchById = new Map(batches.map((b) => [b.id, b]))
+      for (const legacyBatchId of legacyBatchIds) {
+        const legacy = await buildLegacyBucketMetrics(agentId, legacyBatchId)
+        if (legacy.companyCount === 0) continue
+        const batch = batchById.get(legacyBatchId)
+        legacyRuns.push(
+          await enrichRunActivity(
+            {
+              id: `legacy-${legacyBatchId}`,
+              assignedAt: legacy.earliestAssignedAt?.toISOString() ?? new Date(0).toISOString(),
+              importBatchId: legacyBatchId,
+              filename: batch
+                ? batch.displayName?.trim() || batch.filename
+                : null,
+              companyCount: legacy.companyCount,
+              contactCount: legacy.companyIds.length,
+              assignedBy: { id: '', name: 'Asignación anterior' },
+              status: 'ACTIVE',
+              releasedAt: null,
+              isLegacy: true,
+            },
+            legacy,
+            legacy.companyIds,
+            legacy.companyCount
+          )
+        )
+      }
+      legacyRuns.sort(
+        (a, b) => new Date(b.assignedAt).getTime() - new Date(a.assignedAt).getTime()
+      )
+    }
+  }
+
+  const allRuns = [...mappedRuns, ...legacyRuns].sort(
+    (a, b) => new Date(b.assignedAt).getTime() - new Date(a.assignedAt).getTime()
+  )
+
+  res.json({ runs: allRuns })
 })
 
 // GET /api/assignments/untracked-companies
@@ -238,17 +448,14 @@ router.get('/untracked-companies', requireAdmin, async (req: AuthRequest, res: R
       contact: {
         select: {
           company: {
-            select: { id: true, ruc: true, razonSocial: true, status: true },
+            select: { id: true, ruc: true, razonSocial: true, status: true, createdAt: true },
           },
         },
       },
     },
   })
 
-  const companyMap = new Map<
-    string,
-    { id: string; ruc: string; razonSocial: string | null; status: string; contactCount: number }
-  >()
+  const companyMap = new Map<string, RunCompanyRow>()
   for (const a of assignments) {
     const company = a.contact.company
     const existing = companyMap.get(company.id)
@@ -261,15 +468,79 @@ router.get('/untracked-companies', requireAdmin, async (req: AuthRequest, res: R
         razonSocial: company.razonSocial,
         status: company.status,
         contactCount: 1,
+        createdAt: company.createdAt,
       })
     }
   }
 
-  const companies = [...companyMap.values()].sort((a, b) =>
-    (a.razonSocial ?? a.ruc).localeCompare(b.razonSocial ?? b.ruc, 'es')
-  )
+  const companies = sortCompaniesByImportOrder([...companyMap.values()])
 
   res.json({ companies })
+})
+
+// POST /api/assignments/runs/:runId/release-preview
+router.post(
+  '/runs/:runId/release-preview',
+  requireAdmin,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const ctx = await resolveRunContext(req.params.runId)
+      const preview = await buildReleasePreviewForContext(ctx)
+      res.json(preview)
+    } catch (err) {
+      if (handleReleaseError(err, res)) return
+      throw err
+    }
+  }
+)
+
+// POST /api/assignments/runs/:runId/release-remainder
+router.post(
+  '/runs/:runId/release-remainder',
+  requireAdmin,
+  async (req: AuthRequest, res: Response) => {
+    const { reason } = releaseReasonSchema.parse(req.body)
+    try {
+      const ctx = await resolveRunContext(req.params.runId)
+      const result = await executeReleaseRemainder(ctx, req.user!.id, reason)
+      res.json(result)
+    } catch (err) {
+      if (handleReleaseError(err, res)) return
+      throw err
+    }
+  }
+)
+
+// POST /api/assignments/release-legacy-preview
+router.post('/release-legacy-preview', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const { agentId, batchId } = legacyReleaseSchema.parse(req.body)
+  try {
+    const preview = await buildReleasePreviewForContext({
+      type: 'legacy',
+      agentId,
+      batchId,
+    })
+    res.json(preview)
+  } catch (err) {
+    if (handleReleaseError(err, res)) return
+    throw err
+  }
+})
+
+// POST /api/assignments/release-legacy
+router.post('/release-legacy', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const { agentId, batchId, reason } = legacyReleaseSchema.parse(req.body)
+  try {
+    const result = await executeReleaseRemainder(
+      { type: 'legacy', agentId, batchId },
+      req.user!.id,
+      reason
+    )
+    res.json(result)
+  } catch (err) {
+    if (handleReleaseError(err, res)) return
+    throw err
+  }
 })
 
 // GET /api/assignments/runs/:id/companies
@@ -289,17 +560,14 @@ router.get('/runs/:id/companies', requireAdmin, async (req: AuthRequest, res: Re
       contact: {
         select: {
           company: {
-            select: { id: true, ruc: true, razonSocial: true, status: true },
+            select: { id: true, ruc: true, razonSocial: true, status: true, createdAt: true },
           },
         },
       },
     },
   })
 
-  const companyMap = new Map<
-    string,
-    { id: string; ruc: string; razonSocial: string | null; status: string; contactCount: number }
-  >()
+  const companyMap = new Map<string, RunCompanyRow>()
   for (const a of assignments) {
     const company = a.contact.company
     const existing = companyMap.get(company.id)
@@ -312,13 +580,12 @@ router.get('/runs/:id/companies', requireAdmin, async (req: AuthRequest, res: Re
         razonSocial: company.razonSocial,
         status: company.status,
         contactCount: 1,
+        createdAt: company.createdAt,
       })
     }
   }
 
-  const companies = [...companyMap.values()].sort((a, b) =>
-    (a.razonSocial ?? a.ruc).localeCompare(b.razonSocial ?? b.ruc, 'es')
-  )
+  const companies = sortCompaniesByImportOrder([...companyMap.values()])
 
   res.json({ companies })
 })

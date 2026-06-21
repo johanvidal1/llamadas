@@ -7,8 +7,9 @@ import { isAdminUser } from '../lib/userPermissions'
 
 const router = Router()
 
-const ONLINE_THRESHOLD_MS = 3 * 60 * 1000
-const RECENT_THRESHOLD_MS = 15 * 60 * 1000
+const ONLINE_THRESHOLD_MS = 5 * 60 * 1000
+const RECENT_THRESHOLD_MS = 20 * 60 * 1000
+const STALE_SESSION_MS = 24 * 60 * 60 * 1000
 
 function getClientIp(req: AuthRequest): string | null {
   const forwarded = req.headers['x-forwarded-for']
@@ -44,6 +45,8 @@ router.post('/heartbeat', requireAuth, async (req: AuthRequest, res: Response) =
   const os = [osInfo.name, osInfo.version].filter(Boolean).join(' ') || null
   const ipAddress = getClientIp(req)
 
+  const now = new Date()
+
   await prisma.userSession.upsert({
     where: {
       userId_deviceId: {
@@ -61,6 +64,7 @@ router.post('/heartbeat', requireAuth, async (req: AuthRequest, res: Response) =
       os,
       platform: platform ?? null,
       currentRoute: currentRoute ?? null,
+      lastSeenAt: now,
     },
     update: {
       deviceLabel: deviceLabel ?? null,
@@ -70,6 +74,36 @@ router.post('/heartbeat', requireAuth, async (req: AuthRequest, res: Response) =
       os,
       platform: platform ?? null,
       currentRoute: currentRoute ?? null,
+      lastSeenAt: now,
+    },
+  })
+
+  const staleCutoff = new Date(Date.now() - STALE_SESSION_MS)
+  await prisma.userSession.deleteMany({
+    where: {
+      userId: req.user!.id,
+      lastSeenAt: { lt: staleCutoff },
+    },
+  })
+
+  res.status(204).send()
+})
+
+const logoutSchema = z.object({
+  deviceId: z.string().min(1),
+})
+
+router.post('/logout', requireAuth, async (req: AuthRequest, res: Response) => {
+  const parsed = logoutSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Datos inválidos' })
+    return
+  }
+
+  await prisma.userSession.deleteMany({
+    where: {
+      userId: req.user!.id,
+      deviceId: parsed.data.deviceId,
     },
   })
 
@@ -106,6 +140,9 @@ router.get('/agents', requireAuth, async (req: AuthRequest, res: Response) => {
       name: true,
       email: true,
       sessions: {
+        where: {
+          lastSeenAt: { gte: new Date(Date.now() - STALE_SESSION_MS) },
+        },
         orderBy: { lastSeenAt: 'desc' },
       },
     },

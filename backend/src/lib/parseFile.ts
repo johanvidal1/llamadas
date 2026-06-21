@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx'
 import csvParser from 'csv-parser'
 import { Readable } from 'stream'
+import { dedupeParsedMobileLines, isValidMobileLineNumber } from './mobileLine'
 
 export interface ParsedContact {
   nombre: string
@@ -220,6 +221,8 @@ function parseMobileRows(rows: Record<string, unknown>[]): ParsedMobileLine[] {
 
     const numeroTelefonoRaw = String(row['numero_telefono'] ?? '').trim()
     const numeroTelefono = numeroTelefonoRaw ? normalizePhone(numeroTelefonoRaw) : undefined
+    if (!isValidMobileLineNumber(numeroTelefono)) continue
+
     const estadoLinea = String(row['estado_linea'] ?? '').trim() || undefined
     const plan = String(row['plan'] ?? '').trim() || undefined
     const estado = String(row['estado_producto'] ?? '').trim() || undefined
@@ -227,7 +230,7 @@ function parseMobileRows(rows: Record<string, unknown>[]): ParsedMobileLine[] {
     result.push({ ruc, numeroTelefono, estadoLinea, plan, estado })
   }
 
-  return result
+  return dedupeParsedMobileLines(result)
 }
 
 export class MissingContactosSheetError extends Error {

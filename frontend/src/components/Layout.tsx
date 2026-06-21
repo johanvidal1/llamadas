@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Outlet, NavLink, Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { sendHeartbeat } from '../api/client'
+import { sendHeartbeat, sendPresenceLogout } from '../api/client'
 import { getDeviceId, detectPlatform } from '../lib/deviceId'
 import {
   LayoutDashboard,
@@ -35,24 +35,27 @@ const agentNav = [
   { to: '/callbacks', icon: CalendarClock, label: 'Mis Callbacks' },
 ]
 
+const HEARTBEAT_VISIBLE_MS = 30_000
+const HEARTBEAT_HIDDEN_MS = 120_000
+
 export default function Layout() {
   const { user, isAdmin, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
-  const heartbeatPausedRef = useRef(false)
+  const tabHiddenRef = useRef(document.hidden)
 
   const navItems = isAdmin ? adminNav : agentNav
   const sidebarBg = isAdmin ? 'bg-green-900' : 'bg-blue-900'
 
   const postHeartbeat = useCallback(() => {
-    if (!user || heartbeatPausedRef.current) return
+    if (!user) return
     sendHeartbeat({
       deviceId: getDeviceId(),
       currentRoute: location.pathname,
       platform: detectPlatform(),
-    }).catch(() => {
-      // Ignore transient network errors; next interval will retry.
+    }).catch((err) => {
+      console.warn('[presence] heartbeat failed:', err)
     })
   }, [user, location.pathname])
 
@@ -60,11 +63,20 @@ export default function Layout() {
     if (!user) return
 
     postHeartbeat()
-    const intervalId = window.setInterval(postHeartbeat, 60_000)
+    let intervalId = window.setInterval(
+      postHeartbeat,
+      tabHiddenRef.current ? HEARTBEAT_HIDDEN_MS : HEARTBEAT_VISIBLE_MS,
+    )
 
     const onVisibilityChange = () => {
-      heartbeatPausedRef.current = document.hidden
-      if (!document.hidden) {
+      const wasHidden = tabHiddenRef.current
+      tabHiddenRef.current = document.hidden
+      window.clearInterval(intervalId)
+      intervalId = window.setInterval(
+        postHeartbeat,
+        document.hidden ? HEARTBEAT_HIDDEN_MS : HEARTBEAT_VISIBLE_MS,
+      )
+      if (wasHidden && !document.hidden) {
         postHeartbeat()
       }
     }
@@ -78,6 +90,7 @@ export default function Layout() {
 
   const handleLogout = () => {
     setMenuOpen(false)
+    void sendPresenceLogout(getDeviceId()).catch(() => {})
     logout()
     navigate('/login')
   }
