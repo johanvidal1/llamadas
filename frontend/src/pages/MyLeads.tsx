@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getClients, getClient, logCall, updateCall, updateClient, updateContact, getCallbacks, downloadImportExport } from '../api/client'
+import { getClients, getClient, logCall, updateClient, updateContact, getCallbacks, downloadImportExport } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
 import {
@@ -34,6 +34,7 @@ import { es } from 'date-fns/locale'
 import { StatusBadge, DISPOSITION_CONFIG, getDispositionBorderColor, DispositionBadge } from '../components/StatusBadge'
 import {
   SALES_FUNNEL_STAGES,
+  ZERO_PROGRESS_OPTIONS,
   DISPOSITION_COLORS,
   getDispositionLabel,
   getAclaracionForDisposition,
@@ -68,6 +69,7 @@ interface CallLogEntry {
   aclaracion?: string
   notes?: string
   calledAt: string
+  updatedAt?: string
   agent: { id: string; name: string }
   contact?: { id: string; nombre: string; tipoContacto?: string }
 }
@@ -130,6 +132,15 @@ function truncateGraphemes(text: string, max: number): string {
   const chars = [...text]
   if (chars.length <= max) return text
   return chars.slice(0, max - 1).join('') + '…'
+}
+
+function callLogDisplayTime(log: Pick<CallLogEntry, 'calledAt' | 'updatedAt'>): Date {
+  return new Date(log.updatedAt ?? log.calledAt)
+}
+
+function callLogWasEdited(log: Pick<CallLogEntry, 'calledAt' | 'updatedAt'>): boolean {
+  if (!log.updatedAt) return false
+  return new Date(log.updatedAt).getTime() > new Date(log.calledAt).getTime()
 }
 
 class SaveCancelled extends Error {
@@ -315,18 +326,20 @@ function ContactPhoneField({
 }
 
 function EditField({
-  label, value, onChange, placeholder,
+  label, value, onChange, placeholder, onBlur, className,
 }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string
+  onBlur?: () => void; className?: string
 }) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className={['flex flex-col gap-0.5', className].filter(Boolean).join(' ')}>
       <span className="text-xs text-gray-500 font-medium">{label}</span>
       <input
         type="text"
         className="border border-gray-300 rounded px-3 py-1.5 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         placeholder={placeholder}
       />
     </div>
@@ -342,25 +355,36 @@ const GRID_STATUS_FILTERS = [
   { value: 'DO_NOT_CALL', label: 'No llamar' },
 ]
 
-const LIST_FILTERS_OPERATIONAL = [
-  { value: '', label: 'Todos' },
+const LIST_COLA_OPTIONS = [
+  { value: 'ALL', label: 'Todos' },
+  { value: 'FUNNEL', label: 'Embudo comercial' },
   { value: 'PENDING', label: 'Pendientes' },
   { value: 'VOLVER_A_LLAMAR', label: 'Volver a llamar' },
   { value: 'OTROS', label: 'Otros' },
-]
+] as const
+
+type ListCola = (typeof LIST_COLA_OPTIONS)[number]['value']
 
 const VALID_LIST_FILTERS = new Set([
+  'ALL',
   'PENDING',
   'VOLVER_A_LLAMAR',
   'OTROS',
   'FUNNEL',
   ...SALES_FUNNEL_STAGES.map((stage) => stage.code),
+  ...ZERO_PROGRESS_OPTIONS.map((o) => o.code),
 ])
 
 const LIST_FILTER_SHORT_LABELS: Partial<Record<string, string>> = {
   ESPERA_RESPUESTA: 'Espera resp. final',
   DISCUSION_PROPUESTA: 'Discusión propuesta',
   PROPUESTA_PRESENTADA: 'Propuesta presentada',
+  NO_CONTESTA: 'No contesta',
+  VOLVER_A_LLAMAR: 'Volver a llamar',
+  SIN_LLEGADA_DECISOR: 'Sin llegada',
+  RUC_SUSPENDIDO: 'RUC suspendido',
+  CLIENTE_ACTUAL: 'Cliente actual',
+  NO_INTERESADO: 'No interesado',
 }
 
 const LIST_FILTERS_FUNNEL = SALES_FUNNEL_STAGES.map((stage) => {
@@ -374,20 +398,45 @@ const LIST_FILTERS_FUNNEL = SALES_FUNNEL_STAGES.map((stage) => {
   }
 })
 
-function getListFilterLabel(filter: string): string | undefined {
-  if (filter === 'FUNNEL') return 'Embudo comercial'
-  return (
-    LIST_FILTERS_OPERATIONAL.find((f) => f.value === filter)?.label ??
-    LIST_FILTERS_FUNNEL.find((f) => f.value === filter)?.label
-  )
+function parseListFiltersFromUrl(filterParam: string): { cola: ListCola; drilldown: string | null } {
+  if (!filterParam || filterParam === 'FUNNEL') return { cola: 'FUNNEL', drilldown: null }
+  if (filterParam === 'ALL') return { cola: 'ALL', drilldown: null }
+  if (filterParam === 'PENDING' || filterParam === 'VOLVER_A_LLAMAR' || filterParam === 'OTROS') {
+    return { cola: filterParam, drilldown: null }
+  }
+  if (VALID_LIST_FILTERS.has(filterParam)) return { cola: 'FUNNEL', drilldown: filterParam }
+  return { cola: 'FUNNEL', drilldown: null }
 }
 
-function isFunnelAggregate(filter: string): boolean {
-  return filter === 'FUNNEL'
+function listFiltersToUrl(cola: ListCola, drilldown: string | null): string | null {
+  if (drilldown) return drilldown
+  if (cola === 'FUNNEL') return null
+  return cola
 }
 
-function isFunnelFilter(filter: string): boolean {
-  return SALES_FUNNEL_STAGES.some((stage) => stage.code === filter)
+function getListFilterLabel(cola: ListCola, drilldown: string | null): string | undefined {
+  if (drilldown) {
+    return (
+      LIST_FILTERS_FUNNEL.find((f) => f.value === drilldown)?.label ??
+      LIST_FILTER_SHORT_LABELS[drilldown] ??
+      getDispositionLabel(drilldown)
+    )
+  }
+  return LIST_COLA_OPTIONS.find((f) => f.value === cola)?.label
+}
+
+function getListApiParams(cola: ListCola, drilldown: string | null) {
+  if (drilldown) return { disposition: drilldown }
+  if (cola === 'PENDING') return { status: 'PENDING' as const }
+  if (cola === 'ALL') return {}
+  return { disposition: cola }
+}
+
+function listChipColorClasses(value: string): string {
+  if (value === 'PENDING') return 'bg-gray-100 text-gray-700 border-gray-300'
+  if (value === 'OTROS') return 'bg-slate-100 text-slate-700 border-slate-300'
+  const disp = DISPOSITION_COLORS[value]
+  return disp ? disp.split(' border-l-')[0] : 'bg-white text-gray-600 border-gray-300'
 }
 
 const AGENDADOS_SPLIT_STORAGE_KEY = 'myLeads-agendadosSplitPct'
@@ -436,12 +485,13 @@ export default function MyLeads() {
   const initialBatchId = searchParams.get('batchId') ?? ''
   const initialCompanyId = searchParams.get('companyId') ?? ''
   const initialContactId = searchParams.get('contactId') ?? ''
-  const deepLinkFilter = VALID_LIST_FILTERS.has(initialFilter) ? initialFilter : ''
+  const hasListDeepLink = initialFilter !== '' && VALID_LIST_FILTERS.has(initialFilter)
+  const initialListFilters = parseListFiltersFromUrl(initialFilter)
   const initialFromDashboard = searchParams.get('from') === 'dashboard'
 
   // ── View toggle (persisted)
   const [viewMode, setViewMode] = useState<'detail' | 'grid' | 'list'>(() => {
-    if (deepLinkFilter) return 'list'
+    if (hasListDeepLink) return 'list'
     return (localStorage.getItem('myLeadsView') as 'detail' | 'grid' | 'list') || 'detail'
   })
   const [returnToView, setReturnToView] = useState<'list' | 'grid' | null>(null)
@@ -455,7 +505,8 @@ export default function MyLeads() {
 
   // ── List view state
   const [listSearch, setListSearch] = useState('')
-  const [listFilter, setListFilter] = useState(deepLinkFilter || 'FUNNEL')
+  const [listCola, setListCola] = useState<ListCola>(initialListFilters.cola)
+  const [listDrilldown, setListDrilldown] = useState<string | null>(initialListFilters.drilldown)
 
   // ── Grid view state
   const [gridSearch, setGridSearch] = useState('')
@@ -523,8 +574,10 @@ export default function MyLeads() {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [activeContactIdx, setActiveContactIdx] = useState(0)
   const [editPlan, setEditPlan] = useState('')
-  const [editingCallLogId, setEditingCallLogId] = useState<string | null>(null)
-  const [previousSnapshot, setPreviousSnapshot] = useState<CallLogSnapshot | null>(null)
+  const [editRazonSocial, setEditRazonSocial] = useState('')
+  const persistedRazonSocialRef = useRef('')
+  const razonSocialSavingRef = useRef(false)
+  const [latestLogSnapshot, setLatestLogSnapshot] = useState<CallLogSnapshot | null>(null)
   const [disposition, setDisposition] = useState('')
   const [callNotes, setCallNotes] = useState('')
   const [schedDate, setSchedDate] = useState('')
@@ -557,16 +610,12 @@ export default function MyLeads() {
 
   // List view: server-side disposition / pending filters
   const { data: listData, isLoading: loadingListView } = useQuery({
-    queryKey: ['clients', 'my-leads', 'list', selectedBatchId, listFilter],
+    queryKey: ['clients', 'my-leads', 'list', selectedBatchId, listCola, listDrilldown],
     queryFn: () =>
       getClients({
         limit: 500,
         batchId: selectedBatchId || undefined,
-        ...(listFilter === 'PENDING'
-          ? { status: 'PENDING' }
-          : listFilter
-          ? { disposition: listFilter }
-          : {}),
+        ...getListApiParams(listCola, listDrilldown),
       }),
     enabled: viewMode === 'list',
   })
@@ -705,9 +754,50 @@ export default function MyLeads() {
   useEffect(() => {
     if (detail && currentClient && detail.id === currentClient.id) {
       setEditPlan(detail.plan ?? '')
+      const rs = detail.razonSocial ?? ''
+      setEditRazonSocial(rs)
+      persistedRazonSocialRef.current = rs
       setHistorialScope('contact')
     }
   }, [detail?.id, currentClient?.id])
+
+  const normalizeRazonSocial = (v: string) => v.trim()
+
+  const isRazonSocialDirty = useCallback(
+    () => normalizeRazonSocial(editRazonSocial) !== normalizeRazonSocial(persistedRazonSocialRef.current),
+    [editRazonSocial]
+  )
+
+  const saveRazonSocialIfChanged = useCallback(async (): Promise<boolean> => {
+    if (!currentClient?.id) return false
+    if (!isRazonSocialDirty()) return false
+    if (razonSocialSavingRef.current) return false
+
+    razonSocialSavingRef.current = true
+    const value = normalizeRazonSocial(editRazonSocial)
+    try {
+      await updateClient(currentClient.id, { razonSocial: value || undefined })
+      persistedRazonSocialRef.current = value
+      qc.invalidateQueries({ queryKey: ['client-detail', currentClient.id] })
+      qc.invalidateQueries({ queryKey: ['clients'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+      return true
+    } catch (err) {
+      const message =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+        'Error al guardar razón social'
+      toast.error(message)
+      setEditRazonSocial(persistedRazonSocialRef.current)
+      return false
+    } finally {
+      razonSocialSavingRef.current = false
+    }
+  }, [currentClient?.id, editRazonSocial, isRazonSocialDirty, qc])
+
+  const handleRazonSocialBlur = useCallback(async () => {
+    const saved = await saveRazonSocialIfChanged()
+    if (saved) toast.success('Razón social actualizada')
+  }, [saveRazonSocialIfChanged])
 
   const clearEditableCallFields = useCallback(() => {
     setDisposition('')
@@ -716,14 +806,7 @@ export default function MyLeads() {
     setSchedTime('')
   }, [])
 
-  const hydrateFromSnapshot = useCallback((snapshot: CallLogSnapshot) => {
-    setDisposition(snapshot.disposition)
-    setCallNotes(snapshot.notes ?? '')
-    setSchedDate(snapshot.schedDate ?? '')
-    setSchedTime(snapshot.schedTime || '09:00')
-  }, [])
-
-  // Hydrate call log view/edit state when contact or detail changes
+  // Prefill disposition from latest log; each save appends a new CallLog
   useEffect(() => {
     if (!detail || !user?.id || !currentClient?.id) return
     if (detail.id !== currentClient.id) return
@@ -758,36 +841,41 @@ export default function MyLeads() {
       pendingContactIdxRef.current = null
     }
 
+    if (pendingCallLogIdRef.current) {
+      const pinnedLog = detail.callLogs.find((l) => l.id === pendingCallLogIdRef.current)
+      pendingCallLogIdRef.current = null
+      if (pinnedLog?.contact?.id) {
+        const cIdx = displayContacts.findIndex((c) => c.id === pinnedLog.contact!.id)
+        if (cIdx >= 0) {
+          contactIdx = cIdx
+          setActiveContactIdx(cIdx)
+        }
+      }
+    }
+
     const idx = Math.min(contactIdx, Math.max(0, displayContacts.length - 1))
     const contact = displayContacts[idx]
     if (!contact?.id || contact.id.startsWith('summary-')) {
-      setEditingCallLogId(null)
-      setPreviousSnapshot(null)
+      setLatestLogSnapshot(null)
       clearEditableCallFields()
       return
     }
 
-    let targetLog: CallLogEntry | undefined
-    if (pendingCallLogIdRef.current) {
-      targetLog = detail.callLogs.find((l) => l.id === pendingCallLogIdRef.current)
-      pendingCallLogIdRef.current = null
-    } else {
-      targetLog = [...detail.callLogs]
-        .filter((l) => l.contact?.id === contact.id && l.agentId === user.id)
-        .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())[0]
-    }
+    const latestLog = [...detail.callLogs]
+      .filter((l) => l.contact?.id === contact.id && l.agentId === user.id)
+      .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())[0]
 
-    if (targetLog) {
-      const snapshot = snapshotFromLog(targetLog, detail.callbacks)
-      setEditingCallLogId(targetLog.id)
-      setPreviousSnapshot(snapshot)
-      hydrateFromSnapshot(snapshot)
+    if (latestLog) {
+      setLatestLogSnapshot(snapshotFromLog(latestLog, detail.callbacks))
+      setDisposition(latestLog.disposition)
+      setCallNotes('')
+      setSchedDate('')
+      setSchedTime('09:00')
     } else {
-      setEditingCallLogId(null)
-      setPreviousSnapshot(null)
+      setLatestLogSnapshot(null)
       clearEditableCallFields()
     }
-  }, [detail, activeContactIdx, user?.id, clearEditableCallFields, hydrateFromSnapshot, displayContacts, currentClient?.id])
+  }, [detail, activeContactIdx, user?.id, clearEditableCallFields, displayContacts, currentClient?.id])
 
   const saveActiveContactIfDirty = useCallback(async (): Promise<boolean> => {
     if (!displayContacts.length) return false
@@ -1136,13 +1224,15 @@ export default function MyLeads() {
     )
   }
 
-  const setListFilterWithUrl = useCallback(
-    (filter: string) => {
-      setListFilter(filter)
+  const applyListFilters = useCallback(
+    (cola: ListCola, drilldown: string | null) => {
+      setListCola(cola)
+      setListDrilldown(drilldown)
+      const urlFilter = listFiltersToUrl(cola, drilldown)
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev)
-          if (filter && filter !== 'FUNNEL') next.set('filter', filter)
+          if (urlFilter) next.set('filter', urlFilter)
           else next.delete('filter')
           return next
         },
@@ -1172,20 +1262,10 @@ export default function MyLeads() {
     }
   }
 
-  const canSaveCallResult = useMemo(() => {
-    if (editingCallLogId) {
-      const snap = previousSnapshot
-      if (!snap) return false
-      const snapSchedTime = snap.schedTime || '09:00'
-      return (
-        disposition !== snap.disposition ||
-        callNotes !== (snap.notes ?? '') ||
-        schedDate !== (snap.schedDate ?? '') ||
-        schedTime !== snapSchedTime
-      )
-    }
-    return disposition !== '' || schedDate !== ''
-  }, [editingCallLogId, previousSnapshot, disposition, callNotes, schedDate, schedTime])
+  const canSaveCallResult = useMemo(
+    () => disposition !== '' || schedDate !== '',
+    [disposition, schedDate]
+  )
 
   const saveMutation = useMutation({
     mutationFn: async (autoNext: boolean) => {
@@ -1194,15 +1274,23 @@ export default function MyLeads() {
         callLogSaved: false,
         contactSaved: false,
         planChanged: false,
+        razonSocialChanged: false,
       }
       if (!currentClient) return emptyResult
 
       const contactSaved = await saveActiveContactIfDirty()
       const planChanged = (editPlan || '') !== (detail?.plan ?? '')
-      if (planChanged) {
+      const razonSocialChanged = isRazonSocialDirty()
+      if (planChanged || razonSocialChanged) {
         await updateClient(currentClient.id, {
-          plan: editPlan || undefined,
+          ...(planChanged ? { plan: editPlan || undefined } : {}),
+          ...(razonSocialChanged
+            ? { razonSocial: normalizeRazonSocial(editRazonSocial) || undefined }
+            : {}),
         })
+        if (razonSocialChanged) {
+          persistedRazonSocialRef.current = normalizeRazonSocial(editRazonSocial)
+        }
       }
 
       if (displayContacts.length === 0) {
@@ -1228,28 +1316,7 @@ export default function MyLeads() {
 
       let callLogSaved = false
 
-      if (editingCallLogId) {
-        const snap = previousSnapshot
-        const snapSchedTime = snap?.schedTime || '09:00'
-        const hasDispositionChange = snap ? disposition !== snap.disposition : !!disposition
-        const hasNotesChange = snap ? callNotes !== (snap.notes ?? '') : !!callNotes
-        const hasSchedDateChange = snap ? schedDate !== (snap.schedDate ?? '') : !!schedDate
-        const hasSchedTimeChange = snap ? schedTime !== snapSchedTime : !!schedTime
-        const hasCallUpdate = hasDispositionChange || hasNotesChange
-        const hasSchedUpdate = hasSchedDateChange || hasSchedTimeChange
-        if (!hasCallUpdate && !hasSchedUpdate) {
-          throw new Error('Ingresa al menos un campo para actualizar el registro')
-        }
-        if (disposition === 'VOLVER_A_LLAMAR' && !schedDate) {
-          throw new Error('Selecciona la fecha para el callback')
-        }
-        await updateCall(editingCallLogId, {
-          ...(hasDispositionChange ? { disposition } : {}),
-          ...(hasNotesChange ? { notes: callNotes || undefined } : {}),
-          ...(hasSchedUpdate ? { callbackDate: callbackDateIso } : {}),
-        })
-        callLogSaved = true
-      } else if (disposition) {
+      if (disposition || schedDate) {
         if (disposition === 'VOLVER_A_LLAMAR' && !schedDate) {
           throw new Error('Selecciona la fecha para el callback')
         }
@@ -1265,27 +1332,9 @@ export default function MyLeads() {
         await logCall({
           clientId: currentClient.id,
           contactId,
-          disposition,
-          notes: callNotes || undefined,
+          disposition: disposition || 'VOLVER_A_LLAMAR',
+          notes: callNotes,
           callbackDate: schedDate ? callbackDateIso : undefined,
-        })
-        callLogSaved = true
-      } else if (schedDate) {
-        const otherContact = findOtherContactWithAgentLog(contactId)
-        if (
-          otherContact &&
-          !confirm(
-            `Esta empresa ya tiene un contacto registrado (${otherContact.nombre}). ¿Está seguro de que desea registrar este contacto?`
-          )
-        ) {
-          throw new SaveCancelled()
-        }
-        await logCall({
-          clientId: currentClient.id,
-          contactId,
-          disposition: 'VOLVER_A_LLAMAR',
-          notes: callNotes || undefined,
-          callbackDate: callbackDateIso,
         })
         callLogSaved = true
       }
@@ -1293,20 +1342,25 @@ export default function MyLeads() {
       if (autoNext && !callLogSaved) {
         throw new Error('Selecciona una respuesta antes de avanzar a la siguiente empresa')
       }
-      if (!callLogSaved && !contactSaved && !planChanged) {
+      if (!callLogSaved && !contactSaved && !planChanged && !razonSocialChanged) {
         throw new Error('Selecciona una respuesta antes de guardar')
       }
 
-      return { autoNext, callLogSaved, contactSaved, planChanged }
+      return { autoNext, callLogSaved, contactSaved, planChanged, razonSocialChanged }
     },
     onSuccess: async (result) => {
       setRespuestaError(false)
       if (result.callLogSaved) {
+        setCallNotes('')
+        setSchedDate('')
+        setSchedTime('09:00')
         toast.success('Resultado guardado')
       } else if (result.contactSaved) {
         toast.success('Datos de contacto actualizados')
       } else if (result.planChanged) {
         toast.success('Plan actualizado')
+      } else if (result.razonSocialChanged) {
+        toast.success('Razón social actualizada')
       }
       qc.invalidateQueries({ queryKey: ['client-detail', currentClient?.id] })
       qc.invalidateQueries({ queryKey: ['callbacks'] })
@@ -1318,8 +1372,7 @@ export default function MyLeads() {
       if (err.name === 'SaveCancelled') return
       const message = err?.message ?? 'Error al guardar'
       if (
-        message.includes('Selecciona una respuesta') ||
-        message.includes('Ingresa al menos un campo')
+        message.includes('Selecciona una respuesta')
       ) {
         setRespuestaError(true)
       }
@@ -1456,7 +1509,7 @@ export default function MyLeads() {
     <div className="flex flex-col h-full overflow-hidden">
 
       {/* ══════════════════════ SHARED TOP BAR ══════════════════════ */}
-      <div className="bg-blue-800 text-white px-3 lg:px-6 py-3 flex flex-wrap items-center justify-between shrink-0 gap-2 lg:gap-4">
+      <div className="bg-blue-800 text-white px-3 lg:px-6 py-3 flex flex-wrap lg:flex-nowrap items-center justify-between shrink-0 gap-2 lg:gap-4">
         <div className="flex items-center gap-2 lg:gap-4 min-w-0 text-sm flex-wrap">
           <span className="font-semibold truncate shrink-0">Migración de Operador</span>
 
@@ -1504,7 +1557,7 @@ export default function MyLeads() {
           )}
         </div>
 
-        <div className="flex items-center gap-2 lg:gap-3 shrink-0 flex-wrap">
+        <div className="flex items-center gap-2 lg:gap-3 shrink-0 flex-wrap lg:flex-nowrap">
           {viewMode === 'list' && returnToDashboard && (
             <button
               type="button"
@@ -1513,11 +1566,11 @@ export default function MyLeads() {
             >
               <ArrowLeft size={14} />
               Volver al inicio
-              {listFilter ? (
+              {(listDrilldown || listCola !== 'FUNNEL') && (
                 <span className="text-blue-200 font-normal">
-                  ({getListFilterLabel(listFilter)})
+                  ({getListFilterLabel(listCola, listDrilldown)})
                 </span>
-              ) : null}
+              )}
             </button>
           )}
           {viewMode === 'detail' && returnToView === 'list' && (
@@ -1528,15 +1581,15 @@ export default function MyLeads() {
             >
               <ArrowLeft size={14} />
               Volver a la lista
-              {listFilter ? (
+              {(listDrilldown || listCola !== 'FUNNEL') && (
                 <span className="text-blue-200 font-normal">
-                  ({getListFilterLabel(listFilter)})
+                  ({getListFilterLabel(listCola, listDrilldown)})
                 </span>
-              ) : null}
+              )}
             </button>
           )}
-          {/* ── View toggle ── */}
-          <div className="flex bg-blue-700 rounded-lg p-0.5 gap-0.5">
+          {/* ── View toggle (fixed position; nav slot always to the right) ── */}
+          <div className="flex bg-blue-700 rounded-lg p-0.5 gap-0.5 shrink-0">
             <button
               onClick={() => { setReturnToView(null); switchView('detail') }}
               title="Vista detalle — ficha individual con historial"
@@ -1587,25 +1640,49 @@ export default function MyLeads() {
             </button>
           </div>
 
-          {/* ── Navigation (detail only) ── */}
-          {viewMode === 'detail' && (
-            <>
-              <span className="text-blue-300 text-xs">{currentIndex + 1} / {total}</span>
-              <DetailRecordNav
-                variant="header"
-                onFirstRegistered={navigateWithSave(goToFirstRegistered)}
-                onPrev={navigateWithSave(goPrev)}
-                onNext={navigateWithSave(goNext)}
-                onFirstEmpty={navigateWithSave(goToFirstEmpty)}
-                isFirst={isFirst}
-                isLast={isLast}
-                atFirstRegistered={atFirstRegistered}
-                atFirstEmpty={atFirstEmpty}
-                noRegistered={!firstRegisteredTarget}
-                noEmpty={!firstEmptyTarget}
-              />
-            </>
-          )}
+          {/* ── Nav slot (reserved width so toggle does not shift) ── */}
+          <div className="flex items-center justify-end gap-2 min-w-[12rem] shrink-0">
+            {viewMode === 'detail' ? (
+              <>
+                <span className="text-blue-300 text-xs tabular-nums whitespace-nowrap">
+                  {currentIndex + 1} / {total}
+                </span>
+                <DetailRecordNav
+                  variant="header"
+                  onFirstRegistered={navigateWithSave(goToFirstRegistered)}
+                  onPrev={navigateWithSave(goPrev)}
+                  onNext={navigateWithSave(goNext)}
+                  onFirstEmpty={navigateWithSave(goToFirstEmpty)}
+                  isFirst={isFirst}
+                  isLast={isLast}
+                  atFirstRegistered={atFirstRegistered}
+                  atFirstEmpty={atFirstEmpty}
+                  noRegistered={!firstRegisteredTarget}
+                  noEmpty={!firstEmptyTarget}
+                />
+              </>
+            ) : (
+              <div
+                className="invisible flex items-center gap-2 pointer-events-none"
+                aria-hidden="true"
+              >
+                <span className="text-xs tabular-nums whitespace-nowrap">999 / 999</span>
+                <DetailRecordNav
+                  variant="header"
+                  onFirstRegistered={() => {}}
+                  onPrev={() => {}}
+                  onNext={() => {}}
+                  onFirstEmpty={() => {}}
+                  isFirst
+                  isLast
+                  atFirstRegistered
+                  atFirstEmpty
+                  noRegistered
+                  noEmpty
+                />
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1673,12 +1750,13 @@ export default function MyLeads() {
                   )}
                   <div className="flex flex-col sm:flex-row gap-3 items-start">
                     <ReadField label="RUC" value={displayDetail.ruc} className="sm:w-40 shrink-0" mono />
-                    <ReadField
+                    <EditField
                       label="Razón Social"
-                      value={displayDetail.razonSocial}
+                      value={editRazonSocial}
+                      onChange={setEditRazonSocial}
+                      onBlur={() => { void handleRazonSocialBlur() }}
+                      placeholder="Sin razón social — completar manualmente"
                       className="flex-1 min-w-0 w-full"
-                      mono={false}
-                      valueClassName="font-sans break-words line-clamp-2"
                     />
                   </div>
                 </div>
@@ -1757,7 +1835,7 @@ export default function MyLeads() {
                 <div className="flex flex-col gap-3 flex-1">
 
                   {/* Resultado de esta llamada */}
-                  <div className={`border border-gray-200 rounded-lg p-4 space-y-3 border-l-4 ${previousSnapshot ? 'bg-slate-50 border-l-blue-500' : 'bg-white border-l-transparent'}`}>
+                  <div className={`border border-gray-200 rounded-lg p-4 space-y-3 border-l-4 ${latestLogSnapshot ? 'bg-slate-50 border-l-blue-500' : 'bg-white border-l-transparent'}`}>
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Resultado de esta llamada</p>
                     <div className="flex flex-col gap-0.5">
                       <label className="text-xs text-gray-500 font-medium">Respuesta</label>
@@ -1780,7 +1858,7 @@ export default function MyLeads() {
                   </div>
 
                   <div className="relative h-0 shrink-0 z-10">
-                    {previousSnapshot && (
+                    {latestLogSnapshot && (
                       <div className="absolute inset-x-0 top-0 -translate-y-1/2 flex items-center gap-3 px-1 pointer-events-none" aria-hidden>
                         <div className="h-0.5 flex-1 rounded-full bg-gradient-to-r from-transparent via-blue-500/80 to-blue-500/40" />
                         <span className="flex items-center gap-1.5 shrink-0 text-xs font-medium text-blue-600 bg-gray-50 px-1">
@@ -1793,7 +1871,7 @@ export default function MyLeads() {
                   </div>
 
                   {/* Agendar */}
-                  <div className={`border border-gray-200 rounded-lg overflow-hidden transition-opacity ${agendarDisabled ? 'opacity-40 pointer-events-none select-none' : ''} ${previousSnapshot ? 'bg-amber-50' : 'bg-white'}`}>
+                  <div className={`border border-gray-200 rounded-lg overflow-hidden transition-opacity ${agendarDisabled ? 'opacity-40 pointer-events-none select-none' : ''} ${latestLogSnapshot ? 'bg-amber-50' : 'bg-white'}`}>
                     <div className="bg-gray-100 border-b border-gray-200 px-4 py-2 flex items-center gap-2">
                       <CalendarClock size={14} className="text-gray-500" />
                       <span className="text-sm font-semibold text-gray-600">Agendar</span>
@@ -1843,7 +1921,7 @@ export default function MyLeads() {
                       <button onClick={() => saveMutation.mutate(false)} disabled={saveMutation.isPending || !canSaveCallResult}
                         className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
                         <Save size={15} />
-                        {saveMutation.isPending ? 'Guardando...' : editingCallLogId ? 'Guardar actualización' : 'Guardar resultado'}
+                        {saveMutation.isPending ? 'Guardando...' : latestLogSnapshot ? 'Guardar actualización' : 'Guardar resultado'}
                       </button>
                       <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || isLast || !canSaveCallResult}
                         className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
@@ -2084,7 +2162,7 @@ export default function MyLeads() {
                         // Show logs for this contact, or logs with no contact assigned
                         return !log.contact || log.contact.id === activeContactId
                       })
-                      .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())
+                      .sort((a, b) => callLogDisplayTime(b).getTime() - callLogDisplayTime(a).getTime())
                     if (logs.length === 0) return (
                       <div className="flex items-center justify-center py-8 text-gray-400">
                         <div className="text-center">
@@ -2104,9 +2182,16 @@ export default function MyLeads() {
                         >
                           <div className="flex items-center justify-between gap-2 mb-1.5">
                             <span className={`badge text-[10px] ${cfg.classes}`}>{cfg.label}</span>
-                            <span className="text-[10px] text-gray-400 font-mono shrink-0">
-                              {format(new Date(log.calledAt), 'dd/MM/yy HH:mm')}
-                            </span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {callLogWasEdited(log) && (
+                                <span className="text-[9px] text-amber-600 font-semibold uppercase tracking-wide">
+                                  Editado
+                                </span>
+                              )}
+                              <span className="text-[10px] text-gray-400 font-mono">
+                                {format(callLogDisplayTime(log), 'dd/MM/yy HH:mm')}
+                              </span>
+                            </div>
                           </div>
                           {log.contact && (
                             <p className="text-[10px] text-blue-600 mb-1 font-medium">{log.contact.nombre}{log.contact.tipoContacto ? ` · ${log.contact.tipoContacto}` : ''}</p>
@@ -2126,7 +2211,7 @@ export default function MyLeads() {
                                 {linkedCb.completed && <span className="ml-1 text-green-600 font-semibold">✓</span>}
                               </div>
                               {linkedCb.notes && (
-                                <p className="text-[10px] text-blue-500 italic pl-3 leading-snug">{linkedCb.notes}</p>
+                                <p className="text-[10px] text-blue-500 italic pl-3 leading-snug whitespace-pre-wrap">{linkedCb.notes}</p>
                               )}
                             </div>
                           )}
@@ -2300,144 +2385,115 @@ export default function MyLeads() {
         })
         return (
           <div className="flex-1 overflow-y-auto p-4 lg:p-5 space-y-4">
-            {/* Filters */}
-            <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
-              <div className="relative flex-1 min-w-[12rem] w-full sm:min-w-48">
-                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  className="input w-full pl-9 text-sm h-9 py-1.5"
-                  placeholder="Buscar nombre o teléfono"
-                  value={listSearch}
-                  onChange={(e) => setListSearch(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1 shrink-0 w-full sm:w-auto sm:min-w-[160px]">
-                <label htmlFor="list-queue-filter" className="text-xs text-gray-500 font-medium">
-                  Cola
-                </label>
-                <select
-                  id="list-queue-filter"
-                  value={
-                    isFunnelFilter(listFilter)
-                      ? '__embudo__'
-                      : isFunnelAggregate(listFilter)
-                      ? ''
-                      : LIST_FILTERS_OPERATIONAL.some((f) => f.value === listFilter)
-                      ? listFilter
-                      : ''
-                  }
-                  onChange={(e) => {
-                    const v = e.target.value
-                    if (v === '__embudo__') return
-                    setListFilterWithUrl(v === '' ? 'FUNNEL' : v)
-                  }}
-                  className="input text-sm h-9 py-1.5 w-full"
-                >
-                  {isFunnelFilter(listFilter) && (
-                    <option value="__embudo__">Embudo activo</option>
-                  )}
-                  {LIST_FILTERS_OPERATIONAL.map((f) => (
-                    <option key={f.value || 'all'} value={f.value}>
-                      {f.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {batches.length > 0 && (
+            {/* Filters — row 1: search, cola, lote */}
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+                <div className="relative flex-1 min-w-[12rem] w-full sm:min-w-48">
+                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    className="input w-full pl-9 text-sm h-9 py-1.5"
+                    placeholder="Buscar nombre o teléfono"
+                    value={listSearch}
+                    onChange={(e) => setListSearch(e.target.value)}
+                  />
+                </div>
                 <div className="flex flex-col gap-1 shrink-0 w-full sm:w-auto sm:min-w-[160px]">
-                  <label htmlFor="list-batch-filter" className="text-xs text-gray-500 font-medium">
-                    Lote
+                  <label htmlFor="list-queue-filter" className="text-xs text-gray-500 font-medium">
+                    Cola
                   </label>
                   <select
-                    id="list-batch-filter"
-                    value={selectedBatchId}
-                    onChange={(e) => switchBatch(e.target.value)}
+                    id="list-queue-filter"
+                    value={listCola}
+                    onChange={(e) => applyListFilters(e.target.value as ListCola, null)}
                     className="input text-sm h-9 py-1.5 w-full"
                   >
-                    <option value="">
-                      Todos los lotes ({batchMetricsLabel(countCompanies(allClients), allContactCount)})
-                    </option>
-                    {batches.map((b, i) => {
-                      const batchClients = allClients.filter((c) => c.importBatch?.id === b.id)
-                      return (
-                        <option key={b.id} value={b.id}>
-                          {i === 0 ? '★ ' : ''}{batchLabelShort(b)} ({batchMetricsLabel(countCompanies(batchClients), countContacts(batchClients))})
-                        </option>
-                      )
-                    })}
+                    {LIST_COLA_OPTIONS.map((f) => (
+                      <option key={f.value} value={f.value}>
+                        {f.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
-              )}
-              <div
-                className="hidden sm:block w-px h-9 bg-gray-300 shrink-0"
-                aria-hidden
-              />
-              <div className="flex flex-wrap gap-2.5 sm:gap-3 w-full sm:w-auto min-w-0 sm:pl-1">
-                {LIST_FILTERS_FUNNEL.map((f) => {
-                  const isActive = listFilter === f.value
-                  const funnelMode = isFunnelAggregate(listFilter)
-                  const dispClasses = DISPOSITION_COLORS[f.value]
-                  return (
-                    <button
-                      key={f.value}
-                      type="button"
-                      title={f.fullLabel}
-                      onClick={() => setListFilterWithUrl(isActive ? 'FUNNEL' : f.value)}
-                      className={`flex flex-col items-center gap-0.5 px-3 py-1.5 min-w-[5.5rem] text-center rounded-lg text-xs font-medium transition-colors border shrink-0 ${
-                        isActive
-                          ? dispClasses
-                            ? `${dispClasses.split(' border-l-')[0]} border-current ring-2 ring-offset-1 ring-green-500`
-                            : 'bg-blue-600 text-white border-blue-600'
-                          : funnelMode
-                          ? dispClasses
-                            ? `${dispClasses.split(' border-l-')[0]} border-current opacity-80`
-                            : 'bg-blue-50 text-blue-700 border-blue-200'
-                          : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                      }`}
+                {batches.length > 0 && (
+                  <div className="flex flex-col gap-1 shrink-0 w-full sm:w-auto sm:min-w-[160px]">
+                    <label htmlFor="list-batch-filter" className="text-xs text-gray-500 font-medium">
+                      Lote
+                    </label>
+                    <select
+                      id="list-batch-filter"
+                      value={selectedBatchId}
+                      onChange={(e) => switchBatch(e.target.value)}
+                      className="input text-sm h-9 py-1.5 w-full"
                     >
-                      <span className="text-xs leading-tight max-w-[8rem] text-balance">
-                        {f.shortLabel}
-                      </span>
-                      <span className="text-[10px] font-semibold opacity-80">
-                        {f.aclaracion}
-                      </span>
-                    </button>
-                  )
-                })}
+                      <option value="">
+                        Todos los lotes ({batchMetricsLabel(countCompanies(allClients), allContactCount)})
+                      </option>
+                      {batches.map((b, i) => {
+                        const batchClients = allClients.filter((c) => c.importBatch?.id === b.id)
+                        return (
+                          <option key={b.id} value={b.id}>
+                            {i === 0 ? '★ ' : ''}{batchLabelShort(b)} ({batchMetricsLabel(countCompanies(batchClients), countContacts(batchClients))})
+                          </option>
+                        )
+                      })}
+                    </select>
+                  </div>
+                )}
+                <div className="flex items-center gap-2 shrink-0 pb-0.5 sm:ml-auto">
+                  {(listDrilldown || listCola !== 'FUNNEL') && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">
+                      Filtro: {getListFilterLabel(listCola, listDrilldown)}
+                      <button
+                        type="button"
+                        onClick={() => applyListFilters('FUNNEL', null)}
+                        className="p-0.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
+                        aria-label="Quitar filtro"
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  )}
+                  <span className="text-xs text-gray-400">
+                    {listFiltered.length} empresas
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0 pb-2">
-                {isFunnelFilter(listFilter) ? (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">
-                    Filtro:{' '}
-                    {LIST_FILTERS_FUNNEL.find((f) => f.value === listFilter)?.shortLabel}
-                    <button
-                      type="button"
-                      onClick={() => setListFilterWithUrl('FUNNEL')}
-                      className="p-0.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
-                      aria-label="Quitar filtro"
-                    >
-                      <X size={12} />
-                    </button>
-                  </span>
-                ) : isFunnelAggregate(listFilter) ? (
-                  <span className="text-xs text-gray-400">Embudo comercial</span>
-                ) : listFilter ? (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">
-                    Filtro: {getListFilterLabel(listFilter)}
-                    <button
-                      type="button"
-                      onClick={() => setListFilterWithUrl('FUNNEL')}
-                      className="p-0.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
-                      aria-label="Quitar filtro"
-                    >
-                      <X size={12} />
-                    </button>
-                  </span>
-                ) : null}
-                <span className="text-xs text-gray-400">
-                  {listFiltered.length} empresas
-                </span>
+
+              {/* Row 2: Embudo comercial */}
+              <div className="w-full">
+                <p className="text-xs font-medium text-gray-500 mb-1.5">Embudo comercial</p>
+                <div className="flex flex-wrap gap-2">
+                  {LIST_FILTERS_FUNNEL.map((f) => {
+                    const isActive = listDrilldown === f.value
+                    const funnelMode = listCola === 'FUNNEL' && !listDrilldown
+                    const colorClasses = listChipColorClasses(f.value)
+                    return (
+                      <button
+                        key={f.value}
+                        type="button"
+                        title={f.fullLabel}
+                        onClick={() =>
+                          applyListFilters('FUNNEL', isActive ? null : f.value)
+                        }
+                        className={`flex flex-col items-center gap-0.5 px-3 py-1.5 min-w-[5.5rem] text-center rounded-lg text-xs font-medium transition-colors border shrink-0 ${
+                          isActive
+                            ? `${colorClasses} border-current ring-2 ring-offset-1 ring-green-500`
+                            : funnelMode
+                            ? `${colorClasses} border-current opacity-80`
+                            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        <span className="text-xs leading-tight max-w-[8rem] text-balance">
+                          {f.shortLabel}
+                        </span>
+                        <span className="text-[10px] font-semibold opacity-80">
+                          {f.aclaracion}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             </div>
 

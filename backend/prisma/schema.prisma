@@ -198,6 +198,7 @@ model CallLog {
   aclaracion  String?
   notes       String?
   calledAt    DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   callback Callback?
 }

@@ -207,7 +207,7 @@ export default function Assignments() {
     } catch (err: unknown) {
       const data = (err as { response?: { data?: { error?: string; blockedByCallbacks?: number } } })
         ?.response?.data
-      toast.error(data?.error ?? 'Error al liberar remanente')
+      toast.error(data?.error ?? 'Error al liberar pendientes')
     } finally {
       setReleaseSubmitting(false)
     }
@@ -795,7 +795,7 @@ export default function Assignments() {
                             title="Liberar empresas no trabajadas"
                           >
                             <PackageOpen size={16} />
-                            Liberar remanente
+                            Liberar pendientes
                           </button>
                         )}
                       </div>
@@ -904,7 +904,7 @@ export default function Assignments() {
             <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Liberar remanente</h2>
+                  <h2 className="text-lg font-semibold text-gray-900">Liberar pendientes</h2>
                   <p className="text-sm text-gray-500 mt-1">
                     Las empresas sin llamadas del agente volverán al pool sin asignar.
                     Las empresas ya trabajadas se mantienen asignadas.
@@ -922,7 +922,7 @@ export default function Assignments() {
               </div>
 
               {releaseLoading && (
-                <p className="text-center text-gray-400 py-6 text-sm">Calculando remanente...</p>
+                <p className="text-center text-gray-400 py-6 text-sm">Calculando pendientes...</p>
               )}
 
               {!releaseLoading && releasePreview && (

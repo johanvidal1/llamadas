@@ -2,7 +2,7 @@ import { Router, Response } from 'express'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
-import { parseDateParam } from '../lib/callActivity'
+import { buildCalledAtRange } from '../lib/callActivity'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { recomputeContactStatus, statusForDisposition } from '../lib/contactStatus'
 import {
@@ -33,30 +33,6 @@ function matchesTimeOfDay(calledAt: Date, timeMin: number | null, timeMax: numbe
   if (timeMin != null && mins < timeMin) return false
   if (timeMax != null && mins > timeMax) return false
   return true
-}
-
-function buildCalledAtRange(from?: string, to?: string): Prisma.DateTimeFilter | undefined {
-  if (!from && !to) return undefined
-
-  const now = new Date()
-  const defaultFrom = new Date()
-  defaultFrom.setDate(defaultFrom.getDate() - 30)
-  defaultFrom.setHours(0, 0, 0, 0)
-
-  const range: Prisma.DateTimeFilter = {}
-
-  if (from) {
-    const fromDate = parseDateParam(from, defaultFrom)
-    fromDate.setHours(0, 0, 0, 0)
-    range.gte = fromDate
-  }
-  if (to) {
-    const toDate = parseDateParam(to, now)
-    toDate.setHours(23, 59, 59, 999)
-    range.lte = toDate
-  }
-
-  return range
 }
 
 const dispositionEnum = z.enum(ALL_DISPOSITION_CODES as [string, ...string[]])
@@ -260,11 +236,6 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     data.callbackDate !== undefined ||
     data.callbackNotes !== undefined
 
-  if (!hasFieldUpdates) {
-    res.status(400).json({ error: 'No hay campos para actualizar' })
-    return
-  }
-
   const existing = await prisma.callLog.findUnique({
     where: { id: req.params.id },
     include: {
@@ -322,15 +293,17 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const dispositionChanged = data.disposition !== undefined
   const callLog = await prisma.callLog.update({
     where: { id: existing.id },
-    data: {
-      ...(dispositionChanged ? { disposition: data.disposition } : {}),
-      ...(dispositionChanged
-        ? { aclaracion: resolveAclaracion(data.disposition!, data.aclaracion) }
-        : data.aclaracion !== undefined
-          ? { aclaracion: resolveAclaracion(existing.disposition, data.aclaracion) }
-          : {}),
-      ...(data.notes !== undefined ? { notes: data.notes } : {}),
-    },
+    data: hasFieldUpdates
+      ? {
+          ...(dispositionChanged ? { disposition: data.disposition } : {}),
+          ...(dispositionChanged
+            ? { aclaracion: resolveAclaracion(data.disposition!, data.aclaracion) }
+            : data.aclaracion !== undefined
+              ? { aclaracion: resolveAclaracion(existing.disposition, data.aclaracion) }
+              : {}),
+          ...(data.notes !== undefined ? { notes: data.notes } : {}),
+        }
+      : { updatedAt: new Date() },
   })
 
   if (data.callbackDate !== undefined) {

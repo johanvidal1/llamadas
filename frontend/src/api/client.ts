@@ -163,7 +163,53 @@ export const uploadImport = (file: File, options?: UploadImportOptions) => {
 }
 
 // ─── Clients ──────────────────────────────────────────────
-export const getClients = (params?: object) =>
+export type GetClientsParams = {
+  page?: number
+  limit?: number
+  search?: string
+  status?: string
+  disposition?: string
+  batchId?: string
+  agentId?: string
+  unassigned?: boolean
+  registeredFrom?: string
+  registeredTo?: string
+}
+
+/** Response shape for the Clients admin list (date filter fields optional). */
+export type ClientListItem = {
+  id: string
+  ruc: string
+  razonSocial?: string
+  status: string
+  lastDisposition?: string | null
+  lastAclaracion?: string | null
+  lastCalledAt?: string | null
+  lastCallContactId?: string | null
+  /** Scoped call-log count (matches lastCalledAt / disposition agent filter). */
+  callLogCount?: number
+  contacts: {
+    id?: string
+    nombre: string
+    tipoContacto?: string
+    telefono?: string
+    assignment?: { agent?: { id?: string; name: string } }
+  }[]
+  importBatch?: { filename: string; createdAt: string }
+  callbacks?: { scheduledAt: string; notes?: string }[]
+  _count: { callLogs: number }
+}
+
+export type ClientsListResponse = {
+  clients: ClientListItem[]
+  total: number
+  page: number
+  limit: number
+  registrationCount?: number
+  pipelineCounts?: Record<string, number>
+}
+
+export const getClients = (params?: GetClientsParams) =>
   api.get('/clients', { params }).then((r) => r.data)
 export const getClient = (id: string) => api.get(`/clients/${id}`).then((r) => r.data)
 export const updateClient = (id: string, data: object) =>
@@ -337,6 +383,7 @@ export type CallLogListItem = {
   id: string
   disposition: string
   calledAt: string
+  updatedAt?: string
   companyId: string
   company: { id: string; ruc: string; razonSocial?: string | null }
   contact?: { id: string; nombre: string; tipoContacto?: string | null } | null

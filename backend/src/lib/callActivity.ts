@@ -97,6 +97,34 @@ export function parseDateParam(value: string | undefined, fallback: Date): Date 
   return Number.isNaN(parsed.getTime()) ? fallback : parsed
 }
 
+/** Inclusive yyyy-MM-dd day bounds for CallLog.calledAt filters. */
+export function buildCalledAtRange(
+  from?: string,
+  to?: string
+): { gte?: Date; lte?: Date } | undefined {
+  if (!from && !to) return undefined
+
+  const now = new Date()
+  const defaultFrom = new Date()
+  defaultFrom.setDate(defaultFrom.getDate() - 30)
+  defaultFrom.setHours(0, 0, 0, 0)
+
+  const range: { gte?: Date; lte?: Date } = {}
+
+  if (from) {
+    const fromDate = parseDateParam(from, defaultFrom)
+    fromDate.setHours(0, 0, 0, 0)
+    range.gte = fromDate
+  }
+  if (to) {
+    const toDate = parseDateParam(to, now)
+    toDate.setHours(23, 59, 59, 999)
+    range.lte = toDate
+  }
+
+  return range
+}
+
 export function parseGranularity(value: string | undefined): CallActivityGranularity {
   if (value === 'week' || value === 'month') return value
   return 'day'

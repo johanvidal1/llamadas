@@ -47,8 +47,28 @@ export function matchesFunnelFilter(lastDisposition: string | null): boolean {
 export async function getLastDispositionByCompanyIds(
   companyIds: string[],
   agentUserId?: string
-): Promise<Map<string, { disposition: string | null; aclaracion: string | null }>> {
-  const result = new Map<string, { disposition: string | null; aclaracion: string | null }>()
+): Promise<
+  Map<
+    string,
+    {
+      disposition: string | null
+      aclaracion: string | null
+      lastCalledAt: Date | null
+      lastCallContactId: string | null
+      callLogCount: number
+    }
+  >
+> {
+  const result = new Map<
+    string,
+    {
+      disposition: string | null
+      aclaracion: string | null
+      lastCalledAt: Date | null
+      lastCallContactId: string | null
+      callLogCount: number
+    }
+  >()
   if (companyIds.length === 0) return result
 
   const logs = await prisma.callLog.findMany({
@@ -58,21 +78,44 @@ export async function getLastDispositionByCompanyIds(
         ? { agentId: agentUserId, contact: { assignment: { agentId: agentUserId } } }
         : { contact: { assignment: { is: {} } } }),
     },
-    select: { companyId: true, disposition: true, aclaracion: true, calledAt: true },
+    select: {
+      companyId: true,
+      disposition: true,
+      aclaracion: true,
+      calledAt: true,
+      contactId: true,
+    },
     orderBy: { calledAt: 'desc' },
   })
 
+  const countByCompany = new Map<string, number>()
   for (const log of logs) {
+    countByCompany.set(log.companyId, (countByCompany.get(log.companyId) ?? 0) + 1)
     if (!result.has(log.companyId)) {
       result.set(log.companyId, {
         disposition: log.disposition,
         aclaracion: log.aclaracion,
+        lastCalledAt: log.calledAt,
+        lastCallContactId: log.contactId,
+        callLogCount: 0,
       })
     }
   }
 
+  for (const [companyId, entry] of result) {
+    entry.callLogCount = countByCompany.get(companyId) ?? 0
+  }
+
   for (const id of companyIds) {
-    if (!result.has(id)) result.set(id, { disposition: null, aclaracion: null })
+    if (!result.has(id)) {
+      result.set(id, {
+        disposition: null,
+        aclaracion: null,
+        lastCalledAt: null,
+        lastCallContactId: null,
+        callLogCount: 0,
+      })
+    }
   }
 
   return result

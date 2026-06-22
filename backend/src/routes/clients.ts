@@ -1,10 +1,14 @@
 import { Router, Response } from 'express'
 import { z } from 'zod'
+import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
+import { buildCalledAtRange } from '../lib/callActivity'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { getAclaracionForDisposition, isValidDisposition } from '../lib/responseOptions'
 import {
+  buildCompanyPipelineCounts,
   dispositionMatchesFilter,
+  FUNNEL_PIPELINE_KEYS,
   getLastDispositionByCompanyIds,
   matchesFunnelFilter,
   pipelineBucketForDisposition,
@@ -95,7 +99,13 @@ async function enrichWithLastDisposition(
   companies: CompanyRow[],
   agentUserId?: string
 ): Promise<
-  (CompanyRow & { lastDisposition: string | null; lastAclaracion: string | null })[]
+  (CompanyRow & {
+    lastDisposition: string | null
+    lastAclaracion: string | null
+    lastCalledAt: string | null
+    lastCallContactId: string | null
+    callLogCount: number
+  })[]
 > {
   if (companies.length === 0) return []
 
@@ -111,14 +121,51 @@ async function enrichWithLastDisposition(
       ...c,
       lastDisposition: disposition,
       lastAclaracion: last?.aclaracion ?? getAclaracionForDisposition(disposition ?? '') ?? null,
+      lastCalledAt: last?.lastCalledAt?.toISOString() ?? null,
+      lastCallContactId: last?.lastCallContactId ?? null,
+      callLogCount: last?.callLogCount ?? 0,
     }
   })
+}
+
+function buildRegistrationCallLogWhere(
+  calledAtRange: { gte?: Date; lte?: Date },
+  companyWhere: Record<string, unknown>,
+  dispositionAgentId?: string
+): Prisma.CallLogWhereInput {
+  const where: Prisma.CallLogWhereInput = {
+    calledAt: calledAtRange,
+    company: companyWhere as Prisma.CompanyWhereInput,
+    ...(dispositionAgentId
+      ? { agentId: dispositionAgentId, contact: { assignment: { agentId: dispositionAgentId } } }
+      : { contact: { assignment: { is: {} } } }),
+  }
+  return where
 }
 
 function matchesPendingFilter(
   company: CompanyRow & { lastDisposition: string | null },
 ): boolean {
   return company.lastDisposition == null
+}
+
+function emptyFunnelPipelineCounts(): Record<string, number> {
+  return Object.fromEntries(FUNNEL_PIPELINE_KEYS.map((k) => [k, 0]))
+}
+
+async function getScopedCompanyIds(where: Record<string, unknown>): Promise<string[]> {
+  const rows = await prisma.company.findMany({ where, select: { id: true } })
+  return rows.map((r) => r.id)
+}
+
+async function buildFunnelPipelineCounts(
+  companyIds: string[],
+  dispositionAgentId?: string
+): Promise<Record<string, number>> {
+  if (companyIds.length === 0) return emptyFunnelPipelineCounts()
+  const lastByCompany = await getLastDispositionByCompanyIds(companyIds, dispositionAgentId)
+  const counts = buildCompanyPipelineCounts(lastByCompany)
+  return Object.fromEntries(FUNNEL_PIPELINE_KEYS.map((k) => [k, counts[k]]))
 }
 
 // GET /api/clients — ADMIN sees all, AGENT sees only assigned contacts
@@ -132,6 +179,8 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     batchId,
     agentId,
     unassigned,
+    registeredFrom,
+    registeredTo,
   } = req.query as Record<string, string>
 
   const take = Math.min(Number(limit) || 50, 500)
@@ -204,9 +253,48 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     ]
   }
 
+  const calledAtRange = buildCalledAtRange(registeredFrom, registeredTo)
+  let registrationCount: number | undefined
+
+  if (calledAtRange) {
+    const registrationWhere = buildRegistrationCallLogWhere(
+      calledAtRange,
+      where,
+      dispositionAgentId
+    )
+    const [matchingLogs, count] = await Promise.all([
+      prisma.callLog.findMany({
+        where: registrationWhere,
+        select: { companyId: true },
+        distinct: ['companyId'],
+      }),
+      prisma.callLog.count({ where: registrationWhere }),
+    ])
+    registrationCount = count
+    const companyIdsInRange = matchingLogs.map((l) => l.companyId)
+    if (companyIdsInRange.length === 0) {
+      res.json({
+        clients: [],
+        total: 0,
+        page: Number(page),
+        limit: take,
+        registrationCount: 0,
+        pipelineCounts: emptyFunnelPipelineCounts(),
+      })
+      return
+    }
+    where.id = { in: companyIdsInRange }
+  }
+
+  const jsonExtras = registrationCount !== undefined ? { registrationCount } : {}
+
   if (agentScopedDisposition || agentScopedPending || agentScopedOtros || agentScopedFunnel) {
     const allCompanies = await fetchCompanies(where, contactWhere, callLogAgentId)
-    const enriched = await enrichWithLastDisposition(allCompanies, dispositionAgentId)
+    const scopedIds = allCompanies.map((c) => c.id)
+    const [pipelineCounts, enriched] = await Promise.all([
+      buildFunnelPipelineCounts(scopedIds, dispositionAgentId),
+      enrichWithLastDisposition(allCompanies, dispositionAgentId),
+    ])
     const filtered = enriched.filter((c) => {
       if (agentScopedOtros) {
         return pipelineBucketForDisposition(c.lastDisposition) === 'OTROS'
@@ -221,18 +309,22 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     })
     const total = filtered.length
     const clients = filtered.slice(skip, skip + take)
-    res.json({ clients, total, page: Number(page), limit: take })
+    res.json({ clients, total, page: Number(page), limit: take, pipelineCounts, ...jsonExtras })
     return
   }
 
-  const [companies, total] = await Promise.all([
+  const [companies, total, scopedIds] = await Promise.all([
     fetchCompanies(where, contactWhere, callLogAgentId, take, skip),
     prisma.company.count({ where }),
+    getScopedCompanyIds(where),
   ])
 
-  const clients = await enrichWithLastDisposition(companies, dispositionAgentId)
+  const [clients, pipelineCounts] = await Promise.all([
+    enrichWithLastDisposition(companies, dispositionAgentId),
+    buildFunnelPipelineCounts(scopedIds, dispositionAgentId),
+  ])
 
-  res.json({ clients, total, page: Number(page), limit: take })
+  res.json({ clients, total, page: Number(page), limit: take, pipelineCounts, ...jsonExtras })
 })
 
 // GET /api/clients/:id
@@ -267,7 +359,7 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
           contact: { select: { id: true, nombre: true, tipoContacto: true } },
           callback: true,
         },
-        orderBy: { calledAt: 'desc' },
+        orderBy: { updatedAt: 'desc' },
       },
       callbacks: {
         include: { agent: { select: { name: true } } },
