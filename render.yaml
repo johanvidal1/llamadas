@@ -5,7 +5,7 @@ databases:
   - name: llamadas-db
     databaseName: llamadas_crm
     user: crm_user
-    plan: free          # cambiar a "starter" en producción real
+    plan: basic-256mb  # Postgres de pago en Render (PITR y backups)
 
 services:
   # ── Backend API (Node.js / Express) ─────────────────────────────────────────
