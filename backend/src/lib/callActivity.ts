@@ -93,8 +93,14 @@ export function buildCallActivitySeries(
 
 export function parseDateParam(value: string | undefined, fallback: Date): Date {
   if (!value) return fallback
-  const parsed = new Date(value)
+  const parsed = parseLocalDateParam(value) ?? new Date(value)
   return Number.isNaN(parsed.getTime()) ? fallback : parsed
+}
+
+function parseLocalDateParam(value: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!m) return null
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
 }
 
 /** Inclusive yyyy-MM-dd day bounds for CallLog.calledAt filters. */
@@ -112,12 +118,12 @@ export function buildCalledAtRange(
   const range: { gte?: Date; lte?: Date } = {}
 
   if (from) {
-    const fromDate = parseDateParam(from, defaultFrom)
+    const fromDate = parseLocalDateParam(from) ?? defaultFrom
     fromDate.setHours(0, 0, 0, 0)
     range.gte = fromDate
   }
   if (to) {
-    const toDate = parseDateParam(to, now)
+    const toDate = parseLocalDateParam(to) ?? now
     toDate.setHours(23, 59, 59, 999)
     range.lte = toDate
   }

@@ -116,7 +116,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     const candidates = await prisma.callLog.findMany({
       where,
       select: { id: true, calledAt: true },
-      orderBy: { calledAt: 'desc' },
+      orderBy: [{ updatedAt: 'desc' }, { calledAt: 'desc' }],
     })
     const filtered = candidates.filter((row) => matchesTimeOfDay(row.calledAt, timeMin, timeMax))
     const total = filtered.length
@@ -126,7 +126,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
         ? await prisma.callLog.findMany({
             where: { id: { in: pageIds } },
             include: callLogInclude,
-            orderBy: { calledAt: 'desc' },
+            orderBy: [{ updatedAt: 'desc' }, { calledAt: 'desc' }],
           })
         : []
     res.json({ calls, total })
@@ -137,7 +137,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     prisma.callLog.findMany({
       where,
       include: callLogInclude,
-      orderBy: { calledAt: 'desc' },
+      orderBy: [{ updatedAt: 'desc' }, { calledAt: 'desc' }],
       take,
     }),
     prisma.callLog.count({ where }),

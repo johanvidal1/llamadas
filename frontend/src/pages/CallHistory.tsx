@@ -46,7 +46,7 @@ function readFilters(params: URLSearchParams): FilterState {
     timeTo: params.get('timeTo') ?? '',
     disposition: params.has('disposition')
       ? (params.get('disposition') ?? '')
-      : 'FUNNEL',
+      : '',
     batchId: params.get('batchId') ?? '',
     agentId: params.get('agentId') ?? '',
   }
@@ -59,7 +59,7 @@ function filtersToSearchParams(filters: FilterState): URLSearchParams {
   if (filters.to) next.set('to', filters.to)
   if (filters.timeFrom) next.set('timeFrom', filters.timeFrom)
   if (filters.timeTo) next.set('timeTo', filters.timeTo)
-  next.set('disposition', filters.disposition)
+  if (filters.disposition) next.set('disposition', filters.disposition)
   if (filters.batchId) next.set('batchId', filters.batchId)
   if (filters.agentId) next.set('agentId', filters.agentId)
   return next
@@ -89,16 +89,10 @@ export default function CallHistory() {
 
   useEffect(() => {
     const needsDates = !searchParams.has('from') && !searchParams.has('to')
-    const needsDisposition = !searchParams.has('disposition')
-    if (needsDates || needsDisposition) {
+    if (needsDates) {
       const next = new URLSearchParams(searchParams)
-      if (needsDates) {
-        next.set('from', monthStartLocal())
-        next.set('to', todayLocal())
-      }
-      if (needsDisposition) {
-        next.set('disposition', 'FUNNEL')
-      }
+      next.set('from', monthStartLocal())
+      next.set('to', todayLocal())
       setSearchParams(next, { replace: true })
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps

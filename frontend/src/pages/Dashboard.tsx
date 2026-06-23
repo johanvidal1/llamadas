@@ -5,7 +5,8 @@ import { getDashboardStats, getMyBatches } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { Users, Phone, CalendarClock, Calendar, PhoneCall, Layers, RefreshCw, ArrowRight } from 'lucide-react'
 import { RecentCallRow } from '../components/RecentCallRow'
-import { DISPOSITION_BAR_COLORS } from '../config/responseOptions'
+import ClientRecordModal from '../components/ClientRecordModal'
+import { DISPOSITION_BAR_COLORS, isFunnelDisposition } from '../config/responseOptions'
 import {
   AGENT_PIPELINE_FUNNEL,
   AGENT_PIPELINE_OPERATIONAL,
@@ -46,6 +47,7 @@ export default function Dashboard() {
   const { isAdmin, user } = useAuth()
   const navigate = useNavigate()
   const [selectedBatchId, setSelectedBatchId] = useState<string | undefined>(undefined)
+  const [recordModal, setRecordModal] = useState<{ clientId: string } | null>(null)
 
   const goToMyLeadsFilter = (filter: string) => {
     const params = new URLSearchParams()
@@ -100,7 +102,6 @@ export default function Dashboard() {
   const monthStart = format(startOfMonth(new Date()), 'yyyy-MM-dd')
   callsLinkSearch.set('from', monthStart)
   callsLinkSearch.set('to', today)
-  callsLinkSearch.set('disposition', 'FUNNEL')
   if (selectedBatchId) callsLinkSearch.set('batchId', selectedBatchId)
 
   return (
@@ -340,9 +341,22 @@ export default function Dashboard() {
             </Link>
           </div>
           <div className="space-y-3">
-            {stats?.recentCalls?.map((call) => (
-              <RecentCallRow key={call.id} call={call} showAgent={isAdmin} />
-            ))}
+            {stats?.recentCalls?.map((call) => {
+              const clickable = isFunnelDisposition(call.disposition)
+              return (
+                <RecentCallRow
+                  key={call.id}
+                  call={call}
+                  showAgent={isAdmin}
+                  title={clickable ? 'Ver registro' : undefined}
+                  onClick={
+                    clickable
+                      ? () => setRecordModal({ clientId: call.company.id })
+                      : undefined
+                  }
+                />
+              )
+            })}
             {!stats?.recentCalls?.length && (
               <p className="text-sm text-gray-400 text-center py-4">Sin llamadas registradas</p>
             )}
@@ -361,6 +375,14 @@ export default function Dashboard() {
             <ArrowRight size={15} />
           </button>
         </div>
+      )}
+
+      {recordModal && (
+        <ClientRecordModal
+          clientId={recordModal.clientId}
+          initialFocus="history"
+          onClose={() => setRecordModal(null)}
+        />
       )}
     </div>
   )
