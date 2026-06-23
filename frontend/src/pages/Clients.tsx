@@ -77,6 +77,120 @@ function isFunnelChipFilter(filter: string): boolean {
 
 const UNASSIGNED_AGENT_KEY = '__unassigned__'
 
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200, 500] as const
+const CLIENTS_PAGE_SIZE_KEY = 'clients-page-size'
+
+function defaultPageSize(): number {
+  return import.meta.env.DEV ? 500 : 50
+}
+
+function readStoredPageSize(): number {
+  try {
+    const raw = localStorage.getItem(CLIENTS_PAGE_SIZE_KEY)
+    if (raw) {
+      const n = parseInt(raw, 10)
+      if ((PAGE_SIZE_OPTIONS as readonly number[]).includes(n)) return n
+    }
+  } catch {
+    /* ignore */
+  }
+  return defaultPageSize()
+}
+
+function ClientsPaginationBar({
+  page,
+  pageSize,
+  total,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  page: number
+  pageSize: number
+  total: number
+  onPageChange: (page: number) => void
+  onPageSizeChange: (pageSize: number) => void
+}) {
+  return (
+    <div className="flex items-center justify-between text-sm text-gray-500">
+      <div className="flex flex-wrap items-center gap-3">
+        <p>
+          Mostrando {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} de {total}
+        </p>
+        <label className="inline-flex items-center gap-1.5">
+          <span>Por página</span>
+          <select
+            value={pageSize}
+            onChange={(e) => onPageSizeChange(Number(e.target.value))}
+            className="border border-gray-300 rounded px-2 py-1 text-sm bg-white"
+          >
+            {PAGE_SIZE_OPTIONS.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+          disabled={page === 1}
+          className="btn-secondary py-1.5"
+        >
+          Anterior
+        </button>
+        <button
+          type="button"
+          onClick={() => onPageChange(page + 1)}
+          disabled={page * pageSize >= total}
+          className="btn-secondary py-1.5"
+        >
+          Siguiente
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function lastCalledAtMs(client: ClientListItem): number | null {
+  return client.lastCalledAt ? new Date(client.lastCalledAt).getTime() : null
+}
+
+function isPending(client: ClientListItem): boolean {
+  return !client.lastDisposition && !hasRecord(client)
+}
+
+function sortClientsForAdminQueue(clients: ClientListItem[]): ClientListItem[] {
+  return [...clients].sort((a, b) => {
+    const aPending = isPending(a)
+    const bPending = isPending(b)
+    if (aPending !== bPending) return aPending ? 1 : -1
+
+    if (!aPending) {
+      const aMs = lastCalledAtMs(a)
+      const bMs = lastCalledAtMs(b)
+      if (aMs === null && bMs === null) return a.ruc.localeCompare(b.ruc, 'es')
+      if (aMs === null) return 1
+      if (bMs === null) return -1
+      const byDate = bMs - aMs
+      if (byDate !== 0) return byDate
+      return a.ruc.localeCompare(b.ruc, 'es')
+    }
+
+    return a.ruc.localeCompare(b.ruc, 'es')
+  })
+}
+
+function maxLastCalledAt(clients: ClientListItem[]): number | null {
+  let max: number | null = null
+  for (const c of clients) {
+    const ms = lastCalledAtMs(c)
+    if (ms !== null && (max === null || ms > max)) max = ms
+  }
+  return max
+}
+
 function resolvePrimaryAgentId(client: ClientListItem): string {
   const assignedContacts = client.contacts.filter((ct) => ct.assignment?.agent?.id)
   const agentIds = [
@@ -124,9 +238,24 @@ function groupClientsByAgent(
     clients: groupClients,
   }))
 
+  if (import.meta.env.DEV) {
+    for (const group of groups) {
+      group.clients = sortClientsForAdminQueue(group.clients)
+    }
+  }
+
   groups.sort((a, b) => {
     if (a.key === UNASSIGNED_AGENT_KEY) return 1
     if (b.key === UNASSIGNED_AGENT_KEY) return -1
+    if (import.meta.env.DEV) {
+      const aMax = maxLastCalledAt(a.clients)
+      const bMax = maxLastCalledAt(b.clients)
+      if (aMax === null && bMax === null) return a.agentName.localeCompare(b.agentName, 'es')
+      if (aMax === null) return 1
+      if (bMax === null) return -1
+      const byActivity = bMax - aMax
+      if (byActivity !== 0) return byActivity
+    }
     return a.agentName.localeCompare(b.agentName, 'es')
   })
 
@@ -357,6 +486,7 @@ export default function Clients() {
   const [registeredFrom, setRegisteredFrom] = useState(initialRegisteredFrom)
   const [registeredTo, setRegisteredTo] = useState(initialRegisteredTo)
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(readStoredPageSize)
   const [groupByAgent, setGroupByAgent] = useState(false)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [filtersExpanded, setFiltersExpanded] = useState(
@@ -369,6 +499,16 @@ export default function Clients() {
 
   const openRecord = (clientId: string, initialFocus: 'summary' | 'history' = 'summary') => {
     setRecordModal({ clientId, initialFocus })
+  }
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size)
+    setPage(1)
+    try {
+      localStorage.setItem(CLIENTS_PAGE_SIZE_KEY, String(size))
+    } catch {
+      /* ignore */
+    }
   }
 
   const { data: usersData = [] } = useQuery({ queryKey: ['users'], queryFn: getUsers })
@@ -395,7 +535,9 @@ export default function Clients() {
         registeredFrom,
         registeredTo,
         page: effectiveGroupBy ? 1 : page,
+        pageSize,
         grouped: effectiveGroupBy,
+        devActivitySort: import.meta.env.DEV,
       },
     ],
     queryFn: () =>
@@ -406,13 +548,15 @@ export default function Clients() {
         registeredFrom: registeredFrom || undefined,
         registeredTo: registeredTo || undefined,
         page: effectiveGroupBy ? 1 : page,
-        limit: effectiveGroupBy ? 500 : 50,
+        limit: pageSize,
+        ...(import.meta.env.DEV ? { sortBy: 'activity' } : {}),
         ...pipelineFilterToParams(pipelineFilter),
       }),
   })
 
   const clients = data?.clients ?? []
   const total = data?.total ?? 0
+  const showFlatPagination = !effectiveGroupBy && total > pageSize
   const registrationCount = data?.registrationCount
   const pipelineCounts = data?.pipelineCounts
   const funnelTotal = pipelineCounts ? sumFunnelStages(pipelineCounts) : null
@@ -815,9 +959,9 @@ export default function Clients() {
           </div>
         ) : effectiveGroupBy ? (
           <div className="p-3 space-y-3">
-            {total > 500 && (
+            {total > pageSize && (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                Mostrando las primeras 500 empresas del filtro actual. Refina los filtros para ver grupos completos.
+                Mostrando las primeras {pageSize} empresas del filtro actual. Refina los filtros para ver grupos completos.
               </p>
             )}
             <div className="flex justify-end gap-3 text-sm">
@@ -883,47 +1027,46 @@ export default function Clients() {
             </div>
           </div>
         ) : (
-          <table className="w-full min-w-[1000px] text-sm">
-            <ClientsTableHead showAgentColumn={showAgentColumn} showBatchColumn={showBatchColumn} />
-            <tbody className="divide-y divide-gray-100">
-              {clients.map((c) => (
-                <ClientTableRow
-                  key={c.id}
-                  client={c}
-                  showAgentColumn={showAgentColumn}
-                  showBatchColumn={showBatchColumn}
-                  onOpenRecord={openRecord}
+          <>
+            {showFlatPagination && (
+              <div className="px-3 py-2 border-b border-gray-100">
+                <ClientsPaginationBar
+                  page={page}
+                  pageSize={pageSize}
+                  total={total}
+                  onPageChange={setPage}
+                  onPageSizeChange={handlePageSizeChange}
                 />
-              ))}
-            </tbody>
-          </table>
+              </div>
+            )}
+            <table className="w-full min-w-[1000px] text-sm">
+              <ClientsTableHead showAgentColumn={showAgentColumn} showBatchColumn={showBatchColumn} />
+              <tbody className="divide-y divide-gray-100">
+                {clients.map((c) => (
+                  <ClientTableRow
+                    key={c.id}
+                    client={c}
+                    showAgentColumn={showAgentColumn}
+                    showBatchColumn={showBatchColumn}
+                    onOpenRecord={openRecord}
+                  />
+                ))}
+              </tbody>
+            </table>
+            {showFlatPagination && (
+              <div className="px-3 py-2 border-t border-gray-100">
+                <ClientsPaginationBar
+                  page={page}
+                  pageSize={pageSize}
+                  total={total}
+                  onPageChange={setPage}
+                  onPageSizeChange={handlePageSizeChange}
+                />
+              </div>
+            )}
+          </>
         )}
       </div>
-
-      {/* Pagination */}
-      {!effectiveGroupBy && total > 50 && (
-        <div className="flex items-center justify-between text-sm text-gray-500">
-          <p>
-            Mostrando {(page - 1) * 50 + 1}–{Math.min(page * 50, total)} de {total}
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-              className="btn-secondary py-1.5"
-            >
-              Anterior
-            </button>
-            <button
-              onClick={() => setPage((p) => p + 1)}
-              disabled={page * 50 >= total}
-              className="btn-secondary py-1.5"
-            >
-              Siguiente
-            </button>
-          </div>
-        </div>
-      )}
 
       {recordModal && (
         <ClientRecordModal

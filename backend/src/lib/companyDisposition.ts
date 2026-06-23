@@ -320,3 +320,46 @@ export function resolveRunBatchId(
   }
   return bestBatchId
 }
+
+export type ActivityQueueSortable = {
+  ruc: string
+  lastDisposition: string | null
+  lastCalledAt: string | Date | null
+  _count: { callLogs: number }
+}
+
+function hasActivityRecord(c: ActivityQueueSortable): boolean {
+  return !!(c.lastDisposition || c._count.callLogs > 0)
+}
+
+function isActivityPending(c: ActivityQueueSortable): boolean {
+  return !c.lastDisposition && !hasActivityRecord(c)
+}
+
+function lastCalledAtMs(c: ActivityQueueSortable): number | null {
+  if (!c.lastCalledAt) return null
+  const d = c.lastCalledAt instanceof Date ? c.lastCalledAt : new Date(c.lastCalledAt)
+  return d.getTime()
+}
+
+/** Option B: registered/updated by lastCalledAt desc, pendientes at bottom (RUC asc). */
+export function sortClientsByActivityQueue<T extends ActivityQueueSortable>(clients: T[]): T[] {
+  return [...clients].sort((a, b) => {
+    const aPending = isActivityPending(a)
+    const bPending = isActivityPending(b)
+    if (aPending !== bPending) return aPending ? 1 : -1
+
+    if (!aPending) {
+      const aMs = lastCalledAtMs(a)
+      const bMs = lastCalledAtMs(b)
+      if (aMs === null && bMs === null) return a.ruc.localeCompare(b.ruc, 'es')
+      if (aMs === null) return 1
+      if (bMs === null) return -1
+      const byDate = bMs - aMs
+      if (byDate !== 0) return byDate
+      return a.ruc.localeCompare(b.ruc, 'es')
+    }
+
+    return a.ruc.localeCompare(b.ruc, 'es')
+  })
+}

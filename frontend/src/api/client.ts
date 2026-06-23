@@ -174,6 +174,7 @@ export type GetClientsParams = {
   unassigned?: boolean
   registeredFrom?: string
   registeredTo?: string
+  sortBy?: string
 }
 
 /** Response shape for the Clients admin list (date filter fields optional). */

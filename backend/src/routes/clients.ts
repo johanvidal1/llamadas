@@ -12,6 +12,7 @@ import {
   getLastDispositionByCompanyIds,
   matchesFunnelFilter,
   pipelineBucketForDisposition,
+  sortClientsByActivityQueue,
 } from '../lib/companyDisposition'
 import { countUnassignedCompanies, BatchBlockedError } from '../lib/assignmentOrder'
 
@@ -181,6 +182,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     unassigned,
     registeredFrom,
     registeredTo,
+    sortBy,
   } = req.query as Record<string, string>
 
   const take = Math.min(Number(limit) || 50, 500)
@@ -309,6 +311,20 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     })
     const total = filtered.length
     const clients = filtered.slice(skip, skip + take)
+    res.json({ clients, total, page: Number(page), limit: take, pipelineCounts, ...jsonExtras })
+    return
+  }
+
+  if (sortBy === 'activity') {
+    const allCompanies = await fetchCompanies(where, contactWhere, callLogAgentId)
+    const scopedIds = allCompanies.map((c) => c.id)
+    const [pipelineCounts, enriched] = await Promise.all([
+      buildFunnelPipelineCounts(scopedIds, dispositionAgentId),
+      enrichWithLastDisposition(allCompanies, dispositionAgentId),
+    ])
+    const sorted = sortClientsByActivityQueue(enriched)
+    const total = sorted.length
+    const clients = sorted.slice(skip, skip + take)
     res.json({ clients, total, page: Number(page), limit: take, pipelineCounts, ...jsonExtras })
     return
   }
