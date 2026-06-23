@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Outlet, NavLink, Link, useNavigate, useLocation } from 'react-router-dom'
+import axios from 'axios'
 import { useAuth } from '../contexts/AuthContext'
 import { sendHeartbeat, sendPresenceLogout } from '../api/client'
 import { getDeviceId, detectPlatform } from '../lib/deviceId'
@@ -55,9 +56,17 @@ export default function Layout() {
       currentRoute: location.pathname,
       platform: detectPlatform(),
     }).catch((err) => {
+      if (axios.isAxiosError(err) && err.response?.status === 401) {
+        const code = err.response.data?.code as string | undefined
+        if (code === 'SESSION_REVOKED' || err.response.data?.error) {
+          logout()
+          navigate('/login')
+          return
+        }
+      }
       console.warn('[presence] heartbeat failed:', err)
     })
-  }, [user, location.pathname])
+  }, [user, location.pathname, logout, navigate])
 
   useEffect(() => {
     if (!user) return

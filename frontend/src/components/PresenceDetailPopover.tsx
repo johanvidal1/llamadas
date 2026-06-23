@@ -86,6 +86,7 @@ type PresenceDetailPopoverProps = {
   presence: AgentPresence | undefined
   onClose: () => void
   onExpandDevices?: () => void
+  onRevokeSessions?: () => void
 }
 
 export function PresenceDetailPopover({
@@ -94,6 +95,7 @@ export function PresenceDetailPopover({
   presence,
   onClose,
   onExpandDevices,
+  onRevokeSessions,
 }: PresenceDetailPopoverProps) {
   const [position, setPosition] = useState<ReturnType<typeof computePosition> | null>(null)
   const [popoverEl, setPopoverEl] = useState<HTMLDivElement | null>(null)
@@ -237,6 +239,19 @@ export function PresenceDetailPopover({
               className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
             >
               + {extraDevices} dispositivo{extraDevices === 1 ? '' : 's'} más
+            </button>
+          )}
+
+          {onRevokeSessions && (status === 'online' || status === 'recent') && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onRevokeSessions()
+              }}
+              className="w-full mt-1 px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors"
+            >
+              Cerrar sesión
             </button>
           )}
         </div>

@@ -25,6 +25,10 @@ api.interceptors.response.use(
   (err) => {
     const isLoginRequest = err.config?.url?.includes('/auth/login')
     if (err.response?.status === 401 && !isLoginRequest) {
+      const code = err.response?.data?.code as string | undefined
+      if (code === 'SESSION_REVOKED') {
+        sessionStorage.setItem('sessionRevoked', '1')
+      }
       localStorage.removeItem('token')
       localStorage.removeItem('user')
       window.location.href = '/login'
@@ -666,3 +670,6 @@ export const sendPresenceLogout = (deviceId: string) =>
 
 export const getAgentPresence = () =>
   api.get<AgentPresence[]>('/presence/agents').then((r) => r.data)
+
+export const revokeAgentSessions = (userId: string) =>
+  api.post<{ ok: true }>(`/presence/agents/${userId}/revoke-sessions`).then((r) => r.data)

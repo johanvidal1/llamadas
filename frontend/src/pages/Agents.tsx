@@ -10,6 +10,7 @@ import {
   getResetPreview,
   resetCampaign,
   getAgentPresence,
+  revokeAgentSessions,
   type AppUser,
   type AgentPresence,
   type AgentPresenceStatus,
@@ -103,6 +104,7 @@ function UserTable({
   currentUserIsSystemOwner = false,
   muted = false,
   presenceByUserId,
+  onRevokeSessions,
 }: {
   users: AppUser[]
   onEdit: (u: AppUser) => void
@@ -114,6 +116,7 @@ function UserTable({
   currentUserIsSystemOwner?: boolean
   muted?: boolean
   presenceByUserId?: Record<string, AgentPresence>
+  onRevokeSessions?: (u: AppUser) => void
 }) {
   const [expandedPresenceId, setExpandedPresenceId] = useState<string | null>(null)
   const [presencePopover, setPresencePopover] = useState<{
@@ -336,6 +339,16 @@ function UserTable({
                         </p>
                       </div>
                     ))}
+                    {onRevokeSessions &&
+                      (presence.status === 'online' || presence.status === 'recent') && (
+                        <button
+                          type="button"
+                          onClick={() => onRevokeSessions(u)}
+                          className="text-xs font-medium text-red-700 hover:text-red-800 hover:underline"
+                        >
+                          Cerrar sesión del agente
+                        </button>
+                      )}
                   </div>
                 </td>
               </tr>
@@ -356,6 +369,14 @@ function UserTable({
               setExpandedPresenceId(activePopoverUser.id)
               setPresencePopover(null)
             }
+          : undefined
+      }
+      onRevokeSessions={
+        activePopoverUser &&
+        activePopoverPresence &&
+        (activePopoverPresence.status === 'online' || activePopoverPresence.status === 'recent') &&
+        onRevokeSessions
+          ? () => onRevokeSessions(activePopoverUser)
           : undefined
       }
     />
@@ -478,6 +499,27 @@ export default function Agents() {
       toast.error(err?.response?.data?.error ?? 'Error al eliminar el usuario')
     },
   })
+
+  const revokeSessionsMutation = useMutation({
+    mutationFn: (userId: string) => revokeAgentSessions(userId),
+    onSuccess: () => {
+      toast.success('Sesión cerrada. El agente deberá iniciar sesión de nuevo.')
+      qc.invalidateQueries({ queryKey: ['agent-presence'] })
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      toast.error(err?.response?.data?.error ?? 'Error al cerrar la sesión')
+    },
+  })
+
+  const handleRevokeSessions = (u: AppUser) => {
+    if (
+      confirm(
+        `¿Cerrar la sesión de ${u.name}? El agente deberá iniciar sesión de nuevo.`,
+      )
+    ) {
+      revokeSessionsMutation.mutate(u.id)
+    }
+  }
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault()
@@ -638,6 +680,7 @@ export default function Agents() {
             isSuperAdminOrOwner={isSuperAdminOrOwner}
             currentUserIsSystemOwner={isSystemOwner}
             presenceByUserId={presenceByUserId}
+            onRevokeSessions={handleRevokeSessions}
           />
         )}
       </div>
@@ -670,6 +713,7 @@ export default function Agents() {
               isSuperAdminOrOwner={isSuperAdminOrOwner}
               currentUserIsSystemOwner={isSystemOwner}
               presenceByUserId={presenceByUserId}
+              onRevokeSessions={handleRevokeSessions}
               muted
             />
           )}

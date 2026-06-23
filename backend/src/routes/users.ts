@@ -188,6 +188,7 @@ router.put('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
   const updateData: Record<string, unknown> = { ...data }
   if (data.password) {
     updateData.password = await bcrypt.hash(data.password, 12)
+    updateData.tokenVersion = { increment: 1 }
   }
   if (data.email) {
     updateData.email = data.email.toLowerCase()

@@ -27,6 +27,7 @@ async function authenticateRequest(req: AuthRequest, res: Response): Promise<boo
       email: string
       role: string
       name: string
+      tokenVersion?: number
     }
     const user = await prisma.user.findUnique({
       where: { id: payload.id },
@@ -38,10 +39,19 @@ async function authenticateRequest(req: AuthRequest, res: Response): Promise<boo
         active: true,
         isSuperAdmin: true,
         isSystemOwner: true,
+        tokenVersion: true,
       },
     })
     if (!user || !user.active) {
       res.status(401).json({ error: 'Sesión inválida. Inicia sesión nuevamente.' })
+      return false
+    }
+    const jwtTokenVersion = payload.tokenVersion ?? 0
+    if (jwtTokenVersion !== user.tokenVersion) {
+      res.status(401).json({
+        error: 'Tu sesión fue cerrada por un administrador. Inicia sesión nuevamente.',
+        code: 'SESSION_REVOKED',
+      })
       return false
     }
     req.user = {

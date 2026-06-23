@@ -33,6 +33,7 @@ model User {
   isSuperAdmin  Boolean  @default(false)
   isSystemOwner Boolean  @default(false)
   active        Boolean  @default(true)
+  tokenVersion  Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

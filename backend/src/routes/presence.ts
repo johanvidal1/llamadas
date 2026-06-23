@@ -127,6 +127,40 @@ function agentStatus(sessions: { lastSeenAt: Date }[]): PresenceStatus {
   return 'offline'
 }
 
+router.post('/agents/:userId/revoke-sessions', requireAuth, async (req: AuthRequest, res: Response) => {
+  if (!req.user || !isAdminUser(req.user)) {
+    res.status(403).json({ error: 'Acceso restringido a administradores' })
+    return
+  }
+
+  const { userId } = req.params
+
+  const target = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true },
+  })
+
+  if (!target) {
+    res.status(404).json({ error: 'Usuario no encontrado' })
+    return
+  }
+
+  if (target.role !== 'AGENT') {
+    res.status(403).json({ error: 'Solo se pueden cerrar sesiones de agentes' })
+    return
+  }
+
+  await prisma.$transaction([
+    prisma.userSession.deleteMany({ where: { userId } }),
+    prisma.user.update({
+      where: { id: userId },
+      data: { tokenVersion: { increment: 1 } },
+    }),
+  ])
+
+  res.json({ ok: true })
+})
+
 router.get('/agents', requireAuth, async (req: AuthRequest, res: Response) => {
   if (!req.user || !isAdminUser(req.user)) {
     res.status(403).json({ error: 'Acceso restringido a administradores' })
