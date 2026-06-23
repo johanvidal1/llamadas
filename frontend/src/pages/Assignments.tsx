@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getUsers,
@@ -20,10 +20,11 @@ import {
   type ReleasePreview,
 } from '../api/client'
 import toast from 'react-hot-toast'
-import { UserCheck, Users, AlertCircle, X, ChevronDown, ChevronRight, History, PackageOpen } from 'lucide-react'
+import { UserCheck, Users, AlertCircle, X, ChevronDown, ChevronRight, History, PackageOpen, Search, Loader2 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { DispositionBadge } from '../components/StatusBadge'
+import ClientRecordModal from '../components/ClientRecordModal'
 import { getResponseOption } from '../config/responseOptions'
 
 function batchLabel(batch: { displayName?: string | null; filename: string }) {
@@ -32,6 +33,10 @@ function batchLabel(batch: { displayName?: string | null; filename: string }) {
 
 function normalizeSearch(s: string) {
   return s.trim().toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')
+}
+
+function hasRecord(company: AssignmentRunCompany) {
+  return !!(company.lastDisposition || company.lastCalledAt)
 }
 
 function matchesCompanySearch(c: AssignmentRunCompany, q: string) {
@@ -115,7 +120,13 @@ export default function Assignments() {
   const [expandedRuns, setExpandedRuns] = useState<Record<string, boolean>>({})
   const [runCompanies, setRunCompanies] = useState<Record<string, AssignmentRunCompany[]>>({})
   const [loadingRunCompanies, setLoadingRunCompanies] = useState<Record<string, boolean>>({})
-  const [runCompanyFilter, setRunCompanyFilter] = useState<Record<string, string>>({})
+  const [drawerSearch, setDrawerSearch] = useState('')
+  const [debouncedDrawerSearch, setDebouncedDrawerSearch] = useState('')
+  const [searchPrefetching, setSearchPrefetching] = useState(false)
+  const expandedBeforeSearchRef = useRef<Record<string, boolean> | null>(null)
+  const loadRunCompaniesPromises = useRef<Record<string, Promise<AssignmentRunCompany[] | null>>>({})
+  const runCompaniesRef = useRef(runCompanies)
+  runCompaniesRef.current = runCompanies
 
   const [releaseModal, setReleaseModal] = useState<{
     run: AssignmentRun
@@ -125,26 +136,69 @@ export default function Assignments() {
   const [releaseReason, setReleaseReason] = useState('')
   const [releaseLoading, setReleaseLoading] = useState(false)
   const [releaseSubmitting, setReleaseSubmitting] = useState(false)
+  const [recordModal, setRecordModal] = useState<{ clientId: string } | null>(null)
+
+  const ensureRunCompaniesLoaded = useCallback(
+    async (run: AssignmentRun, agentIdForRun: string): Promise<AssignmentRunCompany[] | null> => {
+      const runId = run.id
+      const cached = runCompaniesRef.current[runId]
+      if (cached) return cached
+
+      const existing = loadRunCompaniesPromises.current[runId]
+      if (existing) return existing
+
+      setLoadingRunCompanies((prev) => ({ ...prev, [runId]: true }))
+      const promise = (async () => {
+        try {
+          const data =
+            run.isLegacy && run.importBatchId
+              ? await getUntrackedCompanies(agentIdForRun, run.importBatchId)
+              : await getAssignmentRunCompanies(runId)
+          setRunCompanies((prev) => {
+            if (prev[runId]) return prev
+            return { ...prev, [runId]: data.companies }
+          })
+          return data.companies
+        } catch {
+          toast.error('Error al cargar empresas de la asignación')
+          return null
+        } finally {
+          setLoadingRunCompanies((prev) => ({ ...prev, [runId]: false }))
+          delete loadRunCompaniesPromises.current[runId]
+        }
+      })()
+
+      loadRunCompaniesPromises.current[runId] = promise
+      return promise
+    },
+    []
+  )
 
   const toggleRun = async (run: AssignmentRun, agentIdForRun: string) => {
     const runId = run.id
     const willExpand = !expandedRuns[runId]
     setExpandedRuns((prev) => ({ ...prev, [runId]: willExpand }))
-    if (willExpand && !runCompanies[runId]) {
-      setLoadingRunCompanies((prev) => ({ ...prev, [runId]: true }))
-      try {
-        const data = run.isLegacy && run.importBatchId
-          ? await getUntrackedCompanies(agentIdForRun, run.importBatchId)
-          : await getAssignmentRunCompanies(runId)
-        setRunCompanies((prev) => ({ ...prev, [runId]: data.companies }))
-      } catch {
-        toast.error('Error al cargar empresas de la asignación')
+    if (willExpand) {
+      const loaded = await ensureRunCompaniesLoaded(run, agentIdForRun)
+      if (loaded === null) {
         setExpandedRuns((prev) => ({ ...prev, [runId]: false }))
-      } finally {
-        setLoadingRunCompanies((prev) => ({ ...prev, [runId]: false }))
       }
     }
   }
+
+  useEffect(() => {
+    if (!drawerAgentId) {
+      setDrawerSearch('')
+      setDebouncedDrawerSearch('')
+      setSearchPrefetching(false)
+      expandedBeforeSearchRef.current = null
+    }
+  }, [drawerAgentId])
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedDrawerSearch(drawerSearch), 300)
+    return () => clearTimeout(timer)
+  }, [drawerSearch])
 
   const openReleaseModal = async (run: AssignmentRun, agentIdForRun: string) => {
     setReleaseModal({ run, agentId: agentIdForRun })
@@ -260,6 +314,52 @@ export default function Assignments() {
         fileCount: new Set(drawerRuns.map((run) => run.importBatchId ?? 'none')).size,
       }
     : null
+
+  useEffect(() => {
+    const query = debouncedDrawerSearch.trim()
+    if (!drawerAgentId || !query) {
+      if (!query && expandedBeforeSearchRef.current) {
+        setExpandedRuns(expandedBeforeSearchRef.current)
+        expandedBeforeSearchRef.current = null
+      }
+      setSearchPrefetching(false)
+      return
+    }
+
+    if (!expandedBeforeSearchRef.current) {
+      setExpandedRuns((prev) => {
+        expandedBeforeSearchRef.current = { ...prev }
+        return prev
+      })
+    }
+
+    let cancelled = false
+    const agentIdForSearch = drawerAgentId
+    const runs = drawerRuns
+
+    const runSearch = async () => {
+      setSearchPrefetching(true)
+      const results = await Promise.all(
+        runs.map(async (run) => ({
+          runId: run.id,
+          companies: (await ensureRunCompaniesLoaded(run, agentIdForSearch)) ?? [],
+        }))
+      )
+      if (cancelled) return
+
+      const newExpanded: Record<string, boolean> = {}
+      for (const { runId, companies } of results) {
+        newExpanded[runId] = companies.some((c) => matchesCompanySearch(c, query))
+      }
+      setExpandedRuns(newExpanded)
+      setSearchPrefetching(false)
+    }
+
+    runSearch()
+    return () => {
+      cancelled = true
+    }
+  }, [debouncedDrawerSearch, drawerAgentId, drawerRuns, ensureRunCompaniesLoaded])
 
   const agents = users.filter(
     (u: { role: string; active: boolean }) => u.role === 'AGENT' && u.active
@@ -612,7 +712,7 @@ export default function Assignments() {
               <div
                 key={a.id}
                 className="card p-5 cursor-pointer hover:shadow-md hover:border-blue-200 transition-all"
-                onClick={() => { setDrawerAgentId(a.id); setExpandedRuns({}) }}
+                onClick={() => { setDrawerAgentId(a.id); setExpandedRuns({}); setDrawerSearch('') }}
               >
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-9 h-9 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold text-sm">
@@ -664,6 +764,34 @@ export default function Assignments() {
           assignedCompanies?: number
           _count: { assignments: number; callLogs: number }
         } | undefined
+
+        const searchQuery = drawerSearch.trim()
+        const isSearching = searchQuery.length > 0
+
+        let searchResultCount = 0
+        let searchRunCount = 0
+        if (isSearching) {
+          for (const run of drawerRuns) {
+            const companies = runCompanies[run.id]
+            if (companies === undefined) continue
+            const matchCount = companies.filter((c) => matchesCompanySearch(c, searchQuery)).length
+            if (matchCount > 0) {
+              searchResultCount += matchCount
+              searchRunCount++
+            }
+          }
+        }
+
+        const showSearchEmptyState =
+          isSearching &&
+          !searchPrefetching &&
+          drawerRuns.length > 0 &&
+          drawerRuns.every((run) => {
+            const companies = runCompanies[run.id]
+            if (companies === undefined) return false
+            return !companies.some((c) => matchesCompanySearch(c, searchQuery))
+          })
+
         return (
           <>
             {/* Backdrop */}
@@ -718,11 +846,44 @@ export default function Assignments() {
                 </h3>
 
                 {drawerRunsSummary && (
-                  <div className="sticky top-0 z-10 -mx-5 px-5 py-2.5 bg-white/95 backdrop-blur border-b border-gray-100 text-sm text-gray-600">
-                    <strong className="text-gray-900">{drawerRunsSummary.totalCompanies}</strong> empresas en{' '}
-                    <strong className="text-gray-900">{drawerRunsSummary.assignmentCount}</strong> asignaciones desde{' '}
-                    <strong className="text-gray-900">{drawerRunsSummary.fileCount}</strong>{' '}
-                    {drawerRunsSummary.fileCount === 1 ? 'archivo' : 'archivos'}
+                  <div className="sticky top-0 z-10 -mx-5 px-5 bg-white/95 backdrop-blur border-b border-gray-100">
+                    <div className="py-2.5 text-sm text-gray-600">
+                      <strong className="text-gray-900">{drawerRunsSummary.totalCompanies}</strong> empresas en{' '}
+                      <strong className="text-gray-900">{drawerRunsSummary.assignmentCount}</strong> asignaciones desde{' '}
+                      <strong className="text-gray-900">{drawerRunsSummary.fileCount}</strong>{' '}
+                      {drawerRunsSummary.fileCount === 1 ? 'archivo' : 'archivos'}
+                    </div>
+                    <div className="pb-3">
+                      <div className="relative">
+                        <Search
+                          size={16}
+                          className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Buscar por RUC o razón social en todas las asignaciones"
+                          value={drawerSearch}
+                          onChange={(e) => setDrawerSearch(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full border border-gray-200 rounded-lg pl-9 pr-9 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                        />
+                        {searchPrefetching && (
+                          <Loader2
+                            size={16}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 animate-spin"
+                          />
+                        )}
+                      </div>
+                      {isSearching && !searchPrefetching && (
+                        <p className="text-xs text-gray-500 mt-1.5">
+                          {searchResultCount} resultado{searchResultCount !== 1 ? 's' : ''} en{' '}
+                          {searchRunCount} asignación{searchRunCount !== 1 ? 'es' : ''}
+                        </p>
+                      )}
+                      {isSearching && searchPrefetching && (
+                        <p className="text-xs text-gray-500 mt-1.5">Buscando en todas las asignaciones...</p>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -737,13 +898,29 @@ export default function Assignments() {
                   </div>
                 )}
 
-                {drawerRuns.map((run) => {
+                {showSearchEmptyState && (
+                  <div className="text-center text-gray-400 py-12">
+                    <Search size={36} className="mx-auto mb-2" />
+                    <p>Ninguna empresa coincide en las asignaciones de este agente</p>
+                  </div>
+                )}
+
+                {!showSearchEmptyState && drawerRuns
+                  .filter((run) => {
+                    if (!isSearching) return true
+                    const loading = loadingRunCompanies[run.id] ?? false
+                    const companies = runCompanies[run.id]
+                    if (loading || companies === undefined) return true
+                    return companies.some((c) => matchesCompanySearch(c, searchQuery))
+                  })
+                  .map((run) => {
                   const isOpen = expandedRuns[run.id] ?? false
                   const companies = runCompanies[run.id] ?? []
-                  const filterQuery = runCompanyFilter[run.id] ?? ''
+                  const filterQuery = drawerSearch.trim()
                   const filteredCompanies = companies.filter((c) =>
                     matchesCompanySearch(c, filterQuery)
                   )
+                  const matchCount = isSearching ? filteredCompanies.length : 0
                   const loadingCompanies = loadingRunCompanies[run.id] ?? false
                   const showRelease = canReleaseRun(run) && drawerAgentId
 
@@ -759,6 +936,11 @@ export default function Assignments() {
                             <div className="min-w-0">
                               <p className="text-base font-bold text-gray-900">
                                 {run.companyCount} empresa{run.companyCount !== 1 ? 's' : ''}
+                                {isSearching && matchCount > 0 && (
+                                  <span className="ml-2 text-xs font-normal text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">
+                                    {matchCount} de {run.companyCount} coincidencias
+                                  </span>
+                                )}
                                 {run.isLegacy && (
                                   <span className="ml-2 text-xs font-normal text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
                                     Anterior
@@ -824,26 +1006,6 @@ export default function Assignments() {
                           )}
                           {!loadingCompanies && companies.length > 0 && (
                             <div>
-                              <div className="px-4 py-2 border-b border-gray-100">
-                                <input
-                                  type="text"
-                                  placeholder="Buscar por RUC o razón social"
-                                  value={filterQuery}
-                                  onChange={(e) =>
-                                    setRunCompanyFilter((prev) => ({
-                                      ...prev,
-                                      [run.id]: e.target.value,
-                                    }))
-                                  }
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="w-full border border-gray-200 rounded px-3 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                                />
-                                {filterQuery.trim() && (
-                                  <p className="text-xs text-gray-500 mt-1">
-                                    Mostrando {filteredCompanies.length} de {companies.length}
-                                  </p>
-                                )}
-                              </div>
                               {filteredCompanies.length === 0 ? (
                                 <p className="text-center text-gray-400 py-6 text-sm">
                                   Ninguna empresa coincide
@@ -855,6 +1017,7 @@ export default function Assignments() {
                                       <tr className="border-b border-gray-100 bg-gray-50/80 text-left text-xs text-gray-500 uppercase tracking-wide">
                                         <th className="px-4 py-2 font-medium">RUC</th>
                                         <th className="px-4 py-2 font-medium">Razón social</th>
+                                        <th className="px-4 py-2 font-medium">Última actividad</th>
                                         <th className="px-4 py-2 font-medium">Respuesta</th>
                                       </tr>
                                     </thead>
@@ -865,13 +1028,47 @@ export default function Assignments() {
                                           (company.lastDisposition
                                             ? getResponseOption(company.lastDisposition)?.aclaracion
                                             : undefined)
+                                        const clickable = hasRecord(company)
                                         return (
-                                        <tr key={company.id} className="hover:bg-gray-50">
+                                        <tr
+                                          key={company.id}
+                                          className={clickable ? 'cursor-pointer hover:bg-blue-50' : 'hover:bg-gray-50'}
+                                          title={clickable ? 'Ver registro' : undefined}
+                                          onClick={
+                                            clickable
+                                              ? (e) => {
+                                                  e.stopPropagation()
+                                                  setRecordModal({ clientId: company.id })
+                                                }
+                                              : undefined
+                                          }
+                                        >
                                           <td className="px-4 py-2 text-gray-600 whitespace-nowrap">
                                             {company.ruc}
                                           </td>
                                           <td className="px-4 py-2 text-gray-900 truncate max-w-[200px]">
                                             {company.razonSocial || '—'}
+                                          </td>
+                                          <td className="px-4 py-2 text-xs text-gray-600 whitespace-nowrap">
+                                            {company.lastCalledAt ? (
+                                              <span className="inline-flex items-center gap-1">
+                                                <span>{format(new Date(company.lastCalledAt), 'dd/MM/yy HH:mm', { locale: es })}</span>
+                                                {(company.callLogCount ?? 0) > 1 && (
+                                                  <span
+                                                    className="text-[9px] text-amber-600 font-semibold uppercase tracking-wide"
+                                                    title={`${company.callLogCount} registros en historial · último: ${format(new Date(company.lastCalledAt), 'dd/MM/yy HH:mm', { locale: es })}`}
+                                                  >
+                                                    Actualizado
+                                                  </span>
+                                                )}
+                                              </span>
+                                            ) : company.createdAt ? (
+                                              <span className="text-gray-500">
+                                                {format(new Date(company.createdAt), 'dd/MM/yy HH:mm', { locale: es })}
+                                              </span>
+                                            ) : (
+                                              <span className="text-gray-300">—</span>
+                                            )}
                                           </td>
                                           <td className="px-4 py-2">
                                             {company.lastDisposition ? (
@@ -903,6 +1100,15 @@ export default function Assignments() {
                 })}
               </div>
             </div>
+
+            {recordModal && drawerAgentId && (
+              <ClientRecordModal
+                clientId={recordModal.clientId}
+                agentFilterId={drawerAgentId}
+                initialFocus="history"
+                onClose={() => setRecordModal(null)}
+              />
+            )}
           </>
         )
       })()}

@@ -303,6 +303,8 @@ export type AssignmentRunCompany = {
   createdAt?: string
   lastDisposition?: string | null
   lastAclaracion?: string | null
+  lastCalledAt?: string | null
+  callLogCount?: number
 }
 
 export const getAssignmentRuns = (agentId: string, batchId?: string) =>

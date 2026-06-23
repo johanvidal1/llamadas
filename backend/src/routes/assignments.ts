@@ -95,7 +95,12 @@ async function enrichRunCompaniesWithLastDisposition(
   companies: RunCompanyRow[],
   agentId: string
 ): Promise<
-  (RunCompanyRow & { lastDisposition: string | null; lastAclaracion: string | null })[]
+  (RunCompanyRow & {
+    lastDisposition: string | null
+    lastAclaracion: string | null
+    lastCalledAt: string | null
+    callLogCount: number
+  })[]
 > {
   if (companies.length === 0) return []
 
@@ -111,6 +116,8 @@ async function enrichRunCompaniesWithLastDisposition(
       ...c,
       lastDisposition: disposition,
       lastAclaracion: last?.aclaracion ?? getAclaracionForDisposition(disposition ?? '') ?? null,
+      lastCalledAt: last?.lastCalledAt?.toISOString() ?? null,
+      callLogCount: last?.callLogCount ?? 0,
     }
   })
 }
