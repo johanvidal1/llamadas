@@ -14,8 +14,19 @@ type VerticalPlacement = 'bottom' | 'top'
 export function formatTimeAgo(iso: string): string {
   const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000)
   if (mins < 1) return 'ahora'
-  if (mins === 1) return 'hace 1 min'
-  return `hace ${mins} min`
+  if (mins < 60) return mins === 1 ? 'hace 1 min' : `hace ${mins} min`
+
+  if (mins < 24 * 60) {
+    const hours = Math.floor(mins / 60)
+    const remainingMins = mins % 60
+    if (remainingMins === 0) return hours === 1 ? 'hace 1 h' : `hace ${hours} h`
+    return hours === 1 ? `hace 1 h ${remainingMins} min` : `hace ${hours} h ${remainingMins} min`
+  }
+
+  const days = Math.floor(mins / (24 * 60))
+  const remainingHours = Math.floor((mins % (24 * 60)) / 60)
+  if (remainingHours === 0) return days === 1 ? 'hace 1 día' : `hace ${days} días`
+  return days === 1 ? `hace 1 día ${remainingHours} h` : `hace ${days} días ${remainingHours} h`
 }
 
 export function formatSessionDuration(loginAt: string, lastSeenAt: string): string {
