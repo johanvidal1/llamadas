@@ -82,11 +82,28 @@ type RunCompanyRow = {
   createdAt: Date
 }
 
-function sortCompaniesByImportOrder(companies: RunCompanyRow[]): RunCompanyRow[] {
+type EnrichedRunCompanyRow = RunCompanyRow & {
+  lastDisposition: string | null
+  lastAclaracion: string | null
+  lastCalledAt: string | null
+  callLogCount: number
+}
+
+function sortCompaniesByLastActivity(companies: EnrichedRunCompanyRow[]): EnrichedRunCompanyRow[] {
   return companies.sort((a, b) => {
-    const ta = new Date(a.createdAt).getTime()
-    const tb = new Date(b.createdAt).getTime()
-    if (ta !== tb) return ta - tb
+    const hasA = a.lastCalledAt != null
+    const hasB = b.lastCalledAt != null
+    if (hasA !== hasB) return hasA ? -1 : 1
+
+    if (hasA && hasB) {
+      const ta = new Date(a.lastCalledAt!).getTime()
+      const tb = new Date(b.lastCalledAt!).getTime()
+      if (ta !== tb) return tb - ta
+    }
+
+    const createdA = new Date(a.createdAt).getTime()
+    const createdB = new Date(b.createdAt).getTime()
+    if (createdA !== createdB) return createdB - createdA
     return a.id.localeCompare(b.id)
   })
 }
@@ -94,14 +111,7 @@ function sortCompaniesByImportOrder(companies: RunCompanyRow[]): RunCompanyRow[]
 async function enrichRunCompaniesWithLastDisposition(
   companies: RunCompanyRow[],
   agentId: string
-): Promise<
-  (RunCompanyRow & {
-    lastDisposition: string | null
-    lastAclaracion: string | null
-    lastCalledAt: string | null
-    callLogCount: number
-  })[]
-> {
+): Promise<EnrichedRunCompanyRow[]> {
   if (companies.length === 0) return []
 
   const lastByCompany = await getLastDispositionByCompanyIds(
@@ -506,9 +516,8 @@ router.get('/untracked-companies', requireAdmin, async (req: AuthRequest, res: R
     }
   }
 
-  const companies = await enrichRunCompaniesWithLastDisposition(
-    sortCompaniesByImportOrder([...companyMap.values()]),
-    agentId
+  const companies = sortCompaniesByLastActivity(
+    await enrichRunCompaniesWithLastDisposition([...companyMap.values()], agentId)
   )
 
   res.json({ companies })
@@ -621,9 +630,8 @@ router.get('/runs/:id/companies', requireAdmin, async (req: AuthRequest, res: Re
     }
   }
 
-  const companies = await enrichRunCompaniesWithLastDisposition(
-    sortCompaniesByImportOrder([...companyMap.values()]),
-    run.agentId
+  const companies = sortCompaniesByLastActivity(
+    await enrichRunCompaniesWithLastDisposition([...companyMap.values()], run.agentId)
   )
 
   res.json({ companies })
