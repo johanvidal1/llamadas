@@ -238,24 +238,20 @@ function groupClientsByAgent(
     clients: groupClients,
   }))
 
-  if (import.meta.env.DEV) {
-    for (const group of groups) {
-      group.clients = sortClientsForAdminQueue(group.clients)
-    }
+  for (const group of groups) {
+    group.clients = sortClientsForAdminQueue(group.clients)
   }
 
   groups.sort((a, b) => {
     if (a.key === UNASSIGNED_AGENT_KEY) return 1
     if (b.key === UNASSIGNED_AGENT_KEY) return -1
-    if (import.meta.env.DEV) {
-      const aMax = maxLastCalledAt(a.clients)
-      const bMax = maxLastCalledAt(b.clients)
-      if (aMax === null && bMax === null) return a.agentName.localeCompare(b.agentName, 'es')
-      if (aMax === null) return 1
-      if (bMax === null) return -1
-      const byActivity = bMax - aMax
-      if (byActivity !== 0) return byActivity
-    }
+    const aMax = maxLastCalledAt(a.clients)
+    const bMax = maxLastCalledAt(b.clients)
+    if (aMax === null && bMax === null) return a.agentName.localeCompare(b.agentName, 'es')
+    if (aMax === null) return 1
+    if (bMax === null) return -1
+    const byActivity = bMax - aMax
+    if (byActivity !== 0) return byActivity
     return a.agentName.localeCompare(b.agentName, 'es')
   })
 
@@ -537,7 +533,7 @@ export default function Clients() {
         page: effectiveGroupBy ? 1 : page,
         pageSize,
         grouped: effectiveGroupBy,
-        devActivitySort: import.meta.env.DEV,
+        sortBy: 'activity',
       },
     ],
     queryFn: () =>
@@ -549,7 +545,7 @@ export default function Clients() {
         registeredTo: registeredTo || undefined,
         page: effectiveGroupBy ? 1 : page,
         limit: pageSize,
-        ...(import.meta.env.DEV ? { sortBy: 'activity' } : {}),
+        sortBy: 'activity',
         ...pipelineFilterToParams(pipelineFilter),
       }),
   })
