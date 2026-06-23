@@ -89,6 +89,8 @@ export type AppUser = {
   active: boolean
   createdAt?: string
   assignedCompanies?: number
+  assignmentRunCount?: number
+  lastAssignmentAt?: string | null
   _count: {
     assignments: number
     callLogs: number

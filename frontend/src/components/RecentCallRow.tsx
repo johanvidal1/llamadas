@@ -13,10 +13,12 @@ export type RecentCallRowData = {
 export function RecentCallRow({
   call,
   showAgent = false,
+  title,
   onClick,
 }: {
   call: RecentCallRowData
   showAgent?: boolean
+  title?: string
   onClick?: () => void
 }) {
   const rowClass =
@@ -43,7 +45,7 @@ export function RecentCallRow({
 
   if (onClick) {
     return (
-      <button type="button" onClick={onClick} className={`w-full text-left ${rowClass}`}>
+      <button type="button" title={title} onClick={onClick} className={`w-full text-left ${rowClass}`}>
         {content}
       </button>
     )

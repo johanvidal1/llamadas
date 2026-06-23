@@ -296,6 +296,80 @@ export async function buildLegacyBucketMetrics(
   }
 }
 
+export type AgentAssignmentRunStats = {
+  assignmentRunCount: number
+  lastAssignmentAt: Date | null
+}
+
+/** Per-agent run count + latest assignment date (matches GET /api/assignments/runs list semantics). */
+export async function getAgentAssignmentRunStatsByAgentId(): Promise<
+  Map<string, AgentAssignmentRunStats>
+> {
+  const [runStats, legacyAssignments] = await Promise.all([
+    prisma.assignmentRun.groupBy({
+      by: ['agentId'],
+      _count: { _all: true },
+      _max: { createdAt: true },
+    }),
+    prisma.assignment.findMany({
+      where: { assignmentRunId: null },
+      select: {
+        agentId: true,
+        assignedAt: true,
+        contact: { select: { company: { select: { importBatchId: true } } } },
+      },
+    }),
+  ])
+
+  const statsByAgent = new Map<string, AgentAssignmentRunStats>()
+
+  for (const row of runStats) {
+    statsByAgent.set(row.agentId, {
+      assignmentRunCount: row._count._all,
+      lastAssignmentAt: row._max.createdAt,
+    })
+  }
+
+  const legacyBucketsByAgent = new Map<string, Map<string, Date>>()
+  for (const a of legacyAssignments) {
+    const batchId = a.contact.company.importBatchId
+    if (!batchId) continue
+    if (!legacyBucketsByAgent.has(a.agentId)) {
+      legacyBucketsByAgent.set(a.agentId, new Map())
+    }
+    const buckets = legacyBucketsByAgent.get(a.agentId)!
+    const cur = buckets.get(batchId)
+    if (!cur || a.assignedAt < cur) {
+      buckets.set(batchId, a.assignedAt)
+    }
+  }
+
+  for (const [agentId, buckets] of legacyBucketsByAgent) {
+    const legacyCount = buckets.size
+    let maxBucketEarliest: Date | null = null
+    for (const earliest of buckets.values()) {
+      if (!maxBucketEarliest || earliest > maxBucketEarliest) {
+        maxBucketEarliest = earliest
+      }
+    }
+
+    const existing = statsByAgent.get(agentId) ?? {
+      assignmentRunCount: 0,
+      lastAssignmentAt: null,
+    }
+    existing.assignmentRunCount += legacyCount
+    if (
+      maxBucketEarliest &&
+      (!existing.lastAssignmentAt || maxBucketEarliest > existing.lastAssignmentAt)
+    ) {
+      existing.lastAssignmentAt = maxBucketEarliest
+    }
+    statsByAgent.set(agentId, existing)
+  }
+
+  return statsByAgent
+}
+
 /** Resolve which import batch a run belongs to (by run field or company majority). */
 export function resolveRunBatchId(
   runImportBatchId: string | null,

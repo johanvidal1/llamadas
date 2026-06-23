@@ -1,11 +1,12 @@
-import { useEffect, useMemo } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { format, startOfMonth } from 'date-fns'
 import { History, RefreshCw } from 'lucide-react'
 import { getCalls, getMyBatches, getUsers, type GetCallsParams } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { RecentCallRow } from '../components/RecentCallRow'
+import ClientRecordModal from '../components/ClientRecordModal'
 import { AGENT_PIPELINE_FUNNEL } from '../config/companyPipeline'
 import { getDispositionLabel } from '../config/responseOptions'
 
@@ -82,9 +83,9 @@ function filtersToApiParams(filters: FilterState, isAdmin: boolean): GetCallsPar
 
 export default function CallHistory() {
   const { isAdmin } = useAuth()
-  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const filters = useMemo(() => readFilters(searchParams), [searchParams])
+  const [recordModal, setRecordModal] = useState<{ clientId: string } | null>(null)
 
   useEffect(() => {
     const needsDates = !searchParams.has('from') && !searchParams.has('to')
@@ -131,10 +132,7 @@ export default function CallHistory() {
   const total = data?.total ?? 0
 
   const handleCallClick = (call: (typeof calls)[number]) => {
-    const params = new URLSearchParams()
-    params.set('companyId', call.company.id)
-    if (call.contact?.id) params.set('contactId', call.contact.id)
-    navigate(`/my-leads?${params.toString()}`)
+    setRecordModal({ clientId: call.company.id })
   }
 
   return (
@@ -310,6 +308,7 @@ export default function CallHistory() {
                 key={call.id}
                 call={call}
                 showAgent={isAdmin}
+                title="Ver registro"
                 onClick={() => handleCallClick(call)}
               />
             ))}
@@ -321,6 +320,15 @@ export default function CallHistory() {
           </p>
         )}
       </div>
+
+      {recordModal && (
+        <ClientRecordModal
+          clientId={recordModal.clientId}
+          agentFilterId={isAdmin && filters.agentId ? filters.agentId : undefined}
+          initialFocus="history"
+          onClose={() => setRecordModal(null)}
+        />
+      )}
     </div>
   )
 }

@@ -605,6 +605,8 @@ export default function Assignments() {
               name: string
               email: string
               assignedCompanies?: number
+              assignmentRunCount?: number
+              lastAssignmentAt?: string | null
               _count: { assignments: number; callLogs: number }
             }) => (
               <div
@@ -621,14 +623,26 @@ export default function Assignments() {
                     <p className="text-xs text-gray-400">{a.email}</p>
                   </div>
                 </div>
-                <div className="flex gap-4 text-sm">
+                <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
                     <p className="text-xl font-bold text-gray-900">{a.assignedCompanies ?? 0}</p>
                     <p className="text-xs text-gray-500">Empresas</p>
                   </div>
                   <div>
+                    <p className="text-xl font-bold text-gray-900">{a.assignmentRunCount ?? 0}</p>
+                    <p className="text-xs text-gray-500">Asignaciones</p>
+                  </div>
+                  <div>
                     <p className="text-xl font-bold text-gray-900">{a._count.callLogs}</p>
                     <p className="text-xs text-gray-500">Llamadas</p>
+                  </div>
+                  <div>
+                    <p className="text-base font-bold text-gray-900 leading-tight">
+                      {a.lastAssignmentAt
+                        ? format(new Date(a.lastAssignmentAt), 'd MMM yyyy, HH:mm', { locale: es })
+                        : '—'}
+                    </p>
+                    <p className="text-xs text-gray-500">Última asignación</p>
                   </div>
                 </div>
               </div>
