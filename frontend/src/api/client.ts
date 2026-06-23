@@ -521,6 +521,8 @@ export type ReportsResponse = {
     convertedCompanies: number
     notInterestedCompanies: number
     pendingCompanies: number
+    ventaCerrada: number
+    closeRate: number
     contactRate: number
     companyContactRate: number
     conversionRate: number
@@ -528,6 +530,7 @@ export type ReportsResponse = {
     avgCallsPerContact: number
     pendingCallbacks: number
     overdueCallbacks: number
+    assignmentRuns: BatchAssignmentRunMetrics[]
   }>
   callsByDay: { date: string; count: number }[]
   dispositionBreakdown: { disposition: string; count: number }[]
@@ -577,11 +580,14 @@ export type BatchAssignmentRunMetrics = {
   assignedAt: string | null
   companyCount: number
   assignedBy: { name: string }
+  batchLabel?: string
   callCount: number
   contactedCompanies: number
   contactedPct: number
   inFunnel: number
   ventaCerrada: number
+  pendingCompanies: number
+  closeRate: number
 }
 
 export type BatchDetail = {

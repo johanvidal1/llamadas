@@ -1,7 +1,10 @@
 import { useState, Fragment } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { getReports, getClients, getCallbacks, getAssignmentRunCompanies, getUntrackedCompanies } from '../api/client'
+import {
+  getReports, getClients, getCallbacks, getAssignmentRunCompanies, getUntrackedCompanies,
+  type BatchAgentBreakdownRow,
+} from '../api/client'
 import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
 import {
@@ -35,9 +38,11 @@ interface AgentPerf {
   interested: number; converted: number; notInterested: number
   interestedRecords: number; convertedRecords: number; notInterestedRecords: number; pendingRecords: number
   interestedCompanies: number; convertedCompanies: number; notInterestedCompanies: number; pendingCompanies: number
+  ventaCerrada: number; closeRate: number
   contactRate: number; companyContactRate: number
   conversionRate: number; avgCallsPerClient: number
   pendingCallbacks: number; overdueCallbacks: number
+  assignmentRuns?: AgentAssignmentRun[]
 }
 interface DayCount { date: string; count: number }
 interface DispCount { disposition: string; count: number }
@@ -47,12 +52,16 @@ interface BatchAssignmentRun {
   assignedAt: string | null
   companyCount: number
   assignedBy: { name: string }
+  batchLabel?: string
   callCount: number
   contactedCompanies: number
   contactedPct: number
   inFunnel: number
   ventaCerrada: number
+  pendingCompanies: number
+  closeRate: number
 }
+type AgentAssignmentRun = BatchAssignmentRun
 interface BatchProgress {
   id: string; filename: string; createdAt: string
   batchTotalCompanies: number
@@ -64,6 +73,7 @@ interface BatchProgress {
   inFunnel: number; ventaCerrada: number; pendingCompanies: number
   companyPipeline: Record<string, number>
   assignmentRuns?: BatchAssignmentRun[]
+  agentBreakdown?: BatchAgentBreakdownRow[]
 }
 interface FunnelSlice {
   total: number; assigned: number; pending: number; inProgress: number
@@ -89,6 +99,41 @@ function Bar({ pct, color = 'bg-blue-500' }: { pct: number; color?: string }) {
     <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden w-full">
       <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${Math.min(pct, 100)}%` }} />
     </div>
+  )
+}
+
+function AgentRunSubRowLabel({ run }: { run: AgentAssignmentRun }) {
+  const label = run.batchLabel ?? 'Sin lote'
+  const dateStr = run.assignedAt
+    ? format(new Date(run.assignedAt), 'd MMM yyyy', { locale: es })
+    : null
+
+  if (run.isLegacy) {
+    return (
+      <span className="inline-flex items-center gap-0 min-w-0 flex-wrap">
+        <span className="truncate max-w-[160px]" title={label}>{label}</span>
+        <span className="text-gray-400 shrink-0"> · </span>
+        <span>Asignación anterior (sin historial)</span>
+        {dateStr && (
+          <>
+            <span className="text-gray-400 shrink-0"> · </span>
+            <span>{dateStr}</span>
+          </>
+        )}
+      </span>
+    )
+  }
+
+  return (
+    <span className="inline-flex items-center gap-0 min-w-0 flex-wrap">
+      <span className="truncate max-w-[160px]" title={label}>{label}</span>
+      {dateStr && (
+        <>
+          <span className="text-gray-400 shrink-0"> · </span>
+          <span>{dateStr}</span>
+        </>
+      )}
+    </span>
   )
 }
 
@@ -232,15 +277,13 @@ function StatCard({ label, value, sub, color = 'text-gray-900', icon: Icon, stat
 
 // ─── Drill-down types ─────────────────────────────────────────────────────────
 
-type MetricKey = 'contactRate' | 'conversionRate' | 'avgCallsPerClient' | 'interested' | 'overdueCallbacks'
+type MetricKey = 'contactRate' | 'avgCallsPerClient' | 'overdueCallbacks'
 
 interface DrillDown { agentId: string; agentName: string; metric: MetricKey }
 
 const METRIC_LABELS: Record<MetricKey, string> = {
   contactRate: 'Tasa de contacto (empresas)',
-  conversionRate: 'Tasa de conversión',
   avgCallsPerClient: 'Llamadas por registro',
-  interested: 'Registros interesados',
   overdueCallbacks: 'Callbacks vencidos',
 }
 
@@ -302,17 +345,9 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
     tabBList = allContacts.filter((c) => c._count.callLogs === 0)
     tabALabel = `Contactados (${tabAList.length})`
     tabBLabel = `Sin contactar (${tabBList.length})`
-  } else if (drill.metric === 'conversionRate') {
-    tabAList = allContacts.filter((c) => c.status === 'INTERESTED' || c.status === 'CONVERTED')
-    tabBList = allContacts.filter((c) => c._count.callLogs > 0 && c.status !== 'INTERESTED' && c.status !== 'CONVERTED')
-    tabALabel = `Interesados/Convertidos (${tabAList.length})`
-    tabBLabel = `Contactados sin conversión (${tabBList.length})`
   } else if (drill.metric === 'avgCallsPerClient') {
     tabAList = [...allContacts].sort((a, b) => b._count.callLogs - a._count.callLogs)
     tabALabel = `Todos los registros (${tabAList.length})`
-  } else if (drill.metric === 'interested') {
-    tabAList = allContacts.filter((c) => c.status === 'INTERESTED' || c.status === 'CONVERTED')
-    tabALabel = `Interesados (${tabAList.length})`
   } else if (drill.metric === 'overdueCallbacks') {
     overdueList = allCallbacks.filter((cb) => {
       const d = new Date(cb.scheduledAt)
@@ -414,11 +449,11 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
 
 // ─── Sort hook ─────────────────────────────────────────────────────────────────
 
-type SortKey = keyof AgentPerf
+type AgentSortKey = 'assignedCompanies' | 'companiesWithResponse' | 'companyContactRate' | 'companiesInFunnel' | 'pendingCompanies' | 'totalCalls' | 'ventaCerrada' | 'closeRate' | 'overdueCallbacks'
 function useSortedAgents(agents: AgentPerf[]) {
-  const [sortBy, setSortBy] = useState<SortKey>('conversionRate')
+  const [sortBy, setSortBy] = useState<AgentSortKey>('closeRate')
   const [asc, setAsc] = useState(false)
-  const toggle = (key: SortKey) => {
+  const toggle = (key: AgentSortKey) => {
     if (sortBy === key) setAsc((a) => !a)
     else { setSortBy(key); setAsc(false) }
   }
@@ -439,9 +474,23 @@ export default function Reports() {
   const [showStatusDetail, setShowStatusDetail] = useState(false)
   const [expandedBatches, setExpandedBatches] = useState<Record<string, boolean>>({})
   const [expandedRuns, setExpandedRuns] = useState<Record<string, boolean>>({})
+  const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({})
+  const [expandedBatchAgents, setExpandedBatchAgents] = useState<Record<string, Record<string, boolean>>>({})
 
   const toggleBatchExpand = (batchId: string) => {
     setExpandedBatches((prev) => ({ ...prev, [batchId]: !prev[batchId] }))
+  }
+
+  const toggleBatchAgentExpand = (batchId: string, agentId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    setExpandedBatchAgents((prev) => ({
+      ...prev,
+      [batchId]: { ...(prev[batchId] ?? {}), [agentId]: !(prev[batchId]?.[agentId] ?? false) },
+    }))
+  }
+
+  const toggleAgentExpand = (agentId: string) => {
+    setExpandedAgents((prev) => ({ ...prev, [agentId]: !prev[agentId] }))
   }
 
   const toggleRunExpand = (runId: string, e: React.MouseEvent) => {
@@ -528,7 +577,7 @@ export default function Reports() {
       : key === 'OTROS' ? 'bg-slate-400'
         : (DISPOSITION_BAR_COLORS[key] ?? 'bg-gray-400')
 
-  const SortIcon = ({ k }: { k: SortKey }) =>
+  const SortIcon = ({ k }: { k: AgentSortKey }) =>
     sortBy === k
       ? (asc ? <ChevronUp size={13} className="text-blue-600" /> : <ChevronDown size={13} className="text-blue-600" />)
       : <ChevronDown size={13} className="text-gray-300" />
@@ -546,7 +595,12 @@ export default function Reports() {
           <select
             className="input text-sm py-1.5 min-w-[200px]"
             value={filterAgentId}
-            onChange={(e) => setFilterAgentId(e.target.value)}
+            onChange={(e) => {
+              setFilterAgentId(e.target.value)
+              setExpandedBatches({})
+              setExpandedBatchAgents({})
+              setExpandedRuns({})
+            }}
           >
             <option value="">Todos los agentes</option>
             {agents.map((a) => (
@@ -772,17 +826,18 @@ export default function Reports() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
+                <th className="text-left px-4 py-3 font-medium text-gray-600 w-8" />
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Agente</th>
                 {[
-                  { k: 'assignedCompanies' as SortKey, l: 'Emp. asign.' },
-                  { k: 'companiesWithResponse' as SortKey, l: 'Con resp.' },
-                  { k: 'companyContactRate' as SortKey, l: 'Tasa contacto' },
-                  { k: 'companiesInFunnel' as SortKey, l: 'En embudo' },
-                  { k: 'interestedCompanies' as SortKey, l: 'Int. emp.' },
-                  { k: 'pendingCompanies' as SortKey, l: 'Pend. emp.' },
-                  { k: 'totalCalls' as SortKey, l: 'Llamadas' },
-                  { k: 'conversionRate' as SortKey, l: 'Tasa conv.' },
-                  { k: 'overdueCallbacks' as SortKey, l: 'Callbacks venc.' },
+                  { k: 'assignedCompanies' as AgentSortKey, l: 'Asignado' },
+                  { k: 'companiesWithResponse' as AgentSortKey, l: 'Registrados' },
+                  { k: 'pendingCompanies' as AgentSortKey, l: 'Pendiente' },
+                  { k: 'companyContactRate' as AgentSortKey, l: 'Tasa contacto' },
+                  { k: 'companiesInFunnel' as AgentSortKey, l: 'En embudo' },
+                  { k: 'totalCalls' as AgentSortKey, l: 'Llamadas' },
+                  { k: 'ventaCerrada' as AgentSortKey, l: 'Ventas' },
+                  { k: 'closeRate' as AgentSortKey, l: '% cierre' },
+                  { k: 'overdueCallbacks' as AgentSortKey, l: 'Callbacks venc.' },
                 ].map(({ k, l }) => (
                   <th key={k} className="px-3 py-3 font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none" onClick={() => toggle(k)}>
                     <div className="flex items-center gap-1 justify-end"><span>{l}</span><SortIcon k={k} /></div>
@@ -791,65 +846,116 @@ export default function Reports() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {sortedAgents.map((a, idx) => (
-                <tr key={a.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold text-xs shrink-0">
-                        {a.name.charAt(0)}
-                      </div>
-                      <span className="font-medium text-gray-900 text-sm">{a.name}</span>
-                      {idx === 0 && <Award size={13} className="text-amber-500" aria-label="Mejor conversión" />}
-                    </div>
-                  </td>
-                  <td className="px-3 py-3 text-right">
-                    <span className="text-gray-900 font-medium">{a.assignedCompanies}</span>
-                    <span className="text-gray-400 text-xs block leading-none" title="Contactos asignados">{a.assigned} cont.</span>
-                  </td>
-                  <td className="px-3 py-3 text-right text-gray-700">{a.companiesWithResponse}</td>
-                  <td
-                    className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors group"
-                    onClick={() => drill(a.id, a.name, 'contactRate')}
-                    title="Ver detalle de empresas contactadas"
-                  >
-                    <span className={`text-sm font-semibold group-hover:underline ${a.companyContactRate >= 70 ? 'text-green-700' : a.companyContactRate >= 40 ? 'text-amber-600' : 'text-red-500'}`}>
-                      {a.companyContactRate}%
-                    </span>
-                    <Bar pct={a.companyContactRate} color={a.companyContactRate >= 70 ? 'bg-green-500' : a.companyContactRate >= 40 ? 'bg-amber-400' : 'bg-red-400'} />
-                  </td>
-                  <td className="px-3 py-3 text-right text-green-700 font-medium">{a.companiesInFunnel}</td>
-                  <td
-                    className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors group"
-                    onClick={() => drill(a.id, a.name, 'interested')}
-                    title="Ver empresas interesadas"
-                  >
-                    <span className="text-green-700 font-semibold group-hover:underline">{a.interestedCompanies}</span>
-                  </td>
-                  <td className="px-3 py-3 text-right text-gray-500">{a.pendingCompanies}</td>
-                  <td className="px-3 py-3 text-right text-gray-700">{a.totalCalls}</td>
-                  <td
-                    className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors group"
-                    onClick={() => drill(a.id, a.name, 'conversionRate')}
-                    title="Ver registros interesados/convertidos"
-                  >
-                    <span className={`text-sm font-semibold group-hover:underline ${a.conversionRate >= 20 ? 'text-green-700' : a.conversionRate >= 10 ? 'text-amber-600' : 'text-red-500'}`}>
-                      {a.conversionRate}%
-                    </span>
-                    <Bar pct={a.conversionRate * 3} color={a.conversionRate >= 20 ? 'bg-green-500' : a.conversionRate >= 10 ? 'bg-amber-400' : 'bg-red-400'} />
-                  </td>
-                  <td
-                    className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors"
-                    onClick={() => drill(a.id, a.name, 'overdueCallbacks')}
-                    title="Ver callbacks vencidos"
-                  >
-                    {a.overdueCallbacks > 0
-                      ? <span className="text-red-600 font-semibold flex items-center justify-end gap-1 hover:underline"><AlertCircle size={13} />{a.overdueCallbacks}</span>
-                      : <span className="text-gray-400">0</span>}
-                  </td>
-                </tr>
-              ))}
+              {sortedAgents.map((a, idx) => {
+                const runs = a.assignmentRuns ?? []
+                const isExpandable = runs.length >= 1
+                const isExpanded = expandedAgents[a.id] ?? false
+
+                return (
+                  <Fragment key={a.id}>
+                    <tr
+                      className={`hover:bg-gray-50 ${isExpandable ? 'cursor-pointer' : ''}`}
+                      onClick={isExpandable ? () => toggleAgentExpand(a.id) : undefined}
+                    >
+                      <td className="px-4 py-3 text-gray-400 w-8">
+                        {isExpandable && (
+                          <ChevronRight
+                            size={14}
+                            className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                          />
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold text-xs shrink-0">
+                            {a.name.charAt(0)}
+                          </div>
+                          <span className="font-medium text-gray-900 text-sm">{a.name}</span>
+                          {idx === 0 && sortBy === 'closeRate' && (
+                            <Award size={13} className="text-amber-500" aria-label="Mejor % cierre" />
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        <span className="text-gray-900 font-medium">{a.assignedCompanies}</span>
+                      </td>
+                      <td className="px-3 py-3 text-right text-gray-700">{a.companiesWithResponse}</td>
+                      <td className="px-3 py-3 text-right text-gray-500">{a.pendingCompanies}</td>
+                      <td
+                        className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors group"
+                        onClick={(e) => { e.stopPropagation(); drill(a.id, a.name, 'contactRate') }}
+                        title="Ver detalle de empresas contactadas"
+                      >
+                        <span className={`text-sm font-semibold group-hover:underline ${a.companyContactRate >= 70 ? 'text-green-700' : a.companyContactRate >= 40 ? 'text-amber-600' : 'text-red-500'}`}>
+                          {a.companyContactRate}%
+                        </span>
+                        <Bar pct={a.companyContactRate} color={a.companyContactRate >= 70 ? 'bg-green-500' : a.companyContactRate >= 40 ? 'bg-amber-400' : 'bg-red-400'} />
+                      </td>
+                      <td className="px-3 py-3 text-right text-green-700 font-medium">{a.companiesInFunnel}</td>
+                      <td className="px-3 py-3 text-right text-gray-700">{a.totalCalls}</td>
+                      <td
+                        className="px-3 py-3 text-right cursor-pointer hover:bg-emerald-50 rounded transition-colors group"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          navigate(buildPipelineClientsUrl('VENTA_CERRADA', { agentId: a.id, from: 'reports' }))
+                        }}
+                        title="Ver empresas con venta cerrada"
+                      >
+                        <span className="text-emerald-700 font-semibold group-hover:underline">{a.ventaCerrada}</span>
+                      </td>
+                      <td
+                        className="px-3 py-3 text-right cursor-pointer hover:bg-emerald-50 rounded transition-colors group"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          navigate(buildPipelineClientsUrl('VENTA_CERRADA', { agentId: a.id, from: 'reports' }))
+                        }}
+                        title="Ver empresas con venta cerrada"
+                      >
+                        <span className={`text-sm font-semibold group-hover:underline ${a.closeRate >= 20 ? 'text-green-700' : a.closeRate >= 10 ? 'text-amber-600' : 'text-red-500'}`}>
+                          {a.closeRate}%
+                        </span>
+                        <Bar pct={a.closeRate * 3} color={a.closeRate >= 20 ? 'bg-green-500' : a.closeRate >= 10 ? 'bg-amber-400' : 'bg-red-400'} />
+                      </td>
+                      <td
+                        className="px-3 py-3 text-right cursor-pointer hover:bg-blue-50 rounded transition-colors"
+                        onClick={(e) => { e.stopPropagation(); drill(a.id, a.name, 'overdueCallbacks') }}
+                        title="Ver callbacks vencidos"
+                      >
+                        {a.overdueCallbacks > 0
+                          ? <span className="text-red-600 font-semibold flex items-center justify-end gap-1 hover:underline"><AlertCircle size={13} />{a.overdueCallbacks}</span>
+                          : <span className="text-gray-400">0</span>}
+                      </td>
+                    </tr>
+                    {isExpanded && runs.map((run) => (
+                      <tr key={run.id} className="bg-gray-50/80 text-xs">
+                        <td className="px-4 py-2 w-8" />
+                        <td className="px-4 py-2 pl-10 text-gray-600">
+                          <AgentRunSubRowLabel run={run} />
+                        </td>
+                        <td className="px-3 py-2 text-right font-medium text-gray-700">{run.companyCount}</td>
+                        <td className="px-3 py-2 text-right text-gray-700">{run.contactedCompanies}</td>
+                        <td className="px-3 py-2 text-right text-gray-500">{run.pendingCompanies}</td>
+                        <td className="px-3 py-2 text-right">
+                          <span className={`font-medium ${run.contactedPct >= 70 ? 'text-green-700' : run.contactedPct >= 40 ? 'text-amber-600' : 'text-gray-700'}`}>
+                            {run.contactedPct}%
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-right text-green-700 font-medium">{run.inFunnel}</td>
+                        <td className="px-3 py-2 text-right text-gray-700">{run.callCount}</td>
+                        <td className="px-3 py-2 text-right text-emerald-700 font-medium">{run.ventaCerrada}</td>
+                        <td className="px-3 py-2 text-right">
+                          <span className={`font-medium ${run.closeRate >= 20 ? 'text-green-700' : run.closeRate >= 10 ? 'text-amber-600' : 'text-gray-600'}`}>
+                            {run.closeRate}%
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-right text-gray-400">—</td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                )
+              })}
               {sortedAgents.length === 0 && (
-                <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-400 text-sm">Sin datos de agentes</td></tr>
+                <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-400 text-sm">Sin datos de agentes</td></tr>
               )}
             </tbody>
           </table>
@@ -901,11 +1007,14 @@ export default function Reports() {
                   ? (b.assignedToAgentCompanies ?? 0)
                   : b.assignedCompanies
                 const runs = b.assignmentRuns ?? []
+                const agentBreakdown = b.agentBreakdown ?? []
                 const runCompanyTotal = runs.reduce((sum, r) => sum + r.companyCount, 0)
                 const legacyCount = runs.find((r) => r.isLegacy)?.companyCount ?? 0
                 const trackedTotal = runCompanyTotal - legacyCount
                 const showBreakdownHint = !!filterAgentId && assigned !== runCompanyTotal && runs.length > 0
-                const isExpandable = !!filterAgentId && runs.length >= 1
+                const isExpandable = filterAgentId
+                  ? runs.length >= 1
+                  : agentBreakdown.length > 0
                 const isExpanded = expandedBatches[b.id] ?? false
 
                 return (
@@ -961,7 +1070,7 @@ export default function Reports() {
                         </div>
                       </td>
                     </tr>
-                    {isExpanded && runs.map((run) => {
+                    {isExpanded && filterAgentId && runs.map((run) => {
                       const runExpanded = expandedRuns[run.id] ?? false
                       return (
                         <Fragment key={run.id}>
@@ -1015,6 +1124,84 @@ export default function Reports() {
                               batchId={b.id}
                             />
                           )}
+                        </Fragment>
+                      )
+                    })}
+                    {isExpanded && !filterAgentId && agentBreakdown.map((a) => {
+                      const agentExpanded = expandedBatchAgents[b.id]?.[a.agentId] ?? false
+                      const agentRuns = a.assignmentRuns ?? []
+                      return (
+                        <Fragment key={`${b.id}:${a.agentId}`}>
+                          <tr
+                            className="bg-gray-50/80 text-xs cursor-pointer hover:bg-gray-100/80"
+                            onClick={() => toggleBatchAgentExpand(b.id, a.agentId)}
+                          >
+                            <td className="px-4 py-2 text-gray-400 w-8">
+                              <ChevronRight
+                                size={12}
+                                className={`transition-transform ${agentExpanded ? 'rotate-90' : ''}`}
+                              />
+                            </td>
+                            <td className="px-4 py-2 pl-10 text-gray-700">
+                              <span className="font-medium text-gray-900">{a.agentName}</span>
+                              <span className="text-gray-400"> · </span>
+                              <span className="text-gray-500">Asignadas: {a.assignedCompanies}</span>
+                            </td>
+                            <td className="px-4 py-2 text-gray-500">—</td>
+                            <td className="px-3 py-2 text-right">
+                              <span className="font-bold text-gray-700">{a.assignedCompanies}</span>
+                              <span className="text-gray-400 font-normal"> de </span>
+                              <span className="text-gray-500">{b.batchTotalCompanies}</span>
+                            </td>
+                            <td className="px-3 py-2 text-right text-gray-700 font-medium">{a.callCount}</td>
+                            <td className="px-3 py-2 text-right">
+                              <span className="text-blue-700 font-medium">{a.contactedCompanies}</span>
+                              <span className="text-gray-400 ml-1">({a.contactedPct}%)</span>
+                            </td>
+                            <td className="px-3 py-2 text-right text-green-700 font-medium">{a.inFunnel}</td>
+                            <td className="px-3 py-2 text-right text-emerald-700 font-medium">{a.ventaCerrada}</td>
+                            <td className="px-4 py-2">
+                              <Bar
+                                pct={a.contactedPct}
+                                color={a.contactedPct >= 70 ? 'bg-green-500' : a.contactedPct >= 40 ? 'bg-amber-400' : 'bg-blue-400'}
+                              />
+                            </td>
+                          </tr>
+                          {agentExpanded && agentRuns.map((run) => (
+                            <tr key={`${b.id}:${a.agentId}:${run.id}`} className="bg-gray-50/60 text-xs">
+                              <td className="px-4 py-2 w-8" />
+                              <td className="px-4 py-2 pl-14 text-gray-600">
+                                {run.isLegacy ? (
+                                  'Asignación anterior (sin historial)'
+                                ) : (
+                                  <>
+                                    {format(new Date(run.assignedAt!), 'd MMM yyyy, HH:mm', { locale: es })}
+                                    {' · '}
+                                    por {run.assignedBy.name}
+                                  </>
+                                )}
+                              </td>
+                              <td className="px-4 py-2" />
+                              <td className="px-3 py-2 text-right">
+                                <span className="font-bold text-gray-700">{run.companyCount}</span>
+                                <span className="text-gray-400 font-normal"> de </span>
+                                <span className="text-gray-500">{a.assignedCompanies}</span>
+                              </td>
+                              <td className="px-3 py-2 text-right text-gray-700 font-medium">{run.callCount}</td>
+                              <td className="px-3 py-2 text-right">
+                                <span className="text-blue-700 font-medium">{run.contactedCompanies}</span>
+                                <span className="text-gray-400 ml-1">({run.contactedPct}%)</span>
+                              </td>
+                              <td className="px-3 py-2 text-right text-green-700 font-medium">{run.inFunnel}</td>
+                              <td className="px-3 py-2 text-right text-emerald-700 font-medium">{run.ventaCerrada}</td>
+                              <td className="px-4 py-2">
+                                <Bar
+                                  pct={run.contactedPct}
+                                  color={run.contactedPct >= 70 ? 'bg-green-500' : run.contactedPct >= 40 ? 'bg-amber-400' : 'bg-blue-400'}
+                                />
+                              </td>
+                            </tr>
+                          ))}
                         </Fragment>
                       )
                     })}

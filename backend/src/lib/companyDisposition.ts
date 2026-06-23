@@ -142,6 +142,8 @@ export type RunMetrics = {
   contactedPct: number
   inFunnel: number
   ventaCerrada: number
+  pendingCompanies: number
+  closeRate: number
 }
 
 /** Per-assignment-run metrics for a single agent (reports sub-rows). */
@@ -174,8 +176,17 @@ export async function buildRunMetrics(
     0
   )
   const ventaCerrada = companyPipeline.VENTA_CERRADA ?? 0
+  const closeRate = companyCount > 0 ? Math.round((ventaCerrada / companyCount) * 100) : 0
 
-  return { callCount, contactedCompanies, contactedPct, inFunnel, ventaCerrada }
+  return {
+    callCount,
+    contactedCompanies,
+    contactedPct,
+    inFunnel,
+    ventaCerrada,
+    pendingCompanies,
+    closeRate,
+  }
 }
 
 export async function getAssignmentRunCompanyIds(runId: string): Promise<string[]> {
@@ -263,6 +274,8 @@ export async function buildLegacyBucketMetrics(
       contactedPct: 0,
       inFunnel: 0,
       ventaCerrada: 0,
+      pendingCompanies: 0,
+      closeRate: 0,
     }
   }
 
@@ -283,6 +296,8 @@ export async function buildLegacyBucketMetrics(
     0
   )
   const ventaCerrada = companyPipeline.VENTA_CERRADA ?? 0
+  const closeRate =
+    companyIds.length > 0 ? Math.round((ventaCerrada / companyIds.length) * 100) : 0
 
   return {
     companyIds,
@@ -293,6 +308,8 @@ export async function buildLegacyBucketMetrics(
     contactedPct,
     inFunnel,
     ventaCerrada,
+    pendingCompanies,
+    closeRate,
   }
 }
 

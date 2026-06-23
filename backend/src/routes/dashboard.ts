@@ -207,7 +207,10 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
         orderBy: { calledAt: 'asc' },
       }),
       prisma.callLog.groupBy({ by: ['disposition'], _count: { disposition: true }, where: { ...agentFilter } }),
-      prisma.importBatch.findMany({ select: { id: true, filename: true, createdAt: true }, orderBy: { createdAt: 'desc' } }),
+      prisma.importBatch.findMany({
+        select: { id: true, filename: true, displayName: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+      }),
       prisma.callLog.groupBy({
         by: ['agentId', 'contactId'],
         _count: { contactId: true },
@@ -282,68 +285,80 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
     agentAssignedCompaniesMap[a.agentId] = a.assignedCompanies
   }
 
-  const agentPerformance = agents.map((a) => {
-    const assigned = a._count.assignments
-    const totalCalls = a._count.callLogs
-    const calledContacts = calledByAgent[a.id]?.size ?? 0
-    const contactStatuses = agentContactStatusMap[a.id] ?? {}
-    const companyStatuses = agentCompanyStatusMap[a.id] ?? {}
-    const companyPipeline = agentCompanyPipelineMap[a.id] ?? {}
-    const assignedCompanies = agentAssignedCompaniesMap[a.id] ?? 0
-    const pipelinePending = companyPipeline['PENDING'] ?? 0
-    const companiesWithResponse = assignedCompanies - pipelinePending
-    const companiesInFunnel =
-      (companyPipeline['INTERESADO'] ?? 0) +
-      (companyPipeline['PROPUESTA_PRESENTADA'] ?? 0) +
-      (companyPipeline['DISCUSION_PROPUESTA'] ?? 0) +
-      (companyPipeline['ESPERA_RESPUESTA'] ?? 0) +
-      (companyPipeline['VENTA_CERRADA'] ?? 0)
-    const interestedRecords = contactStatuses['INTERESTED'] ?? 0
-    const convertedRecords = contactStatuses['CONVERTED'] ?? 0
-    const notInterestedRecords = contactStatuses['NOT_INTERESTED'] ?? 0
-    const pendingRecords = contactStatuses['PENDING'] ?? 0
-    const interestedCompanies = companyStatuses['INTERESTED'] ?? 0
-    const convertedCompanies = companyStatuses['CONVERTED'] ?? 0
-    const notInterestedCompanies = companyStatuses['NOT_INTERESTED'] ?? 0
-    const pendingCompanies = companyPipeline['PENDING'] ?? companyStatuses['PENDING'] ?? 0
-    const interested = interestedRecords
-    const converted = convertedRecords
-    const notInterested = notInterestedRecords
-    const contactRate = assigned > 0 ? Math.round((calledContacts / assigned) * 100) : 0
-    const companyContactRate =
-      assignedCompanies > 0 ? Math.round((companiesWithResponse / assignedCompanies) * 100) : 0
-    const conversionRate = calledContacts > 0 ? Math.round(((interestedRecords + convertedRecords) / calledContacts) * 100) : 0
-    const avgCallsPerContact = calledContacts > 0 ? Math.round((totalCalls / calledContacts) * 10) / 10 : 0
-    return {
-      id: a.id,
-      name: a.name,
-      assigned,
-      assignedCompanies,
-      calledClients: calledContacts,
-      calledContacts,
-      companiesWithResponse,
-      companiesInFunnel,
-      totalCalls,
-      interested,
-      converted,
-      notInterested,
-      interestedRecords,
-      convertedRecords,
-      notInterestedRecords,
-      pendingRecords,
-      interestedCompanies,
-      convertedCompanies,
-      notInterestedCompanies,
-      pendingCompanies,
-      contactRate,
-      companyContactRate,
-      conversionRate,
-      avgCallsPerClient: avgCallsPerContact,
-      avgCallsPerContact,
-      pendingCallbacks: pendingMap[a.id] ?? 0,
-      overdueCallbacks: overdueMap[a.id] ?? 0,
-    }
-  })
+  const agentPerformance = await Promise.all(
+    agents.map(async (a) => {
+      const assigned = a._count.assignments
+      const totalCalls = a._count.callLogs
+      const calledContacts = calledByAgent[a.id]?.size ?? 0
+      const contactStatuses = agentContactStatusMap[a.id] ?? {}
+      const companyStatuses = agentCompanyStatusMap[a.id] ?? {}
+      const companyPipeline = agentCompanyPipelineMap[a.id] ?? {}
+      const assignedCompanies = agentAssignedCompaniesMap[a.id] ?? 0
+      const pipelinePending = companyPipeline['PENDING'] ?? 0
+      const companiesWithResponse = assignedCompanies - pipelinePending
+      const companiesInFunnel =
+        (companyPipeline['INTERESADO'] ?? 0) +
+        (companyPipeline['PROPUESTA_PRESENTADA'] ?? 0) +
+        (companyPipeline['DISCUSION_PROPUESTA'] ?? 0) +
+        (companyPipeline['ESPERA_RESPUESTA'] ?? 0) +
+        (companyPipeline['VENTA_CERRADA'] ?? 0)
+      const interestedRecords = contactStatuses['INTERESTED'] ?? 0
+      const convertedRecords = contactStatuses['CONVERTED'] ?? 0
+      const notInterestedRecords = contactStatuses['NOT_INTERESTED'] ?? 0
+      const pendingRecords = contactStatuses['PENDING'] ?? 0
+      const interestedCompanies = companyStatuses['INTERESTED'] ?? 0
+      const convertedCompanies = companyStatuses['CONVERTED'] ?? 0
+      const notInterestedCompanies = companyStatuses['NOT_INTERESTED'] ?? 0
+      const pendingCompanies = companyPipeline['PENDING'] ?? companyStatuses['PENDING'] ?? 0
+      const ventaCerrada = companyPipeline['VENTA_CERRADA'] ?? 0
+      const closeRate =
+        assignedCompanies > 0 ? Math.round((ventaCerrada / assignedCompanies) * 100) : 0
+      const interested = interestedRecords
+      const converted = convertedRecords
+      const notInterested = notInterestedRecords
+      const contactRate = assigned > 0 ? Math.round((calledContacts / assigned) * 100) : 0
+      const companyContactRate =
+        assignedCompanies > 0 ? Math.round((companiesWithResponse / assignedCompanies) * 100) : 0
+      const conversionRate =
+        calledContacts > 0
+          ? Math.round(((interestedRecords + convertedRecords) / calledContacts) * 100)
+          : 0
+      const avgCallsPerContact = calledContacts > 0 ? Math.round((totalCalls / calledContacts) * 10) / 10 : 0
+      const assignmentRuns = await buildAgentAssignmentRuns(a.id)
+      return {
+        id: a.id,
+        name: a.name,
+        assigned,
+        assignedCompanies,
+        calledClients: calledContacts,
+        calledContacts,
+        companiesWithResponse,
+        companiesInFunnel,
+        totalCalls,
+        interested,
+        converted,
+        notInterested,
+        interestedRecords,
+        convertedRecords,
+        notInterestedRecords,
+        pendingRecords,
+        interestedCompanies,
+        convertedCompanies,
+        notInterestedCompanies,
+        pendingCompanies,
+        ventaCerrada,
+        closeRate,
+        contactRate,
+        companyContactRate,
+        conversionRate,
+        avgCallsPerClient: avgCallsPerContact,
+        avgCallsPerContact,
+        pendingCallbacks: pendingMap[a.id] ?? 0,
+        overdueCallbacks: overdueMap[a.id] ?? 0,
+        assignmentRuns,
+      }
+    })
+  )
 
   const globalAssignedCompanyFilter = { contacts: { some: { assignment: { is: {} } } } }
   const scopedCompanyFilter = filterAgentId
@@ -362,18 +377,7 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
     assignmentRuns: BatchAssignmentRun[]
   }
 
-  type BatchAssignmentRun = {
-    id: string
-    isLegacy?: boolean
-    assignedAt: string | null
-    companyCount: number
-    assignedBy: { name: string }
-    callCount: number
-    contactedCompanies: number
-    contactedPct: number
-    inFunnel: number
-    ventaCerrada: number
-  }
+  const batchImportById = Object.fromEntries(batches.map((b) => [b.id, b]))
   const runsByBatchId: Record<string, BatchAssignmentRun[]> = {}
   if (filterAgentId) {
     const allRuns = await prisma.assignmentRun.findMany({
@@ -384,9 +388,19 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
         companyCount: true,
         createdAt: true,
         assignedBy: { select: { name: true } },
+        importBatch: { select: { filename: true, displayName: true } },
         assignments: {
           select: {
-            contact: { select: { company: { select: { importBatchId: true } } } },
+            contact: {
+              select: {
+                company: {
+                  select: {
+                    importBatchId: true,
+                    importBatch: { select: { filename: true, displayName: true } },
+                  },
+                },
+              },
+            },
           },
         },
       },
@@ -397,6 +411,9 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
         const metrics = await buildRunMetrics(run.id, filterAgentId, run.companyCount)
         const companyBatchIds = run.assignments.map((a) => a.contact.company.importBatchId)
         const batchId = resolveRunBatchId(run.importBatchId, companyBatchIds)
+        const batchImport =
+          run.importBatch ??
+          (batchId ? batchImportById[batchId] ?? null : null)
         return {
           batchId,
           run: {
@@ -404,6 +421,7 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
             assignedAt: run.createdAt.toISOString(),
             companyCount: run.companyCount,
             assignedBy: { name: run.assignedBy.name },
+            batchLabel: batchLabelFromImport(batchImport),
             ...metrics,
           } satisfies BatchAssignmentRun,
         }
@@ -425,11 +443,17 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
         assignedAt: legacy.earliestAssignedAt?.toISOString() ?? null,
         companyCount: legacy.companyCount,
         assignedBy: { name: 'Asignación anterior' },
+        batchLabel: batchLabelFromImport(batch),
         callCount: legacy.callCount,
         contactedCompanies: legacy.contactedCompanies,
         contactedPct: legacy.contactedPct,
         inFunnel: legacy.inFunnel,
         ventaCerrada: legacy.ventaCerrada,
+        pendingCompanies: legacy.companyCount - legacy.contactedCompanies,
+        closeRate:
+          legacy.companyCount > 0
+            ? Math.round((legacy.ventaCerrada / legacy.companyCount) * 100)
+            : 0,
       }
 
       const existing = runsByBatchId[batch.id] ?? []
@@ -633,17 +657,168 @@ type BatchAssignmentRun = {
   assignedAt: string | null
   companyCount: number
   assignedBy: { name: string }
+  batchLabel: string
   callCount: number
   contactedCompanies: number
   contactedPct: number
   inFunnel: number
   ventaCerrada: number
+  pendingCompanies: number
+  closeRate: number
+}
+
+function batchLabelFromImport(
+  batch: { displayName?: string | null; filename: string } | null
+): string {
+  if (!batch) return 'Sin lote'
+  return batch.displayName?.trim() || batch.filename.replace(/\.[^.]+$/, '')
+}
+
+function resolveRunBatchLabel(
+  run: {
+    importBatchId: string | null
+    importBatch: { displayName?: string | null; filename: string } | null
+    assignments: Array<{
+      contact: {
+        company: {
+          importBatchId: string | null
+          importBatch: { displayName?: string | null; filename: string } | null
+        }
+      }
+    }>
+  },
+  batchById: Record<string, { displayName?: string | null; filename: string }>
+): string {
+  if (run.importBatch) return batchLabelFromImport(run.importBatch)
+
+  const companyBatchIds = run.assignments.map((a) => a.contact.company.importBatchId)
+  const resolvedId = resolveRunBatchId(run.importBatchId, companyBatchIds)
+  if (resolvedId) {
+    const fromMap = batchById[resolvedId]
+    if (fromMap) return batchLabelFromImport(fromMap)
+    const fromAssignment = run.assignments.find(
+      (a) => a.contact.company.importBatchId === resolvedId && a.contact.company.importBatch
+    )
+    if (fromAssignment?.contact.company.importBatch) {
+      return batchLabelFromImport(fromAssignment.contact.company.importBatch)
+    }
+  }
+
+  return 'Sin lote'
+}
+
+async function buildAgentAssignmentRuns(agentId: string): Promise<BatchAssignmentRun[]> {
+  const allRuns = await prisma.assignmentRun.findMany({
+    where: { agentId },
+    select: {
+      id: true,
+      importBatchId: true,
+      companyCount: true,
+      createdAt: true,
+      assignedBy: { select: { name: true } },
+      importBatch: { select: { filename: true, displayName: true } },
+      assignments: {
+        select: {
+          contact: {
+            select: {
+              company: {
+                select: {
+                  importBatchId: true,
+                  importBatch: { select: { filename: true, displayName: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  })
+
+  const mappedRuns: BatchAssignmentRun[] = await Promise.all(
+    allRuns.map(async (run) => {
+      const metrics = await buildRunMetrics(run.id, agentId, run.companyCount)
+      const companyBatchIds = run.assignments.map((a) => a.contact.company.importBatchId)
+      const resolvedBatchId = resolveRunBatchId(run.importBatchId, companyBatchIds)
+      const batchById: Record<string, { displayName?: string | null; filename: string }> = {}
+      if (resolvedBatchId && run.importBatch) {
+        batchById[resolvedBatchId] = run.importBatch
+      }
+      return {
+        id: run.id,
+        assignedAt: run.createdAt.toISOString(),
+        companyCount: run.companyCount,
+        assignedBy: { name: run.assignedBy.name },
+        batchLabel: resolveRunBatchLabel(run, batchById),
+        ...metrics,
+      }
+    })
+  )
+
+  const legacyAssignments = await prisma.assignment.findMany({
+    where: { agentId, assignmentRunId: null },
+    select: {
+      contact: { select: { company: { select: { importBatchId: true } } } },
+    },
+  })
+  const legacyBatchIds = [
+    ...new Set(
+      legacyAssignments
+        .map((a) => a.contact.company.importBatchId)
+        .filter((id): id is string => id != null)
+    ),
+  ]
+
+  const legacyBatchImports =
+    legacyBatchIds.length > 0
+      ? await prisma.importBatch.findMany({
+          where: { id: { in: legacyBatchIds } },
+          select: { id: true, filename: true, displayName: true },
+        })
+      : []
+  const legacyBatchById = Object.fromEntries(legacyBatchImports.map((b) => [b.id, b]))
+
+  const legacyRuns: BatchAssignmentRun[] = []
+  for (const batchId of legacyBatchIds) {
+    const legacy = await buildLegacyBucketMetrics(agentId, batchId)
+    if (legacy.companyCount === 0) continue
+    const closeRate =
+      legacy.companyCount > 0
+        ? Math.round((legacy.ventaCerrada / legacy.companyCount) * 100)
+        : 0
+    const pendingCompanies = legacy.companyCount - legacy.contactedCompanies
+    legacyRuns.push({
+      id: `legacy-${batchId}`,
+      isLegacy: true,
+      assignedAt: legacy.earliestAssignedAt?.toISOString() ?? null,
+      companyCount: legacy.companyCount,
+      assignedBy: { name: 'Asignación anterior' },
+      batchLabel: batchLabelFromImport(legacyBatchById[batchId] ?? null),
+      callCount: legacy.callCount,
+      contactedCompanies: legacy.contactedCompanies,
+      contactedPct: legacy.contactedPct,
+      inFunnel: legacy.inFunnel,
+      ventaCerrada: legacy.ventaCerrada,
+      pendingCompanies,
+      closeRate,
+    })
+  }
+
+  return [...mappedRuns, ...legacyRuns].sort(
+    (a, b) => new Date(b.assignedAt ?? 0).getTime() - new Date(a.assignedAt ?? 0).getTime()
+  )
 }
 
 async function buildBatchAssignmentRuns(
   batchId: string,
   filterAgentId: string
 ): Promise<BatchAssignmentRun[]> {
+  const batchImport = await prisma.importBatch.findUnique({
+    where: { id: batchId },
+    select: { filename: true, displayName: true },
+  })
+  const batchLabel = batchLabelFromImport(batchImport)
+
   const allRuns = await prisma.assignmentRun.findMany({
     where: { agentId: filterAgentId },
     select: {
@@ -652,9 +827,19 @@ async function buildBatchAssignmentRuns(
       companyCount: true,
       createdAt: true,
       assignedBy: { select: { name: true } },
+      importBatch: { select: { filename: true, displayName: true } },
       assignments: {
         select: {
-          contact: { select: { company: { select: { importBatchId: true } } } },
+          contact: {
+            select: {
+              company: {
+                select: {
+                  importBatchId: true,
+                  importBatch: { select: { filename: true, displayName: true } },
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -672,23 +857,34 @@ async function buildBatchAssignmentRuns(
       assignedAt: run.createdAt.toISOString(),
       companyCount: run.companyCount,
       assignedBy: { name: run.assignedBy.name },
+      batchLabel: run.importBatch
+        ? batchLabelFromImport(run.importBatch)
+        : batchLabel,
       ...metrics,
     })
   }
 
   const legacy = await buildLegacyBucketMetrics(filterAgentId, batchId)
   if (legacy.companyCount > 0) {
+    const closeRate =
+      legacy.companyCount > 0
+        ? Math.round((legacy.ventaCerrada / legacy.companyCount) * 100)
+        : 0
+    const pendingCompanies = legacy.companyCount - legacy.contactedCompanies
     runs.push({
       id: `legacy-${batchId}`,
       isLegacy: true,
       assignedAt: legacy.earliestAssignedAt?.toISOString() ?? null,
       companyCount: legacy.companyCount,
       assignedBy: { name: 'Asignación anterior' },
+      batchLabel,
       callCount: legacy.callCount,
       contactedCompanies: legacy.contactedCompanies,
       contactedPct: legacy.contactedPct,
       inFunnel: legacy.inFunnel,
       ventaCerrada: legacy.ventaCerrada,
+      pendingCompanies,
+      closeRate,
     })
   }
 
