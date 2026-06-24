@@ -259,6 +259,24 @@ function isAgendaModified(
   return false
 }
 
+function isCallLogUnchanged(
+  snapshot: CallLogSnapshot | null,
+  disposition: string,
+  callNotes: string,
+  schedDate: string,
+  schedTime: string
+): boolean {
+  if (!snapshot) return false
+  if (disposition !== snapshot.disposition) return false
+  if (isAgendaModified(snapshot, schedDate, schedTime)) return false
+  const notesTrimmed = (callNotes ?? '').trim()
+  const snapshotNotesTrimmed = (snapshot.notes ?? '').trim()
+  if (notesTrimmed === snapshotNotesTrimmed) return true
+  // Non-pinned loads leave callNotes empty while snapshot retains stored notes
+  if (!notesTrimmed && snapshotNotesTrimmed) return true
+  return false
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function ReadField({
@@ -1353,13 +1371,17 @@ export default function MyLeads() {
         : undefined
 
       const agendaModified = isAgendaModified(latestLogSnapshot, schedDate, schedTime)
+      const callLogUnchanged =
+        !!editingCallLogId &&
+        isCallLogUnchanged(latestLogSnapshot, disposition, callNotes, schedDate, schedTime)
 
       let cancelPendingCallbacks = false
       if (
         disposition &&
         !isDefinitiveClosureDisposition(disposition) &&
         ownPendingForCompany.length > 0 &&
-        !agendaModified
+        !agendaModified &&
+        !callLogUnchanged
       ) {
         const cbToShow = editingLinkedCb ?? ownPendingForCompany[0]
         const dateStr = format(new Date(cbToShow.scheduledAt), 'dd/MM HH:mm', { locale: es })
@@ -1375,7 +1397,7 @@ export default function MyLeads() {
         !agendaModified &&
         !cancelPendingCallbacks
 
-      if (editingCallLogId || disposition || schedDate) {
+      if (!callLogUnchanged && (editingCallLogId || disposition || schedDate)) {
         if (requiresCallbackDate(disposition) && !schedDate) {
           throw new Error('Selecciona la fecha para el callback')
         }
