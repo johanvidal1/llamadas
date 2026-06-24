@@ -220,6 +220,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 
   if (data.callbackDate) {
+    await cancelPendingCallbacksForCompanyAgent(data.clientId, req.user!.id, callLog.id)
     await prisma.callback.create({
       data: {
         companyId: data.clientId,
@@ -337,6 +338,7 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     await cancelPendingCallbacksForCompanyAgent(existing.companyId, req.user!.id)
   } else if (data.callbackDate !== undefined) {
     if (data.callbackDate) {
+      await cancelPendingCallbacksForCompanyAgent(existing.companyId, req.user!.id, callLog.id)
       await prisma.callback.upsert({
         where: { callLogId: callLog.id },
         create: {

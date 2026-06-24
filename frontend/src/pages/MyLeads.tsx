@@ -896,7 +896,7 @@ export default function MyLeads() {
       setCallNotes(pinnedLogId ? (targetLog.notes ?? '') : '')
       setSchedDate(snap.schedDate)
       setSchedTime(snap.schedTime)
-      setEditingCallLogId(pinnedLogId)
+      setEditingCallLogId(targetLog.id)
     } else {
       setLatestLogSnapshot(null)
       setEditingCallLogId(null)
