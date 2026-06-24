@@ -245,6 +245,20 @@ function snapshotFromLog(
   }
 }
 
+function isAgendaModified(
+  snapshot: CallLogSnapshot | null,
+  schedDate: string,
+  schedTime: string
+): boolean {
+  if (!snapshot) return schedDate !== ''
+  if (!schedDate && snapshot.schedDate) return false
+  const time = schedTime || '09:00'
+  const snapshotTime = snapshot.schedTime || '09:00'
+  if (schedDate !== snapshot.schedDate) return true
+  if (schedDate && time !== snapshotTime) return true
+  return false
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function ReadField({
@@ -1337,27 +1351,29 @@ export default function MyLeads() {
       const editingLinkedCb = editingCallLogId
         ? ownPendingForCompany.find((cb) => cb.callLogId === editingCallLogId)
         : undefined
-      const hasOtherPending = ownPendingForCompany.some(
-        (cb) => cb.callLogId !== editingCallLogId
-      )
+
+      const agendaModified = isAgendaModified(latestLogSnapshot, schedDate, schedTime)
 
       let cancelPendingCallbacks = false
       if (
         disposition &&
         !isDefinitiveClosureDisposition(disposition) &&
-        !requiresCallbackDate(disposition) &&
-        (editingLinkedCb || hasOtherPending)
+        ownPendingForCompany.length > 0 &&
+        !agendaModified
       ) {
-        const cbToShow =
-          editingLinkedCb ??
-          ownPendingForCompany.find((cb) => cb.callLogId !== editingCallLogId)
-        if (cbToShow) {
-          const dateStr = format(new Date(cbToShow.scheduledAt), 'dd/MM HH:mm', { locale: es })
-          cancelPendingCallbacks = window.confirm(
-            `¿Desea cancelar el agendado pendiente (${dateStr})?`
-          )
-        }
+        const cbToShow = editingLinkedCb ?? ownPendingForCompany[0]
+        const dateStr = format(new Date(cbToShow.scheduledAt), 'dd/MM HH:mm', { locale: es })
+        cancelPendingCallbacks = window.confirm(
+          `Hay agendado el ${dateStr}.\n\nAceptar = Anular agendado\nCancelar = Mantener agendado y guardar respuesta.`
+        )
       }
+
+      const mantenerAgenda =
+        disposition &&
+        !isDefinitiveClosureDisposition(disposition) &&
+        ownPendingForCompany.length > 0 &&
+        !agendaModified &&
+        !cancelPendingCallbacks
 
       if (editingCallLogId || disposition || schedDate) {
         if (requiresCallbackDate(disposition) && !schedDate) {
@@ -1379,10 +1395,12 @@ export default function MyLeads() {
         if (disposition) callPayload.disposition = disposition
         if (callNotes) callPayload.notes = callNotes
 
-        if (requiresCallbackDate(disposition)) {
-          if (schedDate && callbackDateIso) callPayload.callbackDate = callbackDateIso
+        if (requiresCallbackDate(disposition) && schedDate && callbackDateIso && !mantenerAgenda) {
+          callPayload.callbackDate = callbackDateIso
         } else if (isDefinitiveClosureDisposition(disposition)) {
           if (editingCallLogId) callPayload.callbackDate = null
+        } else if (agendaModified && schedDate && callbackDateIso) {
+          callPayload.callbackDate = callbackDateIso
         } else if (cancelPendingCallbacks) {
           callPayload.cancelPendingCallbacks = true
           if (editingCallLogId) callPayload.callbackDate = null
@@ -1396,8 +1414,12 @@ export default function MyLeads() {
             contactId,
             disposition: disposition || 'VOLVER_A_LLAMAR',
             notes: callNotes,
-            callbackDate: schedDate ? callbackDateIso : undefined,
-            ...(cancelPendingCallbacks ? { cancelPendingCallbacks: true } : {}),
+            ...(callPayload.callbackDate !== undefined
+              ? { callbackDate: callPayload.callbackDate as string }
+              : {}),
+            ...(callPayload.cancelPendingCallbacks
+              ? { cancelPendingCallbacks: true as const }
+              : {}),
           })
         }
         callLogSaved = true
