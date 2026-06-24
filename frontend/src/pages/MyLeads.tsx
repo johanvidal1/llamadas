@@ -259,6 +259,18 @@ function isAgendaModified(
   return false
 }
 
+function areCallNotesUnchanged(
+  callNotes: string,
+  snapshotNotes: string | null | undefined
+): boolean {
+  const notesTrimmed = (callNotes ?? '').trim()
+  const snapshotNotesTrimmed = (snapshotNotes ?? '').trim()
+  if (notesTrimmed === snapshotNotesTrimmed) return true
+  // Non-pinned loads leave callNotes empty while snapshot retains stored notes
+  if (!notesTrimmed && snapshotNotesTrimmed) return true
+  return false
+}
+
 function isCallLogUnchanged(
   snapshot: CallLogSnapshot | null,
   disposition: string,
@@ -269,12 +281,21 @@ function isCallLogUnchanged(
   if (!snapshot) return false
   if (disposition !== snapshot.disposition) return false
   if (isAgendaModified(snapshot, schedDate, schedTime)) return false
-  const notesTrimmed = (callNotes ?? '').trim()
-  const snapshotNotesTrimmed = (snapshot.notes ?? '').trim()
-  if (notesTrimmed === snapshotNotesTrimmed) return true
-  // Non-pinned loads leave callNotes empty while snapshot retains stored notes
-  if (!notesTrimmed && snapshotNotesTrimmed) return true
-  return false
+  return areCallNotesUnchanged(callNotes, snapshot.notes)
+}
+
+/** Disposition and notes match snapshot; only callback date/time changed — update in place. */
+function isRescheduleOnlyChange(
+  snapshot: CallLogSnapshot | null,
+  disposition: string,
+  callNotes: string,
+  schedDate: string,
+  schedTime: string
+): boolean {
+  if (!snapshot) return false
+  if (disposition !== snapshot.disposition) return false
+  if (!isAgendaModified(snapshot, schedDate, schedTime)) return false
+  return areCallNotesUnchanged(callNotes, snapshot.notes)
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -1375,6 +1396,9 @@ export default function MyLeads() {
       const callLogUnchanged =
         !!editingCallLogId &&
         isCallLogUnchanged(latestLogSnapshot, disposition, callNotes, schedDate, schedTime)
+      const rescheduleOnly =
+        !!editingCallLogId &&
+        isRescheduleOnlyChange(latestLogSnapshot, disposition, callNotes, schedDate, schedTime)
 
       let cancelPendingCallbacks = false
       if (
@@ -1421,23 +1445,23 @@ export default function MyLeads() {
         if (requiresCallbackDate(disposition) && schedDate && callbackDateIso && !mantenerAgenda) {
           callPayload.callbackDate = callbackDateIso
         } else if (isDefinitiveClosureDisposition(disposition)) {
-          if (editingCallLogId) callPayload.callbackDate = null
+          if (rescheduleOnly) callPayload.callbackDate = null
         } else if (agendaModified && schedDate && callbackDateIso) {
           callPayload.callbackDate = callbackDateIso
         } else if (cancelPendingCallbacks) {
           callPayload.cancelPendingCallbacks = true
-          if (editingCallLogId) callPayload.callbackDate = null
+          if (rescheduleOnly) callPayload.callbackDate = null
         }
 
-        if (editingCallLogId) {
-          await updateCall(editingCallLogId, callPayload)
+        if (rescheduleOnly) {
+          await updateCall(editingCallLogId!, callPayload)
         } else {
           await logCall({
             clientId: currentClient.id,
             contactId,
             disposition: disposition || 'VOLVER_A_LLAMAR',
             notes: callNotes,
-            ...(callPayload.callbackDate !== undefined
+            ...(callPayload.callbackDate != null
               ? { callbackDate: callPayload.callbackDate as string }
               : {}),
             ...(callPayload.cancelPendingCallbacks
