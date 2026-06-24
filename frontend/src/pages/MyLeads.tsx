@@ -1322,6 +1322,7 @@ export default function MyLeads() {
         contactSaved: false,
         planChanged: false,
         razonSocialChanged: false,
+        noOp: false,
       }
       if (!currentClient) return emptyResult
 
@@ -1447,14 +1448,21 @@ export default function MyLeads() {
         callLogSaved = true
       }
 
+      const nothingSaved =
+        !callLogSaved && !contactSaved && !planChanged && !razonSocialChanged
+
+      if (callLogUnchanged && nothingSaved) {
+        return { autoNext, callLogSaved, contactSaved, planChanged, razonSocialChanged, noOp: true }
+      }
+
       if (autoNext && !callLogSaved) {
         throw new Error('Selecciona una respuesta antes de avanzar a la siguiente empresa')
       }
-      if (!callLogSaved && !contactSaved && !planChanged && !razonSocialChanged) {
+      if (nothingSaved) {
         throw new Error('Selecciona una respuesta antes de guardar')
       }
 
-      return { autoNext, callLogSaved, contactSaved, planChanged, razonSocialChanged }
+      return { autoNext, callLogSaved, contactSaved, planChanged, razonSocialChanged, noOp: false }
     },
     onSuccess: async (result) => {
       setRespuestaError(false)
@@ -1470,6 +1478,8 @@ export default function MyLeads() {
         toast.success('Plan actualizado')
       } else if (result.razonSocialChanged) {
         toast.success('Razón social actualizada')
+      } else if (result.noOp) {
+        toast('Sin cambios que guardar', { icon: 'ℹ️' })
       }
       qc.invalidateQueries({ queryKey: ['client-detail', currentClient?.id] })
       qc.invalidateQueries({ queryKey: ['callbacks'] })
