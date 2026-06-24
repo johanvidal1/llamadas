@@ -106,6 +106,23 @@ export function isKnownResponseDisposition(code: string): boolean {
   return optionByCode.has(code)
 }
 
+export const DEFINITIVE_CLOSURE_DISPOSITIONS = [
+  'NO_INTERESADO',
+  'NOT_INTERESTED',
+  'DO_NOT_CALL',
+  'VENTA_CERRADA',
+] as const
+
+const definitiveClosureSet = new Set<string>(DEFINITIVE_CLOSURE_DISPOSITIONS)
+
+export function isDefinitiveClosureDisposition(code: string): boolean {
+  return definitiveClosureSet.has(code)
+}
+
+export function requiresCallbackDate(code: string): boolean {
+  return code === 'VOLVER_A_LLAMAR' || code === 'CALLBACK'
+}
+
 const FUNNEL_CHIP_SHORT_LABELS: Partial<Record<ResponseCode, string>> = {
   ESPERA_RESPUESTA: 'Espera resp. final',
   DISCUSION_PROPUESTA: 'Discusión propuesta',

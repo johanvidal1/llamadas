@@ -114,3 +114,19 @@ export const INTERESTED_DISPOSITIONS = [
 
 /** Dispositions that require scheduling a callback (new + legacy). */
 export const CALLBACK_DISPOSITIONS = ['VOLVER_A_LLAMAR', 'CALLBACK'] as const
+
+/** Definitive closure — pending callbacks for company+agent are auto-cancelled. */
+export const DEFINITIVE_CLOSURE_DISPOSITIONS = [
+  'NO_INTERESADO',
+  'NOT_INTERESTED',
+  'DO_NOT_CALL',
+  'VENTA_CERRADA',
+] as const
+
+export function isDefinitiveClosureDisposition(disposition: string): boolean {
+  return (DEFINITIVE_CLOSURE_DISPOSITIONS as readonly string[]).includes(disposition)
+}
+
+export function requiresCallbackDate(disposition: string): boolean {
+  return (CALLBACK_DISPOSITIONS as readonly string[]).includes(disposition)
+}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getClients, getClient, logCall, updateClient, updateContact, getCallbacks, downloadImportExport } from '../api/client'
+import { getClients, getClient, logCall, updateCall, updateClient, updateContact, getCallbacks, downloadImportExport } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
 import {
@@ -39,6 +39,8 @@ import {
   getDispositionLabel,
   getAclaracionForDisposition,
   getResponseOption,
+  isDefinitiveClosureDisposition,
+  requiresCallbackDate,
 } from '../config/responseOptions'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -582,6 +584,7 @@ export default function MyLeads() {
   const [callNotes, setCallNotes] = useState('')
   const [schedDate, setSchedDate] = useState('')
   const [schedTime, setSchedTime] = useState('')
+  const [editingCallLogId, setEditingCallLogId] = useState<string | null>(null)
   const pendingCallLogIdRef = useRef<string | null>(null)
   const pendingContactIdRef = useRef<string | null>(null)
   const pendingContactIdxRef = useRef<number | null>(null)
@@ -841,14 +844,18 @@ export default function MyLeads() {
       pendingContactIdxRef.current = null
     }
 
+    let pinnedLogId: string | null = null
     if (pendingCallLogIdRef.current) {
       const pinnedLog = detail.callLogs.find((l) => l.id === pendingCallLogIdRef.current)
       pendingCallLogIdRef.current = null
-      if (pinnedLog?.contact?.id) {
-        const cIdx = displayContacts.findIndex((c) => c.id === pinnedLog.contact!.id)
-        if (cIdx >= 0) {
-          contactIdx = cIdx
-          setActiveContactIdx(cIdx)
+      if (pinnedLog) {
+        pinnedLogId = pinnedLog.id
+        if (pinnedLog.contact?.id) {
+          const cIdx = displayContacts.findIndex((c) => c.id === pinnedLog.contact!.id)
+          if (cIdx >= 0) {
+            contactIdx = cIdx
+            setActiveContactIdx(cIdx)
+          }
         }
       }
     }
@@ -857,22 +864,28 @@ export default function MyLeads() {
     const contact = displayContacts[idx]
     if (!contact?.id || contact.id.startsWith('summary-')) {
       setLatestLogSnapshot(null)
+      setEditingCallLogId(null)
       clearEditableCallFields()
       return
     }
 
-    const latestLog = [...detail.callLogs]
-      .filter((l) => l.contact?.id === contact.id && l.agentId === user.id)
-      .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())[0]
+    const targetLog = pinnedLogId
+      ? detail.callLogs.find((l) => l.id === pinnedLogId)
+      : [...detail.callLogs]
+          .filter((l) => l.contact?.id === contact.id && l.agentId === user.id)
+          .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())[0]
 
-    if (latestLog) {
-      setLatestLogSnapshot(snapshotFromLog(latestLog, detail.callbacks))
-      setDisposition(latestLog.disposition)
-      setCallNotes('')
-      setSchedDate('')
-      setSchedTime('09:00')
+    if (targetLog) {
+      const snap = snapshotFromLog(targetLog, detail.callbacks)
+      setLatestLogSnapshot(snap)
+      setDisposition(targetLog.disposition)
+      setCallNotes(pinnedLogId ? (targetLog.notes ?? '') : '')
+      setSchedDate(snap.schedDate)
+      setSchedTime(snap.schedTime)
+      setEditingCallLogId(pinnedLogId)
     } else {
       setLatestLogSnapshot(null)
+      setEditingCallLogId(null)
       clearEditableCallFields()
     }
   }, [detail, activeContactIdx, user?.id, clearEditableCallFields, displayContacts, currentClient?.id])
@@ -1211,6 +1224,8 @@ export default function MyLeads() {
     setCurrentIndex(0)
     pendingContactIdRef.current = null
     pendingContactIdxRef.current = null
+    pendingCallLogIdRef.current = null
+    setEditingCallLogId(null)
     needsContactResolveRef.current = true
     setGridPage(1)
     setSearchParams(
@@ -1316,26 +1331,75 @@ export default function MyLeads() {
 
       let callLogSaved = false
 
-      if (disposition || schedDate) {
-        if (disposition === 'VOLVER_A_LLAMAR' && !schedDate) {
+      const ownPendingForCompany = callbackList.filter(
+        (cb) => cb.company.id === currentClient.id && cb.agent.id === user?.id
+      )
+      const editingLinkedCb = editingCallLogId
+        ? ownPendingForCompany.find((cb) => cb.callLogId === editingCallLogId)
+        : undefined
+      const hasOtherPending = ownPendingForCompany.some(
+        (cb) => cb.callLogId !== editingCallLogId
+      )
+
+      let cancelPendingCallbacks = false
+      if (
+        disposition &&
+        !isDefinitiveClosureDisposition(disposition) &&
+        !requiresCallbackDate(disposition) &&
+        (editingLinkedCb || hasOtherPending)
+      ) {
+        const cbToShow =
+          editingLinkedCb ??
+          ownPendingForCompany.find((cb) => cb.callLogId !== editingCallLogId)
+        if (cbToShow) {
+          const dateStr = format(new Date(cbToShow.scheduledAt), 'dd/MM HH:mm', { locale: es })
+          cancelPendingCallbacks = window.confirm(
+            `¿Desea cancelar el agendado pendiente (${dateStr})?`
+          )
+        }
+      }
+
+      if (editingCallLogId || disposition || schedDate) {
+        if (requiresCallbackDate(disposition) && !schedDate) {
           throw new Error('Selecciona la fecha para el callback')
         }
-        const otherContact = findOtherContactWithAgentLog(contactId)
-        if (
-          otherContact &&
-          !confirm(
-            `Esta empresa ya tiene un contacto registrado (${otherContact.nombre}). ¿Está seguro de que desea registrar este contacto?`
-          )
-        ) {
-          throw new SaveCancelled()
+        if (!editingCallLogId) {
+          const otherContact = findOtherContactWithAgentLog(contactId)
+          if (
+            otherContact &&
+            !confirm(
+              `Esta empresa ya tiene un contacto registrado (${otherContact.nombre}). ¿Está seguro de que desea registrar este contacto?`
+            )
+          ) {
+            throw new SaveCancelled()
+          }
         }
-        await logCall({
-          clientId: currentClient.id,
-          contactId,
-          disposition: disposition || 'VOLVER_A_LLAMAR',
-          notes: callNotes,
-          callbackDate: schedDate ? callbackDateIso : undefined,
-        })
+
+        const callPayload: Record<string, unknown> = {}
+        if (disposition) callPayload.disposition = disposition
+        if (callNotes) callPayload.notes = callNotes
+
+        if (requiresCallbackDate(disposition)) {
+          if (schedDate && callbackDateIso) callPayload.callbackDate = callbackDateIso
+        } else if (isDefinitiveClosureDisposition(disposition)) {
+          if (editingCallLogId) callPayload.callbackDate = null
+        } else if (cancelPendingCallbacks) {
+          callPayload.cancelPendingCallbacks = true
+          if (editingCallLogId) callPayload.callbackDate = null
+        }
+
+        if (editingCallLogId) {
+          await updateCall(editingCallLogId, callPayload)
+        } else {
+          await logCall({
+            clientId: currentClient.id,
+            contactId,
+            disposition: disposition || 'VOLVER_A_LLAMAR',
+            notes: callNotes,
+            callbackDate: schedDate ? callbackDateIso : undefined,
+            ...(cancelPendingCallbacks ? { cancelPendingCallbacks: true } : {}),
+          })
+        }
         callLogSaved = true
       }
 
@@ -1354,6 +1418,7 @@ export default function MyLeads() {
         setCallNotes('')
         setSchedDate('')
         setSchedTime('09:00')
+        setEditingCallLogId(null)
         toast.success('Resultado guardado')
       } else if (result.contactSaved) {
         toast.success('Datos de contacto actualizados')

@@ -7,9 +7,10 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { recomputeContactStatus, statusForDisposition } from '../lib/contactStatus'
 import {
   ALL_DISPOSITION_CODES,
-  CALLBACK_DISPOSITIONS,
   getAclaracionForDisposition,
+  isDefinitiveClosureDisposition,
   isValidDisposition,
+  requiresCallbackDate,
   SALES_FUNNEL_DISPOSITIONS,
 } from '../lib/responseOptions'
 
@@ -43,10 +44,6 @@ function resolveAclaracion(disposition: string, clientAclaracion?: string | null
   return clientAclaracion ?? undefined
 }
 
-function requiresCallbackDate(disposition: string): boolean {
-  return (CALLBACK_DISPOSITIONS as readonly string[]).includes(disposition)
-}
-
 const callSchema = z.object({
   clientId: z.string().min(1),
   contactId: z.string().optional(),
@@ -55,6 +52,7 @@ const callSchema = z.object({
   notes: z.string().optional(),
   callbackDate: z.string().datetime().optional(),
   callbackNotes: z.string().optional(),
+  cancelPendingCallbacks: z.boolean().optional(),
 })
 
 const updateCallSchema = z.object({
@@ -63,7 +61,23 @@ const updateCallSchema = z.object({
   notes: z.string().optional().nullable(),
   callbackDate: z.string().datetime().optional().nullable(),
   callbackNotes: z.string().optional().nullable(),
+  cancelPendingCallbacks: z.boolean().optional(),
 })
+
+async function cancelPendingCallbacksForCompanyAgent(
+  companyId: string,
+  agentId: string,
+  excludeCallLogId?: string
+) {
+  await prisma.callback.deleteMany({
+    where: {
+      companyId,
+      agentId,
+      completed: false,
+      ...(excludeCallLogId ? { NOT: { callLogId: excludeCallLogId } } : {}),
+    },
+  })
+}
 
 // GET /api/calls
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -217,6 +231,12 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     })
   }
 
+  if (isDefinitiveClosureDisposition(data.disposition)) {
+    await cancelPendingCallbacksForCompanyAgent(data.clientId, req.user!.id, callLog.id)
+  } else if (data.cancelPendingCallbacks) {
+    await cancelPendingCallbacksForCompanyAgent(data.clientId, req.user!.id)
+  }
+
   res.status(201).json(callLog)
 })
 
@@ -290,7 +310,12 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     }
   }
 
-  const dispositionChanged = data.disposition !== undefined
+  const dispositionChanged =
+    data.disposition !== undefined && data.disposition !== existing.disposition
+  const oldRequiresCallback = requiresCallbackDate(existing.disposition)
+  const newRequiresCallback = requiresCallbackDate(effectiveDisposition)
+  const isDefinitiveClosure = isDefinitiveClosureDisposition(effectiveDisposition)
+
   const callLog = await prisma.callLog.update({
     where: { id: existing.id },
     data: hasFieldUpdates
@@ -306,7 +331,11 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
       : { updatedAt: new Date() },
   })
 
-  if (data.callbackDate !== undefined) {
+  if (isDefinitiveClosure) {
+    await cancelPendingCallbacksForCompanyAgent(existing.companyId, req.user!.id)
+  } else if (data.cancelPendingCallbacks) {
+    await cancelPendingCallbacksForCompanyAgent(existing.companyId, req.user!.id)
+  } else if (data.callbackDate !== undefined) {
     if (data.callbackDate) {
       await prisma.callback.upsert({
         where: { callLogId: callLog.id },
@@ -325,6 +354,13 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     } else if (existing.callback) {
       await prisma.callback.delete({ where: { id: existing.callback.id } })
     }
+  } else if (
+    dispositionChanged &&
+    oldRequiresCallback &&
+    !newRequiresCallback &&
+    existing.callback
+  ) {
+    await prisma.callback.delete({ where: { id: existing.callback.id } })
   } else if (data.callbackNotes !== undefined && existing.callback) {
     await prisma.callback.update({
       where: { id: existing.callback.id },
