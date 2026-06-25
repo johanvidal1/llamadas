@@ -24,6 +24,40 @@ function toStatusMap(rows: { status: string; _count: { status: number } }[]): Re
   return map
 }
 
+type NextCallbackPayload = { scheduledAt: string; notes?: string } | null
+
+async function enrichRecentCallsWithNextCallback<
+  T extends { company: { id: string } },
+>(recentCalls: T[], agentId?: string): Promise<(T & { nextCallback: NextCallbackPayload })[]> {
+  if (recentCalls.length === 0) return []
+
+  const companyIds = [...new Set(recentCalls.map((c) => c.company.id))]
+  const callbacks = await prisma.callback.findMany({
+    where: {
+      companyId: { in: companyIds },
+      completed: false,
+      ...(agentId ? { agentId } : {}),
+    },
+    orderBy: { scheduledAt: 'asc' },
+    select: { companyId: true, scheduledAt: true, notes: true },
+  })
+
+  const nextByCompany = new Map<string, { scheduledAt: string; notes?: string }>()
+  for (const cb of callbacks) {
+    if (!nextByCompany.has(cb.companyId)) {
+      nextByCompany.set(cb.companyId, {
+        scheduledAt: cb.scheduledAt.toISOString(),
+        ...(cb.notes ? { notes: cb.notes } : {}),
+      })
+    }
+  }
+
+  return recentCalls.map((call) => ({
+    ...call,
+    nextCallback: nextByCompany.get(call.company.id) ?? null,
+  }))
+}
+
 // GET /api/dashboard/stats
 router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
   const isAdmin = req.user!.role === 'ADMIN'
@@ -51,7 +85,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       prisma.callLog.count(),
       prisma.callback.count({ where: { completed: false } }),
       prisma.callLog.findMany({
-        take: 5,
+        take: 10,
         orderBy: { calledAt: 'desc' },
         include: {
           company: { select: { id: true, ruc: true, razonSocial: true } },
@@ -80,6 +114,8 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
         ? Math.round(((assignedCompanies - pipelinePending) / assignedCompanies) * 100)
         : 0
 
+    const recentCallsWithCallbacks = await enrichRecentCallsWithNextCallback(recentCalls)
+
     res.json({
       totalClients,
       totalContacts,
@@ -93,7 +129,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       contactsByStatus,
       companiesByStatus,
       clientsByStatus: companiesByStatus,
-      recentCalls,
+      recentCalls: recentCallsWithCallbacks,
     })
   } else {
     const { batchId } = req.query as Record<string, string>
@@ -130,7 +166,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
         }),
         prisma.callLog.findMany({
           where: callFilter,
-          take: 5,
+          take: 10,
           orderBy: { calledAt: 'desc' },
           include: {
             company: { select: { id: true, ruc: true, razonSocial: true } },
@@ -144,6 +180,10 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       req.user!.id
     )
     const companyPipeline = buildCompanyPipelineCounts(lastByCompany)
+    const recentCallsWithCallbacks = await enrichRecentCallsWithNextCallback(
+      recentCalls,
+      req.user!.id
+    )
 
     res.json({
       assignedClients: assignedContacts,
@@ -153,7 +193,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       pendingCallbacks,
       todayCallbacks,
       companyPipeline,
-      recentCalls,
+      recentCalls: recentCallsWithCallbacks,
     })
   }
 })

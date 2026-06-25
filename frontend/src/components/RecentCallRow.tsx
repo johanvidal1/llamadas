@@ -1,4 +1,5 @@
 import { format } from 'date-fns'
+import { CallbackScheduleBadge } from './CallbackScheduleBadge'
 import { DispositionBadge } from './StatusBadge'
 
 export type RecentCallRowData = {
@@ -8,6 +9,7 @@ export type RecentCallRowData = {
   company: { id: string; ruc: string; razonSocial?: string | null }
   contact?: { id?: string; nombre: string; tipoContacto?: string | null } | null
   agent?: { name: string }
+  nextCallback?: { scheduledAt: string; notes?: string } | null
 }
 
 export function RecentCallRow({
@@ -22,7 +24,7 @@ export function RecentCallRow({
   onClick?: () => void
 }) {
   const rowClass =
-    'flex items-center justify-between py-2 border-b border-gray-50 last:border-0' +
+    'grid grid-cols-[minmax(0,1fr)_7rem_8rem] items-center gap-x-6 py-2 border-b border-gray-50 last:border-0' +
     (onClick ? ' cursor-pointer hover:bg-gray-50 rounded-md px-1 -mx-1 transition-colors' : '')
 
   const content = (
@@ -36,7 +38,14 @@ export function RecentCallRow({
           {showAgent && call.agent ? ` · ${call.agent.name}` : ''}
         </p>
       </div>
-      <div className="text-right shrink-0 ml-3">
+      <div className="shrink-0">
+        {call.nextCallback ? (
+          <CallbackScheduleBadge callback={call.nextCallback} />
+        ) : (
+          <span className="text-gray-300 text-xs">—</span>
+        )}
+      </div>
+      <div className="text-right shrink-0">
         <DispositionBadge disposition={call.disposition} />
         <p className="text-xs text-gray-400 mt-1">{format(new Date(call.calledAt), 'dd/MM HH:mm')}</p>
       </div>

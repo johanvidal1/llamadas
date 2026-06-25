@@ -414,6 +414,7 @@ export type GetCallsParams = {
   clientId?: string
   agentId?: string
   limit?: number
+  page?: number
   from?: string
   to?: string
   disposition?: string
@@ -447,6 +448,7 @@ export type DashboardRecentCall = {
   company: { id: string; ruc: string; razonSocial?: string }
   contact?: { nombre: string } | null
   agent?: { name: string }
+  nextCallback?: { scheduledAt: string; notes?: string } | null
 }
 
 /** Shape varies by role; fields are optional where not returned for that role. */

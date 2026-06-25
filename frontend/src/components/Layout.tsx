@@ -45,6 +45,7 @@ export default function Layout() {
   const location = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
   const tabHiddenRef = useRef(document.hidden)
+  const mainRef = useRef<HTMLElement>(null)
 
   const navItems = isAdmin ? adminNav : agentNav
   const sidebarBg = isAdmin ? 'bg-green-900' : 'bg-blue-900'
@@ -96,6 +97,10 @@ export default function Layout() {
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [user, postHeartbeat])
+
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0, left: 0 })
+  }, [location.pathname])
 
   const handleLogout = () => {
     setMenuOpen(false)
@@ -221,7 +226,7 @@ export default function Layout() {
           <span className="text-white text-sm font-semibold truncate">Llamadas CRM</span>
         </header>
 
-        <main className="flex-1 overflow-auto min-h-0 pb-[env(safe-area-inset-bottom)]">
+        <main ref={mainRef} className="flex-1 overflow-auto min-h-0 pb-[env(safe-area-inset-bottom)]">
           <Outlet />
         </main>
       </div>

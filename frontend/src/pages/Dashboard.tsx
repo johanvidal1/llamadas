@@ -13,7 +13,7 @@ import {
   AGENT_PIPELINE_QUEUE,
   buildPipelineClientsUrl,
 } from '../config/companyPipeline'
-import { format, startOfMonth } from 'date-fns'
+import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 
 function StatCard({
@@ -96,13 +96,6 @@ export default function Dashboard() {
       </div>
     )
   }
-
-  const callsLinkSearch = new URLSearchParams()
-  const today = format(new Date(), 'yyyy-MM-dd')
-  const monthStart = format(startOfMonth(new Date()), 'yyyy-MM-dd')
-  callsLinkSearch.set('from', monthStart)
-  callsLinkSearch.set('to', today)
-  if (selectedBatchId) callsLinkSearch.set('batchId', selectedBatchId)
 
   return (
     <div className="p-4 md:p-8 space-y-8">
@@ -334,7 +327,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-gray-900">Últimas llamadas</h2>
             <Link
-              to={`/calls?${callsLinkSearch.toString()}`}
+              to="/clients"
               className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline"
             >
               Ver más →
@@ -368,7 +361,7 @@ export default function Dashboard() {
         <div className="flex justify-end">
           <button
             type="button"
-            onClick={() => navigate('/reports')}
+            onClick={() => navigate('/clients')}
             className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline"
           >
             Ver reportes y análisis
