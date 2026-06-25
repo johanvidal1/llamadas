@@ -331,7 +331,7 @@ function ClientTableRow({
   const nextCb = c.callbacks?.[0]
   const cbDate = nextCb ? new Date(nextCb.scheduledAt) : null
   const cbStyle = cbDate
-    ? isPast(cbDate) && !isToday(cbDate)
+    ? isPast(cbDate)
       ? 'text-red-600 bg-red-50 border border-red-200'
       : isToday(cbDate)
       ? 'text-amber-700 bg-amber-50 border border-amber-200'

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getClients, getClient, logCall, updateCall, updateClient, updateContact, getCallbacks, downloadImportExport } from '../api/client'
+import { getClients, getClient, logCall, updateCall, updateClient, updateContact, getCallbacks, updateCallback, downloadImportExport } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
 import {
@@ -28,6 +28,7 @@ import {
 } from 'lucide-react'
 import { dedupeMobileLinesByNumber } from '../lib/mobileLine'
 import CallModal from '../components/CallModal'
+import CompleteCallbackModal, { type CompleteConfirm } from '../components/CompleteCallbackModal'
 import DispositionSelector from '../components/DispositionSelector'
 import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -35,6 +36,7 @@ import { StatusBadge, DISPOSITION_CONFIG, getDispositionBorderColor, Disposition
 import {
   SALES_FUNNEL_STAGES,
   ZERO_PROGRESS_OPTIONS,
+  isAgentSelectableDisposition,
   DISPOSITION_COLORS,
   getDispositionLabel,
   getAclaracionForDisposition,
@@ -115,7 +117,7 @@ interface Callback {
 
 function callbackColor(dt: string): string {
   const d = new Date(dt)
-  if (isPast(d) && !isToday(d)) return 'text-red-600 bg-red-50 border-red-200 hover:bg-red-100'
+  if (isPast(d)) return 'text-red-600 bg-red-50 border-red-200 hover:bg-red-100'
   if (isToday(d)) return 'text-amber-700 bg-amber-50 border-amber-200 hover:bg-amber-100'
   return 'text-blue-700 bg-blue-50 border-blue-200 hover:bg-blue-100'
 }
@@ -590,6 +592,7 @@ export default function MyLeads() {
 
   // ── Agendados sidebar tab
   const [cbTab, setCbTab] = useState<'own' | 'team'>('own')
+  const [completeConfirm, setCompleteConfirm] = useState<CompleteConfirm | null>(null)
   const [historialScope, setHistorialScope] = useState<'contact' | 'company'>('contact')
   const [mobilePanelTab, setMobilePanelTab] = useState<'agendados' | 'historial'>('agendados')
 
@@ -784,6 +787,25 @@ export default function MyLeads() {
   })
   const callbackList = agendados as Callback[]
 
+  const completeMutation = useMutation({
+    mutationFn: (payload: { id: string; companyId: string }) =>
+      updateCallback(payload.id, { completed: true }),
+    onSuccess: (_data, variables) => {
+      toast.success('Callback marcado como completado')
+      qc.invalidateQueries({ queryKey: ['callbacks'] })
+      qc.invalidateQueries({ queryKey: ['client-detail', variables.companyId] })
+      setCompleteConfirm(null)
+    },
+    onError: () => {
+      toast.error('No se pudo completar el callback')
+    },
+  })
+
+  const handleConfirmComplete = () => {
+    if (!completeConfirm) return
+    completeMutation.mutate({ id: completeConfirm.id, companyId: completeConfirm.companyId })
+  }
+
   // Clamp contact index when contact count changes (only if out of bounds)
   useEffect(() => {
     if (!displayContacts.length) return
@@ -953,11 +975,17 @@ export default function MyLeads() {
       return
     }
 
-    const targetLog = pinnedLogId
-      ? detail.callLogs.find((l) => l.id === pinnedLogId)
-      : [...detail.callLogs]
-          .filter((l) => l.contact?.id === contact.id && l.agentId === user.id)
-          .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())[0]
+    const agentContactLogs = [...detail.callLogs]
+      .filter((l) => l.contact?.id === contact.id && l.agentId === user.id)
+      .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())
+
+    const prefillStartIdx = pinnedLogId
+      ? Math.max(0, agentContactLogs.findIndex((l) => l.id === pinnedLogId))
+      : 0
+
+    const targetLog =
+      agentContactLogs.slice(prefillStartIdx).find((l) => isAgentSelectableDisposition(l.disposition)) ??
+      null
 
     if (targetLog) {
       const agentLogIds = new Set(
@@ -1605,19 +1633,11 @@ export default function MyLeads() {
   const activeList = cbTab === 'own' || !isAdmin ? ownCallbacks : callbackList
 
   const todayCount = activeList.filter((c) => isToday(new Date(c.scheduledAt))).length
-  const overdueCount = activeList.filter(
-    (c) => isPast(new Date(c.scheduledAt)) && !isToday(new Date(c.scheduledAt))
-  ).length
+  const overdueCount = activeList.filter((c) => isPast(new Date(c.scheduledAt))).length
 
   // Detail view loading / empty guards are now rendered INSIDE the layout
   // (so the top bar with batch selector remains visible at all times)
 
-  // Flat navigation helpers — prefer detail contact counts for current client
-  const flatTotal = clients.reduce((sum, c, idx) => sum + contactCountFor(idx), 0)
-  const globalPosition =
-    clients.slice(0, currentIndex).reduce((sum, _c, idx) => sum + contactCountFor(idx), 0) +
-    activeContactIdx +
-    1
   const isFirst = clients.length === 0 || currentIndex === 0
   const isLast = clients.length === 0 || currentIndex >= clients.length - 1
 
@@ -1747,7 +1767,6 @@ export default function MyLeads() {
 
           {viewMode === 'detail' && detail && (
             <div className="flex items-center gap-2 shrink-0">
-              <span className="text-blue-300 text-xs">Registro {globalPosition} / {flatTotal}:</span>
               <StatusBadge status={detail.status} />
             </div>
           )}
@@ -2275,27 +2294,56 @@ export default function MyLeads() {
                 ) : (
                   activeList.map((cb) => {
                     const isCurrent = cb.company.id === currentClient?.id
+                    const cbDate = new Date(cb.scheduledAt)
+                    const isOverdue = isPast(cbDate)
+                    const canComplete = isOverdue && (isAdmin || cb.agent.id === user?.id)
                     return (
-                      <button key={cb.id} onClick={() => goToClientById(cb.company.id, {
-                        callLogId: cb.callLogId,
-                        contactId: cb.callLog?.contact?.id,
-                      })}
-                        className={`w-full text-left px-2.5 py-2 rounded border text-xs transition-all ${callbackColor(cb.scheduledAt)} ${isCurrent ? 'ring-2 ring-blue-400' : ''}`}>
-                        <p className="font-semibold truncate leading-tight">{cb.company.razonSocial || cb.company.ruc}</p>
-                        <p className="opacity-70 truncate text-[10px]">
-                          {cb.callLog?.contact
-                            ? `${cb.callLog.contact.nombre.split(' ')[0]}${cb.callLog.contact.telefono ? ' · ' + cb.callLog.contact.telefono : ''}`
-                            : (cb.company.contacts?.[0]?.telefono ?? cb.company.ruc)}
-                        </p>
-                        {cbTab === 'team' && isAdmin && (
-                          <p className="text-[10px] opacity-60 truncate">→ {cb.agent.name}</p>
+                      <div
+                        key={cb.id}
+                        className={`flex items-stretch gap-1 rounded border text-xs transition-all ${callbackColor(cb.scheduledAt)} ${isCurrent ? 'ring-2 ring-blue-400' : ''}`}
+                      >
+                        <button
+                          onClick={() => goToClientById(cb.company.id, {
+                            callLogId: cb.callLogId,
+                            contactId: cb.callLog?.contact?.id,
+                          })}
+                          className="flex-1 min-w-0 text-left px-2.5 py-2"
+                        >
+                          <p className="font-semibold truncate leading-tight">{cb.company.razonSocial || cb.company.ruc}</p>
+                          <p className="opacity-70 truncate text-[10px]">
+                            {cb.callLog?.contact
+                              ? `${cb.callLog.contact.nombre.split(' ')[0]}${cb.callLog.contact.telefono ? ' · ' + cb.callLog.contact.telefono : ''}`
+                              : (cb.company.contacts?.[0]?.telefono ?? cb.company.ruc)}
+                          </p>
+                          {cbTab === 'team' && isAdmin && (
+                            <p className="text-[10px] opacity-60 truncate">→ {cb.agent.name}</p>
+                          )}
+                          <div className="flex items-center gap-1 mt-0.5 opacity-75">
+                            <Clock size={9} />
+                            <span className="text-[10px]">{format(cbDate, 'dd/MM/yy HH:mm')}</span>
+                          </div>
+                          {cb.notes && <p className="opacity-60 truncate mt-0.5 italic text-[10px]">{cb.notes}</p>}
+                        </button>
+                        {canComplete && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setCompleteConfirm({
+                                id: cb.id,
+                                label: cb.company.razonSocial || cb.company.ruc,
+                                scheduledAt: cb.scheduledAt,
+                                companyId: cb.company.id,
+                              })
+                            }}
+                            disabled={completeMutation.isPending}
+                            title="Marcar como completado"
+                            className="shrink-0 self-center px-1.5 py-2 mr-1 rounded text-green-600 hover:bg-green-100 disabled:opacity-50"
+                          >
+                            <CheckCircle2 size={16} />
+                          </button>
                         )}
-                        <div className="flex items-center gap-1 mt-0.5 opacity-75">
-                          <Clock size={9} />
-                          <span className="text-[10px]">{format(new Date(cb.scheduledAt), 'dd/MM/yy HH:mm')}</span>
-                        </div>
-                        {cb.notes && <p className="opacity-60 truncate mt-0.5 italic text-[10px]">{cb.notes}</p>}
-                      </button>
+                      </div>
                     )
                   })
                 )}
@@ -2612,6 +2660,13 @@ export default function MyLeads() {
         </>
       )}
 
+      <CompleteCallbackModal
+        confirm={completeConfirm}
+        onClose={() => setCompleteConfirm(null)}
+        onConfirm={handleConfirmComplete}
+        isPending={completeMutation.isPending}
+      />
+
       {/* ══════════════════════ LIST VIEW ══════════════════════════ */}
       {viewMode === 'list' && (() => {
         const listClients: ClientSummary[] = listData?.clients ?? []
@@ -2779,7 +2834,7 @@ export default function MyLeads() {
                         .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())[0]
                       const cbDate = nextCb ? new Date(nextCb.scheduledAt) : null
                       const cbColor = cbDate
-                        ? isPast(cbDate) && !isToday(cbDate)
+                        ? isPast(cbDate)
                           ? 'text-red-600 bg-red-50 border border-red-200'
                           : isToday(cbDate)
                           ? 'text-amber-700 bg-amber-50 border border-amber-200'

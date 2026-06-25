@@ -74,7 +74,7 @@ interface Props {
 
 function callbackStyle(dt: string): string {
   const d = new Date(dt)
-  if (isPast(d) && !isToday(d)) return 'text-red-600 bg-red-50 border-red-200'
+  if (isPast(d)) return 'text-red-600 bg-red-50 border-red-200'
   if (isToday(d)) return 'text-amber-700 bg-amber-50 border-amber-200'
   return 'text-blue-700 bg-blue-50 border-blue-200'
 }
