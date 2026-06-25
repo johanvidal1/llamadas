@@ -311,6 +311,7 @@ function ClientsTableHead({
         <th className="text-left px-3 py-2 font-medium text-gray-600">Agendado</th>
         <th className="text-left px-3 py-2 font-medium text-gray-600">Registrado</th>
         <th className="text-left px-3 py-2 font-medium text-gray-600">Respuesta</th>
+        <th className="text-left px-3 py-2 font-medium text-gray-600 w-16">Avance</th>
         <th className="text-center px-3 py-2 font-medium text-gray-600 w-16"></th>
       </tr>
     </thead>
@@ -449,17 +450,13 @@ function ClientTableRow({
       </td>
       <td className="px-3 py-2">
         {c.lastDisposition ? (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <DispositionBadge disposition={c.lastDisposition} />
-            {aclaracion ? (
-              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
-                {aclaracion}
-              </span>
-            ) : null}
-          </div>
+          <DispositionBadge disposition={c.lastDisposition} />
         ) : (
           <span className="text-gray-300 text-xs">Pendiente</span>
         )}
+      </td>
+      <td className="px-3 py-2 text-sm text-gray-600 tabular-nums">
+        {aclaracion ? aclaracion : <span className="text-gray-300">—</span>}
       </td>
       <td className="px-3 py-2 text-center">
         {recordable ? (
