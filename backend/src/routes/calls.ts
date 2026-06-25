@@ -8,6 +8,7 @@ import { recomputeContactStatus, statusForDisposition } from '../lib/contactStat
 import {
   ALL_DISPOSITION_CODES,
   getAclaracionForDisposition,
+  isAgentSelectableDisposition,
   isDefinitiveClosureDisposition,
   isValidDisposition,
   requiresCallbackDate,
@@ -169,6 +170,11 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     return
   }
 
+  if (!isAgentSelectableDisposition(data.disposition)) {
+    res.status(400).json({ error: 'Disposición reservada para el sistema' })
+    return
+  }
+
   if (requiresCallbackDate(data.disposition) && !data.callbackDate) {
     res.status(400).json({ error: 'Se requiere fecha de callback cuando la respuesta es VOLVER A LLAMAR' })
     return
@@ -327,6 +333,11 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
 
   if (data.disposition !== undefined && !isValidDisposition(data.disposition)) {
     res.status(400).json({ error: 'Disposición no válida' })
+    return
+  }
+
+  if (data.disposition !== undefined && !isAgentSelectableDisposition(data.disposition)) {
+    res.status(400).json({ error: 'Disposición reservada para el sistema' })
     return
   }
 

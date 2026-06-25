@@ -5,6 +5,7 @@ import {
   OPERATIONAL_SELECT_OPTIONS,
   getDispositionLabel,
   getFunnelChipLabel,
+  isAgentSelectableDisposition,
   isFunnelDisposition,
   isKnownResponseDisposition,
 } from '../config/responseOptions'
@@ -31,7 +32,8 @@ export default function DispositionSelector({
   }, [disposition])
 
   const selectedFunnel = isFunnelDisposition(disposition) ? disposition : ''
-  const operationalValue = isFunnelDisposition(disposition) ? '' : disposition
+  const operationalValue =
+    isFunnelDisposition(disposition) || !isAgentSelectableDisposition(disposition) ? '' : disposition
 
   const handleFunnelClick = (code: string) => {
     if (code === 'VENTA_CERRADA') {
