@@ -2,8 +2,20 @@ import { Router, Response } from 'express'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { getAclaracionForDisposition } from '../lib/responseOptions'
 
 const router = Router()
+
+function formatAgendaDateTime(date: Date): string {
+  return date.toLocaleString('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
 
 // GET /api/callbacks
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -43,6 +55,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       },
       callLog: {
         select: {
+          contactId: true,
           contact: { select: { id: true, nombre: true, telefono: true, tipoContacto: true } },
         },
       },
@@ -59,12 +72,78 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const schema = z.object({ completed: z.boolean(), notes: z.string().optional() })
   const data = schema.parse(req.body)
 
-  const callback = await prisma.callback.update({
+  const existing = await prisma.callback.findUnique({
     where: { id: req.params.id },
+    include: {
+      callLog: { select: { contactId: true } },
+      company: { select: { id: true } },
+      agent: { select: { id: true } },
+    },
+  })
+
+  if (!existing) {
+    res.status(404).json({ error: 'Callback no encontrado' })
+    return
+  }
+
+  if (req.user!.role === 'AGENT' && existing.agentId !== req.user!.id) {
+    res.status(403).json({ error: 'Sin permiso para modificar este callback' })
+    return
+  }
+
+  const completingNow = data.completed && !existing.completed
+
+  if (completingNow) {
+    const completedAt = new Date()
+    const scheduledFormatted = formatAgendaDateTime(existing.scheduledAt)
+    const completedFormatted = formatAgendaDateTime(completedAt)
+
+    let contactId = existing.callLog?.contactId ?? null
+    if (!contactId) {
+      const assignedContact = await prisma.contact.findFirst({
+        where: {
+          companyId: existing.companyId,
+          assignment: { agentId: existing.agentId },
+        },
+        select: { id: true },
+      })
+      contactId = assignedContact?.id ?? null
+    }
+
+    const callback = await prisma.$transaction(async (tx) => {
+      const updated = await tx.callback.update({
+        where: { id: existing.id },
+        data: {
+          completed: true,
+          completedAt,
+          ...(data.notes !== undefined ? { notes: data.notes } : {}),
+        },
+      })
+
+      await tx.callLog.create({
+        data: {
+          companyId: existing.companyId,
+          agentId: existing.agentId,
+          contactId,
+          disposition: 'AGENDA_COMPLETADA',
+          aclaracion: getAclaracionForDisposition('AGENDA_COMPLETADA'),
+          notes: `Agenda completada el ${completedFormatted}. Llamada programada para el ${scheduledFormatted}.`,
+        },
+      })
+
+      return updated
+    })
+
+    res.json(callback)
+    return
+  }
+
+  const callback = await prisma.callback.update({
+    where: { id: existing.id },
     data: {
       completed: data.completed,
       completedAt: data.completed ? new Date() : null,
-      notes: data.notes,
+      ...(data.notes !== undefined ? { notes: data.notes } : {}),
     },
   })
   res.json(callback)

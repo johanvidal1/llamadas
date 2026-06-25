@@ -14,6 +14,7 @@ export const dispositionToStatus: Record<string, string> = {
   DISCUSION_PROPUESTA: 'INTERESTED',
   ESPERA_RESPUESTA: 'INTERESTED',
   VENTA_CERRADA: 'CONVERTED',
+  AGENDA_COMPLETADA: 'IN_PROGRESS',
   // Legacy codes (historical records only)
   INTERESTED: 'INTERESTED',
   NOT_INTERESTED: 'NOT_INTERESTED',

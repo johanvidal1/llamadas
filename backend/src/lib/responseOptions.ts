@@ -10,6 +10,7 @@ export type ResponseCode =
   | 'DISCUSION_PROPUESTA'
   | 'ESPERA_RESPUESTA'
   | 'VENTA_CERRADA'
+  | 'AGENDA_COMPLETADA'
 
 export type LegacyDispositionCode =
   | 'INTERESTED'
@@ -30,6 +31,8 @@ export interface ResponseOption {
   contactStatus: string
   requiresCallback?: boolean
   disableAgendar?: boolean
+  /** When false, hidden from agent disposition selects (audit/system-only). Default true. */
+  agentSelectable?: boolean
 }
 
 export const RESPONSE_OPTIONS: ResponseOption[] = [
@@ -44,6 +47,7 @@ export const RESPONSE_OPTIONS: ResponseOption[] = [
   { code: 'DISCUSION_PROPUESTA', label: 'DISCUSIÓN DE PROPUESTA', aclaracion: '75%', progress: 75, contactStatus: 'INTERESTED' },
   { code: 'ESPERA_RESPUESTA', label: 'A LA ESPERA DE RESPUESTA FINAL', aclaracion: '90%', progress: 90, contactStatus: 'INTERESTED' },
   { code: 'VENTA_CERRADA', label: 'VENTA CERRADA', aclaracion: '100%', progress: 100, contactStatus: 'CONVERTED', disableAgendar: true },
+  { code: 'AGENDA_COMPLETADA', label: 'AGENDA COMPLETADA', aclaracion: '0%', progress: 0, contactStatus: 'IN_PROGRESS', disableAgendar: true, agentSelectable: false },
 ]
 
 export const LEGACY_DISPOSITION_LABELS: Record<LegacyDispositionCode, string> = {
@@ -129,4 +133,14 @@ export function isDefinitiveClosureDisposition(disposition: string): boolean {
 
 export function requiresCallbackDate(disposition: string): boolean {
   return (CALLBACK_DISPOSITIONS as readonly string[]).includes(disposition)
+}
+
+export const AUDIT_ONLY_DISPOSITIONS = RESPONSE_OPTIONS.filter(
+  (o) => o.agentSelectable === false
+).map((o) => o.code)
+
+export function isAgentSelectableDisposition(code: string): boolean {
+  const opt = getResponseOption(code)
+  if (!opt) return true
+  return opt.agentSelectable !== false
 }

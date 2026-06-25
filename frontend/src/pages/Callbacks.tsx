@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import { CalendarClock, CheckCircle2, Clock, Phone, ChevronDown, ChevronUp } from 'lucide-react'
 import { format, isToday, isTomorrow, isPast } from 'date-fns'
 import { es } from 'date-fns/locale'
+import CompleteCallbackModal, { type CompleteConfirm } from '../components/CompleteCallbackModal'
 
 interface Callback {
   id: string
@@ -25,15 +26,16 @@ interface Callback {
 
 function dateLabel(date: string): { label: string; classes: string } {
   const d = new Date(date)
+  if (isPast(d)) return { label: 'Vencido', classes: 'bg-red-100 text-red-700' }
   if (isToday(d)) return { label: 'Hoy', classes: 'bg-amber-100 text-amber-700' }
   if (isTomorrow(d)) return { label: 'Mañana', classes: 'bg-blue-100 text-blue-700' }
-  if (isPast(d)) return { label: 'Vencido', classes: 'bg-red-100 text-red-700' }
   return { label: format(d, 'd MMM', { locale: es }), classes: 'bg-gray-100 text-gray-700' }
 }
 
 export default function Callbacks() {
   const { isAdmin } = useAuth()
   const [showCompleted, setShowCompleted] = useState(false)
+  const [completeConfirm, setCompleteConfirm] = useState<CompleteConfirm | null>(null)
   const qc = useQueryClient()
 
   const { data: callbacks = [], isLoading } = useQuery({
@@ -49,10 +51,16 @@ export default function Callbacks() {
   })
 
   const completeMutation = useMutation({
-    mutationFn: (id: string) => updateCallback(id, { completed: true }),
-    onSuccess: () => {
+    mutationFn: (payload: { id: string; companyId: string }) =>
+      updateCallback(payload.id, { completed: true }),
+    onSuccess: (_data, variables) => {
       toast.success('Callback marcado como completado')
       qc.invalidateQueries({ queryKey: ['callbacks'] })
+      qc.invalidateQueries({ queryKey: ['client-detail', variables.companyId] })
+      setCompleteConfirm(null)
+    },
+    onError: () => {
+      toast.error('No se pudo completar el callback')
     },
   })
 
@@ -60,7 +68,12 @@ export default function Callbacks() {
   const done = doneCallbacks as Callback[]
 
   const todayCount = pending.filter((c) => isToday(new Date(c.scheduledAt))).length
-  const overdueCount = pending.filter((c) => isPast(new Date(c.scheduledAt)) && !isToday(new Date(c.scheduledAt))).length
+  const overdueCount = pending.filter((c) => isPast(new Date(c.scheduledAt))).length
+
+  const handleConfirmComplete = () => {
+    if (!completeConfirm) return
+    completeMutation.mutate({ id: completeConfirm.id, companyId: completeConfirm.companyId })
+  }
 
   return (
     <div className="p-4 md:p-8 space-y-8">
@@ -106,7 +119,7 @@ export default function Callbacks() {
         <div className="space-y-3">
           {pending.map((cb) => {
             const { label, classes } = dateLabel(cb.scheduledAt)
-            const isPastDate = isPast(new Date(cb.scheduledAt)) && !isToday(new Date(cb.scheduledAt))
+            const isPastDate = isPast(new Date(cb.scheduledAt))
 
             return (
               <div
@@ -144,11 +157,14 @@ export default function Callbacks() {
                     </p>
                   </div>
                   <button
-                    onClick={() => {
-                      if (confirm('¿Marcar este callback como completado?')) {
-                        completeMutation.mutate(cb.id)
-                      }
-                    }}
+                    onClick={() =>
+                      setCompleteConfirm({
+                        id: cb.id,
+                        label: cb.company.razonSocial || cb.company.ruc,
+                        scheduledAt: cb.scheduledAt,
+                        companyId: cb.company.id,
+                      })
+                    }
                     disabled={completeMutation.isPending}
                     className="btn-success py-2 px-3 min-h-[44px]"
                     title="Marcar como completado"
@@ -184,14 +200,26 @@ export default function Callbacks() {
                 <div className="text-right">
                   <span className="badge bg-green-100 text-green-700">Completado</span>
                   <p className="text-xs text-gray-400 mt-1">
-                    {format(new Date(cb.scheduledAt), "d MMM 'a las' HH:mm", { locale: es })}
+                    Programado: {format(new Date(cb.scheduledAt), "d MMM 'a las' HH:mm", { locale: es })}
                   </p>
+                  {cb.completedAt && (
+                    <p className="text-xs text-gray-400">
+                      Completado: {format(new Date(cb.completedAt), "d MMM 'a las' HH:mm", { locale: es })}
+                    </p>
+                  )}
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      <CompleteCallbackModal
+        confirm={completeConfirm}
+        onClose={() => setCompleteConfirm(null)}
+        onConfirm={handleConfirmComplete}
+        isPending={completeMutation.isPending}
+      />
     </div>
   )
 }
