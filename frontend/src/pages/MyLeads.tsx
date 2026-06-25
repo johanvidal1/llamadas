@@ -468,18 +468,20 @@ const LIST_FILTERS_FUNNEL = SALES_FUNNEL_STAGES.map((stage) => {
 })
 
 function parseListFiltersFromUrl(filterParam: string): { cola: ListCola; drilldown: string | null } {
-  if (!filterParam || filterParam === 'FUNNEL') return { cola: 'FUNNEL', drilldown: null }
+  if (!filterParam) return { cola: 'ALL', drilldown: null }
+  if (filterParam === 'FUNNEL') return { cola: 'FUNNEL', drilldown: null }
   if (filterParam === 'ALL') return { cola: 'ALL', drilldown: null }
   if (filterParam === 'PENDING' || filterParam === 'VOLVER_A_LLAMAR' || filterParam === 'OTROS') {
     return { cola: filterParam, drilldown: null }
   }
   if (VALID_LIST_FILTERS.has(filterParam)) return { cola: 'FUNNEL', drilldown: filterParam }
-  return { cola: 'FUNNEL', drilldown: null }
+  return { cola: 'ALL', drilldown: null }
 }
 
 function listFiltersToUrl(cola: ListCola, drilldown: string | null): string | null {
   if (drilldown) return drilldown
-  if (cola === 'FUNNEL') return null
+  if (cola === 'ALL') return null
+  if (cola === 'FUNNEL') return 'FUNNEL'
   return cola
 }
 
@@ -2676,12 +2678,12 @@ export default function MyLeads() {
                   </div>
                 )}
                 <div className="flex items-center gap-2 shrink-0 pb-0.5 sm:ml-auto">
-                  {(listDrilldown || listCola !== 'FUNNEL') && (
+                  {(listDrilldown || (listCola !== 'FUNNEL' && listCola !== 'ALL')) && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">
                       Filtro: {getListFilterLabel(listCola, listDrilldown)}
                       <button
                         type="button"
-                        onClick={() => applyListFilters('FUNNEL', null)}
+                        onClick={() => applyListFilters('ALL', null)}
                         className="p-0.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
                         aria-label="Quitar filtro"
                       >
@@ -2699,6 +2701,18 @@ export default function MyLeads() {
               <div className="w-full">
                 <p className="text-xs font-medium text-gray-500 mb-1.5">Embudo comercial</p>
                 <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    title="Todos"
+                    onClick={() => applyListFilters('ALL', null)}
+                    className={`flex flex-col items-center gap-0.5 px-3 py-1.5 min-w-[5.5rem] text-center rounded-lg text-xs font-medium transition-colors border shrink-0 ${
+                      listCola === 'ALL' && !listDrilldown
+                        ? 'bg-gray-100 text-gray-700 border-gray-300 ring-2 ring-offset-1 ring-green-500'
+                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="text-xs leading-tight max-w-[8rem] text-balance">Todos</span>
+                  </button>
                   {LIST_FILTERS_FUNNEL.map((f) => {
                     const isActive = listDrilldown === f.value
                     const funnelMode = listCola === 'FUNNEL' && !listDrilldown
