@@ -92,7 +92,7 @@ function defaultVisibleColumns(): Record<ColumnKey, boolean> {
     agendado: true,
     registrado: true,
     respuesta: true,
-    avance: true,
+    avance: false,
   }
 }
 
@@ -737,7 +737,10 @@ function ClientsTableHead({
         {visibleColumns.avance && (
           <th className="text-left px-3 py-2 font-medium text-gray-600 w-16">Avance</th>
         )}
-        <th className="text-center px-3 py-2 font-medium text-gray-600 w-16"></th>
+        <th
+          className="sticky right-0 z-20 bg-gray-50 shrink-0 w-12 shadow-[-2px_0_4px_-2px_rgba(0,0,0,0.08)]"
+          aria-label="Acciones"
+        />
       </tr>
     </thead>
   )
@@ -899,7 +902,9 @@ function ClientTableRow({
           {aclaracion ? aclaracion : <span className="text-gray-300">—</span>}
         </td>
       )}
-      <td className="px-3 py-2 text-center">
+      <td
+        className={`sticky right-0 z-10 ${stickyBg} shrink-0 w-12 text-center shadow-[-2px_0_4px_-2px_rgba(0,0,0,0.08)]`}
+      >
         {recordable ? (
           <button
             type="button"
