@@ -319,6 +319,55 @@ export type AgentAssignmentRunStats = {
 }
 
 /** Per-agent run count + latest assignment date (matches GET /api/assignments/runs list semantics). */
+/** Pending companies per agent (assigned with no call log from that agent). */
+export async function getPendingCompaniesByAgentId(
+  companiesByAgent?: Map<string, Set<string> | string[]>
+): Promise<Map<string, number>> {
+  let agentCompanyIds: Map<string, string[]>
+
+  if (companiesByAgent) {
+    agentCompanyIds = new Map(
+      [...companiesByAgent.entries()].map(([agentId, ids]) => [
+        agentId,
+        ids instanceof Set ? [...ids] : ids,
+      ])
+    )
+  } else {
+    const assignments = await prisma.assignment.findMany({
+      select: {
+        agentId: true,
+        contact: { select: { companyId: true } },
+      },
+    })
+    const byAgent = new Map<string, Set<string>>()
+    for (const a of assignments) {
+      if (!byAgent.has(a.agentId)) {
+        byAgent.set(a.agentId, new Set())
+      }
+      byAgent.get(a.agentId)!.add(a.contact.companyId)
+    }
+    agentCompanyIds = new Map(
+      [...byAgent.entries()].map(([agentId, set]) => [agentId, [...set]])
+    )
+  }
+
+  const pendingByAgent = new Map<string, number>()
+
+  await Promise.all(
+    [...agentCompanyIds.entries()].map(async ([agentId, companyIds]) => {
+      if (companyIds.length === 0) {
+        pendingByAgent.set(agentId, 0)
+        return
+      }
+      const lastByCompany = await getLastDispositionByCompanyIds(companyIds, agentId)
+      const pipeline = buildCompanyPipelineCounts(lastByCompany)
+      pendingByAgent.set(agentId, pipeline.PENDING ?? 0)
+    })
+  )
+
+  return pendingByAgent
+}
+
 export async function getAgentAssignmentRunStatsByAgentId(): Promise<
   Map<string, AgentAssignmentRunStats>
 > {

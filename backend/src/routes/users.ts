@@ -3,7 +3,10 @@ import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
-import { getAgentAssignmentRunStatsByAgentId } from '../lib/companyDisposition'
+import {
+  getAgentAssignmentRunStatsByAgentId,
+  getPendingCompaniesByAgentId,
+} from '../lib/companyDisposition'
 import {
   assertAgentLimit,
   assertRegularAdminLimit,
@@ -57,15 +60,12 @@ router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     orderBy: { name: 'asc' },
   })
 
-  const [assignments, assignmentRunStatsByAgent] = await Promise.all([
-    prisma.assignment.findMany({
-      select: {
-        agentId: true,
-        contact: { select: { companyId: true } },
-      },
-    }),
-    getAgentAssignmentRunStatsByAgentId(),
-  ])
+  const assignments = await prisma.assignment.findMany({
+    select: {
+      agentId: true,
+      contact: { select: { companyId: true } },
+    },
+  })
   const companiesByAgent = new Map<string, Set<string>>()
   for (const a of assignments) {
     if (!companiesByAgent.has(a.agentId)) {
@@ -74,11 +74,17 @@ router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     companiesByAgent.get(a.agentId)!.add(a.contact.companyId)
   }
 
+  const [assignmentRunStatsByAgent, pendingByAgent] = await Promise.all([
+    getAgentAssignmentRunStatsByAgentId(),
+    getPendingCompaniesByAgentId(companiesByAgent),
+  ])
+
   const enriched = users.map((u) => {
     const runStats = assignmentRunStatsByAgent.get(u.id)
     return {
       ...u,
       assignedCompanies: companiesByAgent.get(u.id)?.size ?? 0,
+      pendingCompanies: pendingByAgent.get(u.id) ?? 0,
       assignmentRunCount: runStats?.assignmentRunCount ?? 0,
       lastAssignmentAt: runStats?.lastAssignmentAt?.toISOString() ?? null,
     }

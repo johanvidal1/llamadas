@@ -364,6 +364,10 @@ export default function Assignments() {
   const agents = users.filter(
     (u: { role: string; active: boolean }) => u.role === 'AGENT' && u.active
   )
+  // Fewest pending first — agents at 0 have finished their queue and need more assignments.
+  const agentsForDropdown = [...agents].sort(
+    (a, b) => (a.pendingCompanies ?? 0) - (b.pendingCompanies ?? 0)
+  )
 
   // Count of unassigned registros (contacts) in selected batch
   const { data: unassignedData } = useQuery({
@@ -505,14 +509,13 @@ export default function Assignments() {
               onChange={(e) => setAgentId(e.target.value)}
             >
               <option value="">Seleccionar agente...</option>
-              {agents.map((a: {
+              {agentsForDropdown.map((a: {
                 id: string
                 name: string
-                assignedCompanies?: number
-                _count?: { assignments: number }
+                pendingCompanies?: number
               }) => (
                 <option key={a.id} value={a.id}>
-                  {a.name} ({a.assignedCompanies ?? 0} empresas)
+                  {a.name} ({a.pendingCompanies ?? 0} pendientes)
                 </option>
               ))}
             </select>

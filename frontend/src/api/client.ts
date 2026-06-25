@@ -93,6 +93,7 @@ export type AppUser = {
   active: boolean
   createdAt?: string
   assignedCompanies?: number
+  pendingCompanies?: number
   assignmentRunCount?: number
   lastAssignmentAt?: string | null
   _count: {
