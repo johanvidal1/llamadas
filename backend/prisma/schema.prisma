@@ -202,6 +202,11 @@ model CallLog {
   updatedAt   DateTime @updatedAt
 
   callback Callback?
+
+  @@index([calledAt])
+  @@index([agentId, calledAt])
+  @@index([companyId])
+  @@index([disposition])
 }
 
 model Callback {

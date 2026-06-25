@@ -1,8 +1,8 @@
 import { useState, Fragment } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import {
-  getReports, getClients, getCallbacks, getAssignmentRunCompanies, getUntrackedCompanies,
+  getReports, getUsers, getClients, getCallbacks, getAssignmentRunCompanies, getUntrackedCompanies,
   type BatchAgentBreakdownRow,
 } from '../api/client'
 import { format, isPast, isToday } from 'date-fns'
@@ -447,6 +447,76 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
   )
 }
 
+// ─── Loading skeletons ────────────────────────────────────────────────────────
+
+function ReportsPipelineSkeleton() {
+  return (
+    <section>
+      <div className="card p-6 animate-pulse">
+        <div className="h-5 bg-gray-200 rounded w-40 mb-2" />
+        <div className="h-3 bg-gray-100 rounded w-64 mb-5" />
+        <div className="grid grid-cols-1 md:grid-cols-[minmax(0,35%)_minmax(0,65%)] gap-6">
+          <div className="space-y-2">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="h-10 bg-gray-100 rounded-lg" />
+            ))}
+          </div>
+          <div className="space-y-3">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="space-y-1">
+                <div className="h-3 bg-gray-100 rounded w-full" />
+                <div className="h-2 bg-gray-100 rounded-full" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function ReportsKpiSkeleton() {
+  return (
+    <section>
+      <div className="h-4 bg-gray-200 rounded w-48 mb-3 animate-pulse" />
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 animate-pulse">
+        {[...Array(6)].map((_, i) => (
+          <div key={i} className="card p-4 h-24 bg-gray-100" />
+        ))}
+      </div>
+      <div className="card p-4 mt-3 h-16 bg-gray-100 animate-pulse" />
+    </section>
+  )
+}
+
+function ReportsAgentTableSkeleton() {
+  return (
+    <section>
+      <div className="h-4 bg-gray-200 rounded w-44 mb-3 animate-pulse" />
+      <div className="card overflow-hidden animate-pulse">
+        <div className="h-11 bg-gray-50 border-b border-gray-200" />
+        {[...Array(5)].map((_, i) => (
+          <div key={i} className="h-14 border-b border-gray-100 bg-gray-50/50" />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function ReportsBatchSkeleton() {
+  return (
+    <section>
+      <div className="h-4 bg-gray-200 rounded w-36 mb-3 animate-pulse" />
+      <div className="card overflow-hidden animate-pulse">
+        <div className="h-11 bg-gray-50 border-b border-gray-200" />
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="h-12 border-b border-gray-100 bg-gray-50/50" />
+        ))}
+      </div>
+    </section>
+  )
+}
+
 // ─── Sort hook ─────────────────────────────────────────────────────────────────
 
 type AgentSortKey = 'assignedCompanies' | 'companiesWithResponse' | 'companyContactRate' | 'companiesInFunnel' | 'pendingCompanies' | 'totalCalls' | 'ventaCerrada' | 'closeRate' | 'overdueCallbacks'
@@ -508,49 +578,41 @@ export default function Reports() {
   const drill = (agentId: string, agentName: string, metric: MetricKey) =>
     setDrillDown({ agentId, agentName, metric })
 
-  const { data: allData, isFetching: isFetchingAll, refetch: refetchAll } = useQuery<ReportsData>({
-    queryKey: ['reports', 'all'],
-    queryFn: () => getReports(),
-    staleTime: 60_000,
+  const { data: users = [] } = useQuery({
+    queryKey: ['users'],
+    queryFn: getUsers,
+    staleTime: 300_000,
   })
 
-  const { data, isLoading, isFetching: isFetchingFiltered, refetch: refetchFiltered } = useQuery<ReportsData>({
+  const agents = users.filter((u) => u.role === 'AGENT' && u.active)
+
+  const { data, isLoading, isFetching, refetch } = useQuery<ReportsData>({
     queryKey: ['reports', filterAgentId],
     queryFn: () => getReports(filterAgentId || undefined),
-    staleTime: 60_000,
+    staleTime: 300_000,
+    placeholderData: keepPreviousData,
   })
 
-  const isRefreshing = isFetchingAll || isFetchingFiltered
+  const isInitialLoading = isLoading && !data
+  const isUpdating = isFetching && !!data
 
   const handleRefresh = () => {
-    refetchAll()
-    refetchFiltered()
+    refetch()
   }
 
   const { sorted: sortedAgents, sortBy, asc, toggle } = useSortedAgents(data?.agentPerformance ?? [])
 
-  if (isLoading && !data) {
-    return (
-      <div className="flex items-center justify-center h-full text-gray-400">
-        <div className="text-center">
-          <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-sm">Generando reportes...</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (!data) return null
-
-  const agents = allData?.agentPerformance ?? []
-
-  const { funnel, dispositionBreakdown, batchProgress, companyPipeline, assignedCompanies } = data
-  const companies = funnel.companies
+  const funnel = data?.funnel
+  const dispositionBreakdown = data?.dispositionBreakdown ?? []
+  const batchProgress = data?.batchProgress ?? []
+  const companyPipeline = data?.companyPipeline
+  const assignedCompanies = data?.assignedCompanies
+  const companies = funnel?.companies
   const totalDisp = dispositionBreakdown.reduce((s, d) => s + d.count, 0)
   const pipelineTotal = assignedCompanies ?? 0
   const pipelinePending = companyPipeline?.PENDING ?? 0
   const pipelineWithResponse = pipelineTotal - pipelinePending
-  const zeroProgressBreakdown = [
+  const zeroProgressBreakdown = data ? [
     ...ZERO_PROGRESS_OPTIONS.map((opt) => ({
       disposition: opt.code,
       label: opt.label,
@@ -563,7 +625,7 @@ export default function Reports() {
         label: getDispositionLabel(d.disposition),
         count: d.count,
       })),
-  ].filter((d) => d.count > 0)
+  ].filter((d) => d.count > 0) : []
   const funnelCompanies = sumFunnelStages(companyPipeline ?? {})
   const otrosCompanies = companyPipeline?.OTROS ?? 0
   const ventaCerrada = companyPipeline?.VENTA_CERRADA ?? 0
@@ -581,6 +643,8 @@ export default function Reports() {
     sortBy === k
       ? (asc ? <ChevronUp size={13} className="text-blue-600" /> : <ChevronDown size={13} className="text-blue-600" />)
       : <ChevronDown size={13} className="text-gray-300" />
+
+  const filteredAgentName = agents.find((a) => a.id === filterAgentId)?.name
 
   return (
     <div className="p-4 md:p-6 space-y-7">
@@ -618,16 +682,28 @@ export default function Reports() {
           <button
             type="button"
             onClick={handleRefresh}
-            disabled={isRefreshing}
+            disabled={isFetching}
             title="Actualizar datos"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors disabled:opacity-50"
           >
-            <RefreshCw size={15} className={isRefreshing ? 'animate-spin' : ''} />
+            <RefreshCw size={15} className={isFetching ? 'animate-spin' : ''} />
             Actualizar
           </button>
+          {isUpdating && (
+            <span className="text-xs text-gray-400 animate-pulse whitespace-nowrap">Actualizando...</span>
+          )}
         </div>
       </div>
 
+      {isInitialLoading ? (
+        <>
+          <ReportsPipelineSkeleton />
+          <ReportsKpiSkeleton />
+          <ReportsAgentTableSkeleton />
+          <ReportsBatchSkeleton />
+        </>
+      ) : data ? (
+        <>
       {/* ── Company pipeline (primary) ── */}
       <section>
         <div className="card p-6 overflow-visible">
@@ -642,7 +718,7 @@ export default function Reports() {
                 <span>{pipelineWithResponse} con respuesta</span>
                 {filterAgentId && (
                   <span className="text-gray-400 ml-1.5">
-                    — {agents.find((a) => a.id === filterAgentId)?.name ?? 'agente filtrado'}
+                    — {filteredAgentName ?? 'agente filtrado'}
                   </span>
                 )}
               </>
@@ -808,11 +884,11 @@ export default function Reports() {
             <div>
               <p className="text-xs text-gray-400 mb-3">Estado legacy por RUC (derivado de contactos)</p>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 overflow-visible">
-                <StatCard label="En progreso" value={companies.inProgress} color="text-blue-500" sub="empresas" statusHelpKey="IN_PROGRESS" companyLevel />
-                <StatCard label="Interesados" value={companies.interested} color="text-green-600" sub="empresas" statusHelpKey="INTERESTED" companyLevel />
-                <StatCard label="Convertidos" value={companies.converted} color="text-emerald-600" sub="empresas" statusHelpKey="CONVERTED" companyLevel />
-                <StatCard label="No interesados" value={companies.notInterested} color="text-red-500" sub="empresas" statusHelpKey="NOT_INTERESTED" companyLevel />
-                <StatCard label="No llamar" value={companies.doNotCall} color="text-red-700" sub="empresas" />
+                <StatCard label="En progreso" value={companies!.inProgress} color="text-blue-500" sub="empresas" statusHelpKey="IN_PROGRESS" companyLevel />
+                <StatCard label="Interesados" value={companies!.interested} color="text-green-600" sub="empresas" statusHelpKey="INTERESTED" companyLevel />
+                <StatCard label="Convertidos" value={companies!.converted} color="text-emerald-600" sub="empresas" statusHelpKey="CONVERTED" companyLevel />
+                <StatCard label="No interesados" value={companies!.notInterested} color="text-red-500" sub="empresas" statusHelpKey="NOT_INTERESTED" companyLevel />
+                <StatCard label="No llamar" value={companies!.doNotCall} color="text-red-700" sub="empresas" />
               </div>
             </div>
           </div>
@@ -973,7 +1049,7 @@ export default function Reports() {
               Lotes y actividad
               {filterAgentId && (
                 <span className="font-normal normal-case text-gray-500">
-                  — {agents.find((a) => a.id === filterAgentId)?.name ?? 'agente filtrado'}
+                  — {filteredAgentName ?? 'agente filtrado'}
                 </span>
               )}
             </span>
@@ -1215,6 +1291,8 @@ export default function Reports() {
           </table>
         </div>
       </section>
+        </>
+      ) : null}
     </div>
   )
 }
