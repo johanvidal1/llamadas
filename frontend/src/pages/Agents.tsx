@@ -137,7 +137,7 @@ function UserTable({
 
   return (
     <>
-    <table className="w-full text-sm">
+    <table className="w-full min-w-[800px] text-sm">
       <thead className={`border-b border-gray-200 ${muted ? 'bg-gray-50/80' : 'bg-gray-50'}`}>
         <tr>
           <th className="text-left px-4 py-3 font-medium text-gray-600">Usuario</th>
@@ -559,7 +559,7 @@ export default function Agents() {
   }
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-4 sm:p-8 space-y-8">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Gestión de agentes</h1>
@@ -663,7 +663,7 @@ export default function Agents() {
       )}
 
       {/* Active agents */}
-      <div className="card overflow-hidden">
+      <div className="card overflow-x-auto">
         <div className="px-4 py-3 border-b border-gray-200 bg-white">
           <h2 className="font-semibold text-gray-900">Agentes activos</h2>
           <p className="text-xs text-gray-500 mt-0.5">{activeUsers.length} usuario(s) activo(s)</p>
@@ -704,18 +704,20 @@ export default function Agents() {
             </div>
           </button>
           {showInactive && (
-            <UserTable
-              users={inactiveUsers}
-              onEdit={handleEdit}
-              onReactivate={handleReactivate}
-              onDelete={handleDelete}
-              currentUserId={user?.id}
-              isSuperAdminOrOwner={isSuperAdminOrOwner}
-              currentUserIsSystemOwner={isSystemOwner}
-              presenceByUserId={presenceByUserId}
-              onRevokeSessions={handleRevokeSessions}
-              muted
-            />
+            <div className="overflow-x-auto">
+              <UserTable
+                users={inactiveUsers}
+                onEdit={handleEdit}
+                onReactivate={handleReactivate}
+                onDelete={handleDelete}
+                currentUserId={user?.id}
+                isSuperAdminOrOwner={isSuperAdminOrOwner}
+                currentUserIsSystemOwner={isSystemOwner}
+                presenceByUserId={presenceByUserId}
+                onRevokeSessions={handleRevokeSessions}
+                muted
+              />
+            </div>
           )}
         </div>
       )}
