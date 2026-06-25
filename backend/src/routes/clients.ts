@@ -159,14 +159,54 @@ async function getScopedCompanyIds(where: Record<string, unknown>): Promise<stri
   return rows.map((r) => r.id)
 }
 
-async function buildFunnelPipelineCounts(
+type AssignmentSummary = {
+  assignedCompanies: number
+  pendingCompanies: number
+  registeredCompanies: number
+}
+
+type PipelineScopeData = {
+  pipelineCounts: Record<string, number>
+  assignmentSummary?: AssignmentSummary
+}
+
+async function buildPipelineScopeData(
   companyIds: string[],
-  dispositionAgentId?: string
-): Promise<Record<string, number>> {
-  if (companyIds.length === 0) return emptyFunnelPipelineCounts()
+  dispositionAgentId?: string,
+  includeAssignmentSummary = false
+): Promise<PipelineScopeData> {
+  if (companyIds.length === 0) {
+    return {
+      pipelineCounts: emptyFunnelPipelineCounts(),
+      ...(includeAssignmentSummary
+        ? {
+            assignmentSummary: {
+              assignedCompanies: 0,
+              pendingCompanies: 0,
+              registeredCompanies: 0,
+            },
+          }
+        : {}),
+    }
+  }
   const lastByCompany = await getLastDispositionByCompanyIds(companyIds, dispositionAgentId)
-  const counts = buildCompanyPipelineCounts(lastByCompany)
-  return Object.fromEntries(FUNNEL_PIPELINE_KEYS.map((k) => [k, counts[k]]))
+  const companyPipeline = buildCompanyPipelineCounts(lastByCompany)
+  const pipelineCounts = Object.fromEntries(
+    FUNNEL_PIPELINE_KEYS.map((k) => [k, companyPipeline[k]])
+  )
+  if (!includeAssignmentSummary) {
+    return { pipelineCounts }
+  }
+  const pendingCompanies = companyPipeline.PENDING ?? 0
+  const assignedCompanies = companyIds.length
+  return {
+    pipelineCounts,
+    assignmentSummary: {
+      assignedCompanies,
+      pendingCompanies,
+      registeredCompanies: assignedCompanies - pendingCompanies,
+    },
+  }
 }
 
 // GET /api/clients — ADMIN sees all, AGENT sees only assigned contacts
@@ -289,12 +329,13 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 
   const jsonExtras = registrationCount !== undefined ? { registrationCount } : {}
+  const includeAssignmentSummary = !!agentId
 
   if (agentScopedDisposition || agentScopedPending || agentScopedOtros || agentScopedFunnel) {
     const allCompanies = await fetchCompanies(where, contactWhere, callLogAgentId)
     const scopedIds = allCompanies.map((c) => c.id)
-    const [pipelineCounts, enriched] = await Promise.all([
-      buildFunnelPipelineCounts(scopedIds, dispositionAgentId),
+    const [{ pipelineCounts, assignmentSummary }, enriched] = await Promise.all([
+      buildPipelineScopeData(scopedIds, dispositionAgentId, includeAssignmentSummary),
       enrichWithLastDisposition(allCompanies, dispositionAgentId),
     ])
     const filtered = enriched.filter((c) => {
@@ -311,21 +352,37 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     })
     const total = filtered.length
     const clients = filtered.slice(skip, skip + take)
-    res.json({ clients, total, page: Number(page), limit: take, pipelineCounts, ...jsonExtras })
+    res.json({
+      clients,
+      total,
+      page: Number(page),
+      limit: take,
+      pipelineCounts,
+      ...(assignmentSummary ? { assignmentSummary } : {}),
+      ...jsonExtras,
+    })
     return
   }
 
   if (sortBy === 'activity') {
     const allCompanies = await fetchCompanies(where, contactWhere, callLogAgentId)
     const scopedIds = allCompanies.map((c) => c.id)
-    const [pipelineCounts, enriched] = await Promise.all([
-      buildFunnelPipelineCounts(scopedIds, dispositionAgentId),
+    const [{ pipelineCounts, assignmentSummary }, enriched] = await Promise.all([
+      buildPipelineScopeData(scopedIds, dispositionAgentId, includeAssignmentSummary),
       enrichWithLastDisposition(allCompanies, dispositionAgentId),
     ])
     const sorted = sortClientsByActivityQueue(enriched)
     const total = sorted.length
     const clients = sorted.slice(skip, skip + take)
-    res.json({ clients, total, page: Number(page), limit: take, pipelineCounts, ...jsonExtras })
+    res.json({
+      clients,
+      total,
+      page: Number(page),
+      limit: take,
+      pipelineCounts,
+      ...(assignmentSummary ? { assignmentSummary } : {}),
+      ...jsonExtras,
+    })
     return
   }
 
@@ -335,12 +392,20 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     getScopedCompanyIds(where),
   ])
 
-  const [clients, pipelineCounts] = await Promise.all([
+  const [{ pipelineCounts, assignmentSummary }, clients] = await Promise.all([
+    buildPipelineScopeData(scopedIds, dispositionAgentId, includeAssignmentSummary),
     enrichWithLastDisposition(companies, dispositionAgentId),
-    buildFunnelPipelineCounts(scopedIds, dispositionAgentId),
   ])
 
-  res.json({ clients, total, page: Number(page), limit: take, pipelineCounts, ...jsonExtras })
+  res.json({
+    clients,
+    total,
+    page: Number(page),
+    limit: take,
+    pipelineCounts,
+    ...(assignmentSummary ? { assignmentSummary } : {}),
+    ...jsonExtras,
+  })
 })
 
 // GET /api/clients/:id

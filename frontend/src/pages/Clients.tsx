@@ -209,16 +209,44 @@ function resolvePrimaryAgentId(client: ClientListItem): string {
   return assignedContacts[0].assignment!.agent!.id!
 }
 
-type AgentGroup = {
+type DisplayGroup = {
   key: string
-  agentName: string
+  title: string
+  borderClass: string
   clients: ClientListItem[]
+}
+
+const STATUS_GROUP_PENDING = 'PENDING'
+const STATUS_GROUP_REGISTERED = 'REGISTERED'
+
+function groupClientsByStatus(clients: ClientListItem[]): DisplayGroup[] {
+  const pending: ClientListItem[] = []
+  const registered: ClientListItem[] = []
+  for (const client of clients) {
+    if (client.lastDisposition == null) pending.push(client)
+    else registered.push(client)
+  }
+
+  return [
+    {
+      key: STATUS_GROUP_PENDING,
+      title: 'Pendientes',
+      borderClass: 'border-amber-400',
+      clients: sortClientsForAdminQueue(pending),
+    },
+    {
+      key: STATUS_GROUP_REGISTERED,
+      title: 'Registradas',
+      borderClass: 'border-emerald-400',
+      clients: sortClientsForAdminQueue(registered),
+    },
+  ]
 }
 
 function groupClientsByAgent(
   clients: ClientListItem[],
   agents: { id: string; name: string }[]
-): AgentGroup[] {
+): DisplayGroup[] {
   const byAgent = new Map<string, ClientListItem[]>()
   for (const client of clients) {
     const key = resolvePrimaryAgentId(client)
@@ -231,10 +259,11 @@ function groupClientsByAgent(
 
   const groups = [...byAgent.entries()].map(([key, groupClients]) => ({
     key,
-    agentName:
+    title:
       key === UNASSIGNED_AGENT_KEY
         ? 'Sin asignar'
         : (agentNameById.get(key) ?? 'Agente desconocido'),
+    borderClass: 'border-emerald-400',
     clients: groupClients,
   }))
 
@@ -247,12 +276,12 @@ function groupClientsByAgent(
     if (b.key === UNASSIGNED_AGENT_KEY) return -1
     const aMax = maxLastCalledAt(a.clients)
     const bMax = maxLastCalledAt(b.clients)
-    if (aMax === null && bMax === null) return a.agentName.localeCompare(b.agentName, 'es')
+    if (aMax === null && bMax === null) return a.title.localeCompare(b.title, 'es')
     if (aMax === null) return 1
     if (bMax === null) return -1
     const byActivity = bMax - aMax
     if (byActivity !== 0) return byActivity
-    return a.agentName.localeCompare(b.agentName, 'es')
+    return a.title.localeCompare(b.title, 'es')
   })
 
   return groups
@@ -483,7 +512,7 @@ export default function Clients() {
   const [registeredTo, setRegisteredTo] = useState(initialRegisteredTo)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(readStoredPageSize)
-  const [groupByAgent, setGroupByAgent] = useState(false)
+  const [groupMode, setGroupMode] = useState<'' | 'agent' | 'status'>('')
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [filtersExpanded, setFiltersExpanded] = useState(
     () => !!(initialRegisteredFrom || initialRegisteredTo)
@@ -518,7 +547,7 @@ export default function Clients() {
   const { data: imports = [] } = useQuery({ queryKey: ['imports'], queryFn: getImports })
   const batches = imports as { id: string; filename: string; createdAt: string; totalRecords: number }[]
 
-  const effectiveGroupBy = groupByAgent && !agentId
+  const effectiveGroupBy = groupMode === 'agent' || groupMode === 'status'
 
   const { data, isLoading } = useQuery<ClientsListResponse>({
     queryKey: [
@@ -533,6 +562,7 @@ export default function Clients() {
         page: effectiveGroupBy ? 1 : page,
         pageSize,
         grouped: effectiveGroupBy,
+        groupMode,
         sortBy: 'activity',
       },
     ],
@@ -555,6 +585,7 @@ export default function Clients() {
   const showFlatPagination = !effectiveGroupBy && total > pageSize
   const registrationCount = data?.registrationCount
   const pipelineCounts = data?.pipelineCounts
+  const assignmentSummary = data?.assignmentSummary
   const funnelTotal = pipelineCounts ? sumFunnelStages(pipelineCounts) : null
   const hasDateFilter = !!(registeredFrom || registeredTo)
   const advancedFilterCount = hasDateFilter ? 1 : 0
@@ -563,25 +594,41 @@ export default function Clients() {
   const hasActiveFilters = !!(search || pipelineFilter || agentId || batchId || hasDateFilter)
   const showAgentColumn = !agentId && !effectiveGroupBy
   const showBatchColumn = !batchId
-  const agentGroups = useMemo(
-    () => (effectiveGroupBy ? groupClientsByAgent(clients, agents) : []),
-    [effectiveGroupBy, clients, agents]
-  )
+  const displayGroups = useMemo((): DisplayGroup[] => {
+    if (groupMode === 'agent') return groupClientsByAgent(clients, agents)
+    if (groupMode === 'status') return groupClientsByStatus(clients)
+    return []
+  }, [groupMode, clients, agents])
 
   useEffect(() => {
     if (hasDateFilter) setFiltersExpanded(true)
   }, [hasDateFilter])
 
   useEffect(() => {
+    if (agentId && groupMode === 'agent') setGroupMode('')
+    if (!agentId && groupMode === 'status') setGroupMode('')
+  }, [agentId, groupMode])
+
+  useEffect(() => {
     if (!effectiveGroupBy) {
       setExpandedGroups(new Set())
       return
     }
+    if (groupMode === 'status') {
+      setExpandedGroups((prev) => {
+        if (prev.size > 0) {
+          const validKeys = new Set(displayGroups.map((g) => g.key))
+          return new Set([...prev].filter((k) => validKeys.has(k)))
+        }
+        return new Set([STATUS_GROUP_PENDING])
+      })
+      return
+    }
     setExpandedGroups((prev) => {
-      const validKeys = new Set(agentGroups.map((g) => g.key))
+      const validKeys = new Set(displayGroups.map((g) => g.key))
       return new Set([...prev].filter((k) => validKeys.has(k)))
     })
-  }, [effectiveGroupBy, agentGroups])
+  }, [effectiveGroupBy, groupMode, displayGroups])
 
   const toggleGroup = (key: string) => {
     setExpandedGroups((prev) => {
@@ -593,7 +640,7 @@ export default function Clients() {
   }
 
   const expandAllGroups = () => {
-    setExpandedGroups(new Set(agentGroups.map((g) => g.key)))
+    setExpandedGroups(new Set(displayGroups.map((g) => g.key)))
   }
 
   const collapseAllGroups = () => {
@@ -749,7 +796,16 @@ export default function Clients() {
             <select
               className="input w-auto min-w-[150px] py-2"
               value={agentId}
-              onChange={(e) => { setAgentId(e.target.value); setPage(1) }}
+              onChange={(e) => {
+                const newAgentId = e.target.value
+                setAgentId(newAgentId)
+                setGroupMode((prev) => {
+                  if (newAgentId && prev === 'agent') return ''
+                  if (!newAgentId && prev === 'status') return ''
+                  return prev
+                })
+                setPage(1)
+              }}
             >
               <option value="">Todos los agentes</option>
               {agents.map((a) => (
@@ -758,20 +814,21 @@ export default function Clients() {
             </select>
           )}
 
-          {!agentId && agents.length > 0 && (
-            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 cursor-pointer hover:bg-gray-50 shrink-0">
-              <input
-                type="checkbox"
-                checked={groupByAgent}
-                onChange={(e) => {
-                  setGroupByAgent(e.target.checked)
-                  if (e.target.checked) setExpandedGroups(new Set())
-                  setPage(1)
-                }}
-                className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
-              />
-              Agrupar por agente
-            </label>
+          {agents.length > 0 && (
+            <select
+              className="input w-auto min-w-[170px] py-2"
+              value={groupMode}
+              onChange={(e) => {
+                const value = e.target.value as '' | 'agent' | 'status'
+                setGroupMode(value)
+                if (value) setExpandedGroups(new Set())
+                setPage(1)
+              }}
+            >
+              <option value="">Sin agrupar</option>
+              {!agentId && <option value="agent">Por agente</option>}
+              {agentId && <option value="status">Por pendientes / registradas</option>}
+            </select>
           )}
 
           {batches.length > 0 && (
@@ -825,42 +882,88 @@ export default function Clients() {
         </div>
 
         <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-          <div className="flex flex-wrap items-baseline justify-between gap-2 mb-2">
-            <p className="text-xs font-medium text-gray-500">Embudo comercial</p>
-            {funnelTotal != null && (
-              <p className="text-xs text-gray-500">
-                <span className="font-semibold text-gray-700">{funnelTotal}</span> en embudo
-              </p>
-            )}
-          </div>
-          <div className="flex flex-wrap gap-2 overflow-x-auto">
-            {AGENT_PIPELINE_FUNNEL.map((f) => {
-              const isActive = pipelineFilter === f.key
-              const count = pipelineCounts?.[f.key] ?? 0
-              return (
+          <div className="flex flex-col lg:flex-row lg:items-start gap-4">
+            <div className="flex-1 min-w-0">
+              <div className="flex flex-wrap items-baseline justify-between gap-2 mb-2">
+                <p className="text-xs font-medium text-gray-500">Embudo comercial</p>
+                {funnelTotal != null && (
+                  <p className="text-xs text-gray-500">
+                    <span className="font-semibold text-gray-700">{funnelTotal}</span> en embudo
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2 overflow-x-auto">
+                {AGENT_PIPELINE_FUNNEL.map((f) => {
+                  const isActive = pipelineFilter === f.key
+                  const count = pipelineCounts?.[f.key] ?? 0
+                  return (
+                    <button
+                      key={f.key}
+                      type="button"
+                      title={f.fullLabel}
+                      onClick={() => { setPipelineFilter(isActive ? '' : f.key); setPage(1) }}
+                      className={`flex flex-col items-center gap-0.5 px-3 py-1.5 min-w-[5.5rem] text-center rounded-lg text-xs font-medium transition-colors border shrink-0 ${
+                        isActive
+                          ? 'bg-emerald-50 border-emerald-300 text-emerald-800 ring-2 ring-offset-1 ring-emerald-400'
+                          : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <span className="text-xs leading-tight max-w-[8rem] text-balance">
+                        {f.shortLabel ?? f.label}
+                      </span>
+                      <span className="text-[10px] font-semibold opacity-80">
+                        {f.aclaracion}
+                      </span>
+                      <span className={`text-sm font-bold tabular-nums ${count === 0 ? 'text-gray-400' : ''}`}>
+                        {count}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {agentId && assignmentSummary && (
+              <div className="flex flex-wrap gap-2 shrink-0 lg:pt-5">
+                <div className="flex flex-col items-center gap-0.5 px-4 py-2 min-w-[5.5rem] rounded-lg border border-slate-200 bg-slate-50 text-center">
+                  <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Asignadas</span>
+                  <span className="text-lg font-bold tabular-nums text-slate-800">
+                    {assignmentSummary.assignedCompanies}
+                  </span>
+                </div>
                 <button
-                  key={f.key}
                   type="button"
-                  title={f.fullLabel}
-                  onClick={() => { setPipelineFilter(isActive ? '' : f.key); setPage(1) }}
-                  className={`flex flex-col items-center gap-0.5 px-3 py-1.5 min-w-[5.5rem] text-center rounded-lg text-xs font-medium transition-colors border shrink-0 ${
-                    isActive
-                      ? 'bg-emerald-50 border-emerald-300 text-emerald-800 ring-2 ring-offset-1 ring-emerald-400'
-                      : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                  onClick={() => {
+                    if (pipelineFilter === 'PENDING') setPipelineFilter('')
+                    setPage(1)
+                  }}
+                  className={`flex flex-col items-center gap-0.5 px-4 py-2 min-w-[5.5rem] rounded-lg border text-center transition-colors ${
+                    pipelineFilter && pipelineFilter !== 'PENDING'
+                      ? 'border-emerald-200 bg-emerald-50/50 text-emerald-800 hover:bg-emerald-50'
+                      : 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
                   }`}
                 >
-                  <span className="text-xs leading-tight max-w-[8rem] text-balance">
-                    {f.shortLabel ?? f.label}
-                  </span>
-                  <span className="text-[10px] font-semibold opacity-80">
-                    {f.aclaracion}
-                  </span>
-                  <span className={`text-sm font-bold tabular-nums ${count === 0 ? 'text-gray-400' : ''}`}>
-                    {count}
+                  <span className="text-[10px] font-medium uppercase tracking-wide opacity-80">Registradas</span>
+                  <span className="text-lg font-bold tabular-nums">
+                    {assignmentSummary.registeredCompanies}
                   </span>
                 </button>
-              )
-            })}
+                <button
+                  type="button"
+                  onClick={() => { setPipelineFilter('PENDING'); setPage(1) }}
+                  className={`flex flex-col items-center gap-0.5 px-4 py-2 min-w-[5.5rem] rounded-lg border text-center transition-colors ${
+                    pipelineFilter === 'PENDING'
+                      ? 'bg-amber-50 border-amber-300 text-amber-800 ring-2 ring-offset-1 ring-amber-400'
+                      : 'border-amber-200 bg-amber-50/50 text-amber-800 hover:bg-amber-50'
+                  }`}
+                >
+                  <span className="text-[10px] font-medium uppercase tracking-wide opacity-80">Pendientes</span>
+                  <span className="text-lg font-bold tabular-nums">
+                    {assignmentSummary.pendingCompanies}
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -977,21 +1080,21 @@ export default function Clients() {
               </button>
             </div>
             <div className="space-y-2">
-              {agentGroups.map((group) => {
+              {displayGroups.map((group) => {
                 const expanded = expandedGroups.has(group.key)
                 return (
                   <div key={group.key} className="rounded-lg border border-gray-200 overflow-hidden">
                     <button
                       type="button"
                       onClick={() => toggleGroup(group.key)}
-                      className="w-full flex items-center gap-2 px-4 py-3 border-l-4 border-emerald-400 bg-slate-50 text-left hover:bg-slate-100 transition-colors"
+                      className={`w-full flex items-center gap-2 px-4 py-3 border-l-4 ${group.borderClass} bg-slate-50 text-left hover:bg-slate-100 transition-colors`}
                     >
                       {expanded ? (
                         <ChevronDown size={18} className="text-gray-500 shrink-0" />
                       ) : (
                         <ChevronRight size={18} className="text-gray-500 shrink-0" />
                       )}
-                      <span className="font-medium text-gray-900">{group.agentName}</span>
+                      <span className="font-medium text-gray-900">{group.title}</span>
                       <span className="text-sm text-gray-500">
                         {group.clients.length} empresa{group.clients.length === 1 ? '' : 's'}
                       </span>

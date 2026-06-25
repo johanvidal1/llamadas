@@ -214,6 +214,11 @@ export type ClientsListResponse = {
   limit: number
   registrationCount?: number
   pipelineCounts?: Record<string, number>
+  assignmentSummary?: {
+    assignedCompanies: number
+    pendingCompanies: number
+    registeredCompanies: number
+  }
 }
 
 export const getClients = (params?: GetClientsParams) =>
