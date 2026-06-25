@@ -87,6 +87,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     clientId,
     agentId,
     limit = '50',
+    page = '1',
     from,
     to,
     disposition,
@@ -97,6 +98,8 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   } = req.query as Record<string, string>
 
   const take = Math.min(Number(limit) || 50, 200)
+  const pageNum = Math.max(1, Number(page) || 1)
+  const skip = (pageNum - 1) * take
   const timeMin = parseTimeHm(timeFrom)
   const timeMax = parseTimeHm(timeTo)
   const hasTimeFilter = timeMin != null || timeMax != null
@@ -136,7 +139,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     })
     const filtered = candidates.filter((row) => matchesTimeOfDay(row.calledAt, timeMin, timeMax))
     const total = filtered.length
-    const pageIds = filtered.slice(0, take).map((row) => row.id)
+    const pageIds = filtered.slice(skip, skip + take).map((row) => row.id)
     const calls =
       pageIds.length > 0
         ? await prisma.callLog.findMany({
@@ -154,6 +157,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       where,
       include: callLogInclude,
       orderBy: [{ updatedAt: 'desc' }, { calledAt: 'desc' }],
+      skip,
       take,
     }),
     prisma.callLog.count({ where }),

@@ -8,13 +8,13 @@ import { useAuth } from '../contexts/AuthContext'
 import { RecentCallRow } from '../components/RecentCallRow'
 import ClientRecordModal from '../components/ClientRecordModal'
 import { AGENT_PIPELINE_FUNNEL } from '../config/companyPipeline'
-import { getDispositionLabel } from '../config/responseOptions'
+import { ZERO_PROGRESS_OPTIONS } from '../config/responseOptions'
 
 const LIMIT_OPTIONS = [25, 50, 100, 200] as const
-const OPERATIONAL_DISPOSITIONS = ['VOLVER_A_LLAMAR', 'NO_INTERESADO', 'NO_CONTESTA'] as const
 
 type FilterState = {
   limit: number
+  page: number
   from: string
   to: string
   timeFrom: string
@@ -22,6 +22,44 @@ type FilterState = {
   disposition: string
   batchId: string
   agentId: string
+}
+
+function CallHistoryPaginationBar({
+  page,
+  limit,
+  total,
+  onPageChange,
+}: {
+  page: number
+  limit: number
+  total: number
+  onPageChange: (page: number) => void
+}) {
+  return (
+    <div className="flex items-center justify-between text-sm text-gray-500">
+      <p>
+        Mostrando {(page - 1) * limit + 1}–{Math.min(page * limit, total)} de {total}
+      </p>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+          disabled={page === 1}
+          className="btn-secondary py-1.5"
+        >
+          Anterior
+        </button>
+        <button
+          type="button"
+          onClick={() => onPageChange(page + 1)}
+          disabled={page * limit >= total}
+          className="btn-secondary py-1.5"
+        >
+          Siguiente
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function todayLocal(): string {
@@ -38,8 +76,11 @@ function readFilters(params: URLSearchParams): FilterState {
     ? limitRaw
     : 50
   const defaultDates = !params.has('from') && !params.has('to')
+  const pageRaw = Number(params.get('page'))
+  const page = Number.isFinite(pageRaw) && pageRaw >= 1 ? Math.floor(pageRaw) : 1
   return {
     limit,
+    page,
     from: defaultDates ? monthStartLocal() : (params.get('from') ?? ''),
     to: defaultDates ? todayLocal() : (params.get('to') ?? ''),
     timeFrom: params.get('timeFrom') ?? '',
@@ -55,6 +96,7 @@ function readFilters(params: URLSearchParams): FilterState {
 function filtersToSearchParams(filters: FilterState): URLSearchParams {
   const next = new URLSearchParams()
   if (filters.limit !== 50) next.set('limit', String(filters.limit))
+  if (filters.page !== 1) next.set('page', String(filters.page))
   if (filters.from) next.set('from', filters.from)
   if (filters.to) next.set('to', filters.to)
   if (filters.timeFrom) next.set('timeFrom', filters.timeFrom)
@@ -66,7 +108,7 @@ function filtersToSearchParams(filters: FilterState): URLSearchParams {
 }
 
 function filtersToApiParams(filters: FilterState, isAdmin: boolean): GetCallsParams {
-  const params: GetCallsParams = { limit: filters.limit }
+  const params: GetCallsParams = { limit: filters.limit, page: filters.page }
   if (filters.from) params.from = filters.from
   if (filters.to) params.to = filters.to
   if (filters.timeFrom) params.timeFrom = filters.timeFrom
@@ -98,7 +140,8 @@ export default function CallHistory() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateFilters = (patch: Partial<FilterState>) => {
-    const next = { ...filters, ...patch }
+    const isPageOnly = Object.keys(patch).length === 1 && 'page' in patch
+    const next = { ...filters, ...patch, ...(!isPageOnly ? { page: 1 } : {}) }
     setSearchParams(filtersToSearchParams(next), { replace: true })
   }
 
@@ -124,6 +167,7 @@ export default function CallHistory() {
   const agents = users.filter((u) => u.role === 'AGENT' && u.active)
   const calls = data?.calls ?? []
   const total = data?.total ?? 0
+  const showPagination = total > 0
 
   const handleCallClick = (call: (typeof calls)[number]) => {
     setRecordModal({ clientId: call.company.id })
@@ -219,9 +263,9 @@ export default function CallHistory() {
                 ))}
               </optgroup>
               <optgroup label="Operativas">
-                {OPERATIONAL_DISPOSITIONS.map((code) => (
-                  <option key={code} value={code}>
-                    {getDispositionLabel(code)}
+                {ZERO_PROGRESS_OPTIONS.map((option) => (
+                  <option key={option.code} value={option.code}>
+                    {option.label}
                   </option>
                 ))}
               </optgroup>
@@ -296,22 +340,39 @@ export default function CallHistory() {
         ) : calls.length === 0 ? (
           <p className="text-sm text-gray-400 text-center py-8">No hay llamadas con estos filtros</p>
         ) : (
-          <div className="space-y-1">
-            {calls.map((call) => (
-              <RecentCallRow
-                key={call.id}
-                call={call}
-                showAgent={isAdmin}
-                title="Ver registro"
-                onClick={() => handleCallClick(call)}
-              />
-            ))}
-          </div>
-        )}
-        {calls.length < total && (
-          <p className="text-xs text-gray-400 text-center mt-4 pt-4 border-t border-gray-100">
-            Mostrando {calls.length} de {total}. Acota fechas o sube el límite para ver más.
-          </p>
+          <>
+            {showPagination && (
+              <div className="pb-4 mb-4 border-b border-gray-100">
+                <CallHistoryPaginationBar
+                  page={filters.page}
+                  limit={filters.limit}
+                  total={total}
+                  onPageChange={(page) => updateFilters({ page })}
+                />
+              </div>
+            )}
+            <div className="space-y-1">
+              {calls.map((call) => (
+                <RecentCallRow
+                  key={call.id}
+                  call={call}
+                  showAgent={isAdmin}
+                  title="Ver registro"
+                  onClick={() => handleCallClick(call)}
+                />
+              ))}
+            </div>
+            {showPagination && (
+              <div className="pt-4 mt-4 border-t border-gray-100">
+                <CallHistoryPaginationBar
+                  page={filters.page}
+                  limit={filters.limit}
+                  total={total}
+                  onPageChange={(page) => updateFilters({ page })}
+                />
+              </div>
+            )}
+          </>
         )}
       </div>
 
