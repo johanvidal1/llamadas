@@ -30,8 +30,8 @@ export default function DispositionSelector({
     return OPERATIONAL_SELECT_OPTIONS
   }, [disposition])
 
-  const operationalValue = isFunnelDisposition(disposition) ? '' : disposition
   const selectedFunnel = isFunnelDisposition(disposition) ? disposition : ''
+  const operationalValue = isFunnelDisposition(disposition) ? '' : disposition
 
   const handleFunnelClick = (code: string) => {
     if (code === 'VENTA_CERRADA') {

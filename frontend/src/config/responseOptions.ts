@@ -87,7 +87,7 @@ export const SALES_FUNNEL_STAGES = RESPONSE_OPTIONS.filter((o) => o.progress >= 
 export const ZERO_PROGRESS_OPTIONS = RESPONSE_OPTIONS.filter((o) => o.progress === 0)
 
 export const OPERATIONAL_SELECT_OPTIONS = [
-  { value: '', label: 'NINGUNO' },
+  { value: '', label: '— Seleccionar —' },
   ...ZERO_PROGRESS_OPTIONS.map((o) => ({ value: o.code, label: o.label })),
 ]
 

@@ -53,6 +53,7 @@ const callSchema = z.object({
   callbackDate: z.string().datetime().optional(),
   callbackNotes: z.string().optional(),
   cancelPendingCallbacks: z.boolean().optional(),
+  linkPendingCallback: z.boolean().optional(),
 })
 
 const updateCallSchema = z.object({
@@ -236,6 +237,35 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     await cancelPendingCallbacksForCompanyAgent(data.clientId, req.user!.id, callLog.id)
   } else if (data.cancelPendingCallbacks) {
     await cancelPendingCallbacksForCompanyAgent(data.clientId, req.user!.id)
+  } else if (
+    data.linkPendingCallback &&
+    !isDefinitiveClosureDisposition(data.disposition) &&
+    !data.callbackDate
+  ) {
+    const pending = await prisma.callback.findFirst({
+      where: {
+        companyId: data.clientId,
+        agentId: req.user!.id,
+        completed: false,
+      },
+      orderBy: { scheduledAt: 'asc' },
+    })
+    if (pending) {
+      await prisma.$transaction([
+        prisma.callback.update({
+          where: { id: pending.id },
+          data: { callLogId: callLog.id },
+        }),
+        prisma.callback.deleteMany({
+          where: {
+            companyId: data.clientId,
+            agentId: req.user!.id,
+            completed: false,
+            NOT: { callLogId: callLog.id },
+          },
+        }),
+      ])
+    }
   }
 
   res.status(201).json(callLog)

@@ -231,17 +231,21 @@ function DetailRecordNav({
 
 function snapshotFromLog(
   log: CallLogEntry,
-  callbacks: ClientDetail['callbacks']
+  callbacks: ClientDetail['callbacks'],
+  pendingFallback?: ClientDetail['callbacks'][number]
 ): CallLogSnapshot {
   const linkedCb = callbacks?.find((c) => c.callLogId === log.id)
-  const schedAt = linkedCb ? new Date(linkedCb.scheduledAt) : null
+  const cb =
+    linkedCb ??
+    (pendingFallback && !pendingFallback.completed ? pendingFallback : undefined)
+  const schedAt = cb ? new Date(cb.scheduledAt) : null
   return {
     disposition: log.disposition,
     aclaracion: log.aclaracion,
     notes: log.notes,
     schedDate: schedAt ? format(schedAt, 'yyyy-MM-dd') : '',
     schedTime: schedAt ? format(schedAt, 'HH:mm') : '09:00',
-    schedNotes: linkedCb?.notes,
+    schedNotes: cb?.notes,
   }
 }
 
@@ -269,6 +273,16 @@ function areCallNotesUnchanged(
   // Non-pinned loads leave callNotes empty while snapshot retains stored notes
   if (!notesTrimmed && snapshotNotesTrimmed) return true
   return false
+}
+
+function isResponseOrNotesModified(
+  snapshot: CallLogSnapshot | null,
+  disposition: string,
+  callNotes: string
+): boolean {
+  if (!snapshot) return false
+  if (disposition !== snapshot.disposition) return true
+  return !areCallNotesUnchanged(callNotes, snapshot.notes)
 }
 
 function isCallLogUnchanged(
@@ -647,6 +661,8 @@ export default function MyLeads() {
   const [editEmail, setEditEmail] = useState('')
   const [editDni, setEditDni] = useState('')
   const [respuestaError, setRespuestaError] = useState(false)
+  const [agendaConfirm, setAgendaConfirm] = useState<{ dateStr: string } | null>(null)
+  const agendaConfirmResolveRef = useRef<((conservar: boolean) => void) | null>(null)
   const [exporting, setExporting] = useState(false)
   const savedContactRef = useRef<{ id: string; telefono: string; email: string; dni: string } | null>(null)
   const lastSyncedContactKey = useRef<string | null>(null)
@@ -862,6 +878,19 @@ export default function MyLeads() {
     setSchedTime('')
   }, [])
 
+  const askConservarAgenda = useCallback((dateStr: string): Promise<boolean> => {
+    return new Promise((resolve) => {
+      agendaConfirmResolveRef.current = resolve
+      setAgendaConfirm({ dateStr })
+    })
+  }, [])
+
+  const resolveAgendaConfirm = useCallback((conservar: boolean) => {
+    agendaConfirmResolveRef.current?.(conservar)
+    agendaConfirmResolveRef.current = null
+    setAgendaConfirm(null)
+  }, [])
+
   // Prefill disposition from latest log; each save appends a new CallLog
   useEffect(() => {
     if (!detail || !user?.id || !currentClient?.id) return
@@ -929,10 +958,16 @@ export default function MyLeads() {
           .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())[0]
 
     if (targetLog) {
-      const snap = snapshotFromLog(targetLog, detail.callbacks)
+      const agentLogIds = new Set(
+        detail.callLogs.filter((l) => l.agentId === user.id).map((l) => l.id)
+      )
+      const agentPendingCb = detail.callbacks?.find(
+        (c) => !c.completed && (!c.callLogId || agentLogIds.has(c.callLogId))
+      )
+      const snap = snapshotFromLog(targetLog, detail.callbacks, agentPendingCb)
       setLatestLogSnapshot(snap)
       setDisposition(targetLog.disposition)
-      setCallNotes(pinnedLogId ? (targetLog.notes ?? '') : '')
+      setCallNotes(targetLog.notes ?? '')
       setSchedDate(snap.schedDate)
       setSchedTime(snap.schedTime)
       setEditingCallLogId(targetLog.id)
@@ -1400,27 +1435,49 @@ export default function MyLeads() {
         !!editingCallLogId &&
         isRescheduleOnlyChange(latestLogSnapshot, disposition, callNotes, schedDate, schedTime)
 
-      let cancelPendingCallbacks = false
-      if (
-        disposition &&
-        !isDefinitiveClosureDisposition(disposition) &&
-        ownPendingForCompany.length > 0 &&
+      const hasPendingAgendaInForm = !!schedDate
+      const hasExistingAgenda =
+        ownPendingForCompany.length > 0 || !!(latestLogSnapshot?.schedDate)
+      const responseOrNotesModified = isResponseOrNotesModified(
+        latestLogSnapshot,
+        disposition,
+        callNotes
+      )
+
+      const shouldConfirmAgenda =
+        !!editingCallLogId &&
+        !!latestLogSnapshot &&
+        hasPendingAgendaInForm &&
         !agendaModified &&
-        !callLogUnchanged
-      ) {
+        responseOrNotesModified &&
+        !!disposition &&
+        !isDefinitiveClosureDisposition(disposition) &&
+        hasExistingAgenda
+
+      let conservarMismaAgenda = true
+      if (shouldConfirmAgenda) {
         const cbToShow = editingLinkedCb ?? ownPendingForCompany[0]
-        const dateStr = format(new Date(cbToShow.scheduledAt), 'dd/MM HH:mm', { locale: es })
-        cancelPendingCallbacks = window.confirm(
-          `Hay agendado el ${dateStr}.\n\nAceptar = Anular agendado\nCancelar = Mantener agendado y guardar respuesta.`
-        )
+        const dateStr = cbToShow
+          ? format(new Date(cbToShow.scheduledAt), 'dd/MM HH:mm', { locale: es })
+          : format(
+              new Date(
+                `${latestLogSnapshot.schedDate}T${latestLogSnapshot.schedTime || '09:00'}:00`
+              ),
+              'dd/MM HH:mm',
+              { locale: es }
+            )
+        conservarMismaAgenda = await askConservarAgenda(dateStr)
+        if (!conservarMismaAgenda) {
+          throw new SaveCancelled()
+        }
       }
 
       const mantenerAgenda =
-        disposition &&
+        !!disposition &&
         !isDefinitiveClosureDisposition(disposition) &&
-        ownPendingForCompany.length > 0 &&
         !agendaModified &&
-        !cancelPendingCallbacks
+        hasExistingAgenda &&
+        (!shouldConfirmAgenda || conservarMismaAgenda)
 
       if (!callLogUnchanged && (editingCallLogId || disposition || schedDate)) {
         if (requiresCallbackDate(disposition) && !schedDate) {
@@ -1448,9 +1505,6 @@ export default function MyLeads() {
           if (rescheduleOnly) callPayload.callbackDate = null
         } else if (agendaModified && schedDate && callbackDateIso) {
           callPayload.callbackDate = callbackDateIso
-        } else if (cancelPendingCallbacks) {
-          callPayload.cancelPendingCallbacks = true
-          if (rescheduleOnly) callPayload.callbackDate = null
         }
 
         if (rescheduleOnly) {
@@ -1464,9 +1518,7 @@ export default function MyLeads() {
             ...(callPayload.callbackDate != null
               ? { callbackDate: callPayload.callbackDate as string }
               : {}),
-            ...(callPayload.cancelPendingCallbacks
-              ? { cancelPendingCallbacks: true as const }
-              : {}),
+            ...(mantenerAgenda ? { linkPendingCallback: true } : {}),
           })
         }
         callLogSaved = true
@@ -1491,10 +1543,12 @@ export default function MyLeads() {
     onSuccess: async (result) => {
       setRespuestaError(false)
       if (result.callLogSaved) {
-        setCallNotes('')
-        setSchedDate('')
-        setSchedTime('09:00')
-        setEditingCallLogId(null)
+        if (result.autoNext) {
+          setCallNotes('')
+          setSchedDate('')
+          setSchedTime('09:00')
+          setEditingCallLogId(null)
+        }
         toast.success('Resultado guardado')
       } else if (result.contactSaved) {
         toast.success('Datos de contacto actualizados')
@@ -2516,6 +2570,44 @@ export default function MyLeads() {
           client={selectedClient}
           onClose={() => setSelectedClient(null)}
         />
+      )}
+
+      {/* Conservar agenda confirmation */}
+      {agendaConfirm && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-40" />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-5">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center shrink-0">
+                  <CalendarClock size={20} className="text-blue-600" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Conservar fecha de agenda</h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Hay agendado el {agendaConfirm.dateStr}. ¿Desea conservar la misma fecha?
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:gap-3">
+                <button
+                  type="button"
+                  onClick={() => resolveAgendaConfirm(true)}
+                  className="btn-primary justify-center flex-1"
+                >
+                  Sí, conservar fecha
+                </button>
+                <button
+                  type="button"
+                  onClick={() => resolveAgendaConfirm(false)}
+                  className="btn-secondary justify-center flex-1"
+                >
+                  No, corregir fecha
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
       )}
 
       {/* ══════════════════════ LIST VIEW ══════════════════════════ */}
