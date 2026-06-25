@@ -9,6 +9,7 @@ import {
   buildCompanyPipelineCounts,
   dispositionMatchesFilter,
   FUNNEL_PIPELINE_KEYS,
+  getFirstRegisteredAtByCompanyIds,
   getLastDispositionByCompanyIds,
   matchesFunnelFilter,
   pipelineBucketForDisposition,
@@ -104,25 +105,29 @@ async function enrichWithLastDisposition(
     lastDisposition: string | null
     lastAclaracion: string | null
     lastCalledAt: string | null
+    firstRegisteredAt: string | null
     lastCallContactId: string | null
     callLogCount: number
   })[]
 > {
   if (companies.length === 0) return []
 
-  const lastByCompany = await getLastDispositionByCompanyIds(
-    companies.map((c) => c.id),
-    agentUserId
-  )
+  const companyIds = companies.map((c) => c.id)
+  const [lastByCompany, firstByCompany] = await Promise.all([
+    getLastDispositionByCompanyIds(companyIds, agentUserId),
+    getFirstRegisteredAtByCompanyIds(companyIds, agentUserId),
+  ])
 
   return companies.map((c) => {
     const last = lastByCompany.get(c.id)
     const disposition = last?.disposition ?? null
+    const firstAt = firstByCompany.get(c.id)
     return {
       ...c,
       lastDisposition: disposition,
       lastAclaracion: last?.aclaracion ?? getAclaracionForDisposition(disposition ?? '') ?? null,
       lastCalledAt: last?.lastCalledAt?.toISOString() ?? null,
+      firstRegisteredAt: firstAt?.toISOString() ?? null,
       lastCallContactId: last?.lastCallContactId ?? null,
       callLogCount: last?.callLogCount ?? 0,
     }

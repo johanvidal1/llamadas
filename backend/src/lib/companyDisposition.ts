@@ -121,6 +121,32 @@ export async function getLastDispositionByCompanyIds(
   return result
 }
 
+/** Earliest scoped call timestamp per company (first registration date). */
+export async function getFirstRegisteredAtByCompanyIds(
+  companyIds: string[],
+  agentUserId?: string
+): Promise<Map<string, Date>> {
+  const result = new Map<string, Date>()
+  if (companyIds.length === 0) return result
+
+  const rows = await prisma.callLog.groupBy({
+    by: ['companyId'],
+    where: {
+      companyId: { in: companyIds },
+      ...(agentUserId
+        ? { agentId: agentUserId, contact: { assignment: { agentId: agentUserId } } }
+        : { contact: { assignment: { is: {} } } }),
+    },
+    _min: { calledAt: true },
+  })
+
+  for (const row of rows) {
+    if (row._min.calledAt) result.set(row.companyId, row._min.calledAt)
+  }
+
+  return result
+}
+
 export function buildCompanyPipelineCounts(
   lastByCompany: Map<string, { disposition: string | null; aclaracion: string | null }>
 ): Record<CompanyPipelineKey, number> {

@@ -193,6 +193,8 @@ export type ClientListItem = {
   lastDisposition?: string | null
   lastAclaracion?: string | null
   lastCalledAt?: string | null
+  /** Earliest scoped call timestamp (first registration). */
+  firstRegisteredAt?: string | null
   lastCallContactId?: string | null
   /** Scoped call-log count (matches lastCalledAt / disposition agent filter). */
   callLogCount?: number
