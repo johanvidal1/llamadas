@@ -32,6 +32,14 @@ export function appTimezoneSql(): Prisma.Sql {
   return cachedTimezoneSql
 }
 
+/**
+ * Naive UTC timestamp column → local wall clock (timestamp without tz).
+ * Use for EXTRACT(HOUR/ISODOW) and `::date` filters on stored UTC wall clock.
+ */
+export function toLocalWallClockSql(columnRef: string): Prisma.Sql {
+  return Prisma.sql`(${Prisma.raw(columnRef)} AT TIME ZONE 'UTC') AT TIME ZONE ${appTimezoneSql()}`
+}
+
 const YMD_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/
 
 export function parseYmdString(value: string | undefined): string | null {

@@ -2,11 +2,11 @@ import { prisma } from './prisma'
 import { Prisma } from '@prisma/client'
 import {
   addDaysYmd,
-  appTimezoneSql,
   localDayEndUtc,
   localDayStartUtc,
   parseYmdString,
   todayYmdInAppTz,
+  toLocalWallClockSql,
 } from './appTimezone'
 import {
   parseDateParam,
@@ -339,7 +339,7 @@ export async function fetchHourlyActivity(
   const dayYmd = parseYmdString(dateStr) ?? todayYmdInAppTz()
   const dayStart = localDayStartUtc(dayYmd)
   const dayEnd = localDayEndUtc(dayYmd)
-  const tz = appTimezoneSql()
+  const localCalledAt = toLocalWallClockSql('"calledAt"')
 
   const rows = await prisma.$queryRaw<
     { hour: number; calls: bigint; newRegistrations: bigint; updatedRegistrations: bigint }[]
@@ -347,14 +347,14 @@ export async function fetchHourlyActivity(
     WITH ranked AS (
       SELECT
         "calledAt",
-        EXTRACT(HOUR FROM ("calledAt" AT TIME ZONE ${tz}))::int AS hour,
+        EXTRACT(HOUR FROM ${localCalledAt})::int AS hour,
         ROW_NUMBER() OVER (PARTITION BY "companyId" ORDER BY "calledAt", id) AS company_rank
       FROM "CallLog"
       WHERE "agentId" = ${agentId}
         AND "calledAt" >= ${dayStart}
         AND "calledAt" <= ${dayEnd}
-        AND EXTRACT(HOUR FROM ("calledAt" AT TIME ZONE ${tz})) >= 9
-        AND EXTRACT(HOUR FROM ("calledAt" AT TIME ZONE ${tz})) <= 18
+        AND EXTRACT(HOUR FROM ${localCalledAt}) >= 9
+        AND EXTRACT(HOUR FROM ${localCalledAt}) <= 18
     )
     SELECT
       hour,

@@ -2,7 +2,6 @@ import { prisma } from './prisma'
 import { Prisma } from '@prisma/client'
 import {
   addDaysYmd,
-  appTimezoneSql,
   daysInMonth,
   getAppTimezone,
   isoDowForYmd,
@@ -10,6 +9,7 @@ import {
   localDayStartUtc,
   parseYmdString,
   todayYmdInAppTz,
+  toLocalWallClockSql,
 } from './appTimezone'
 import { FUNNEL_PIPELINE_KEYS, pipelineBucketForDisposition } from './companyDisposition'
 import { SALES_FUNNEL_DISPOSITIONS } from './responseOptions'
@@ -220,19 +220,19 @@ export async function fetchCallHeatmap(params: {
     ? Prisma.sql`AND cl."agentId" = ${params.agentId}`
     : Prisma.sql`AND cl."agentId" IN (SELECT id FROM "User" WHERE role = 'AGENT' AND active = true)`
 
-  const tz = appTimezoneSql()
+  const localCalledAt = toLocalWallClockSql('cl."calledAt"')
 
   const rows = await prisma.$queryRaw<{ dow: number; hour: number; calls: bigint }[]>`
     SELECT
-      EXTRACT(ISODOW FROM (cl."calledAt" AT TIME ZONE ${tz}))::int AS dow,
-      EXTRACT(HOUR FROM (cl."calledAt" AT TIME ZONE ${tz}))::int AS hour,
+      EXTRACT(ISODOW FROM ${localCalledAt})::int AS dow,
+      EXTRACT(HOUR FROM ${localCalledAt})::int AS hour,
       COUNT(*)::bigint AS calls
     FROM "CallLog" cl
-    WHERE (cl."calledAt" AT TIME ZONE ${tz})::date >= ${fromYmd}::date
-      AND (cl."calledAt" AT TIME ZONE ${tz})::date <= ${toYmd}::date
+    WHERE ${localCalledAt}::date >= ${fromYmd}::date
+      AND ${localCalledAt}::date <= ${toYmd}::date
       ${agentFilter}
-      AND EXTRACT(HOUR FROM (cl."calledAt" AT TIME ZONE ${tz})) >= 9
-      AND EXTRACT(HOUR FROM (cl."calledAt" AT TIME ZONE ${tz})) <= 18
+      AND EXTRACT(HOUR FROM ${localCalledAt}) >= 9
+      AND EXTRACT(HOUR FROM ${localCalledAt}) <= 18
     GROUP BY dow, hour
   `
 
