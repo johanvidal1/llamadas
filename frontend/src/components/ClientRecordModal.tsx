@@ -70,6 +70,7 @@ interface Props {
   agentFilterId?: string
   onClose: () => void
   initialFocus?: 'summary' | 'history'
+  highlightCallbackId?: string
 }
 
 function callbackStyle(dt: string): string {
@@ -84,8 +85,10 @@ export default function ClientRecordModal({
   agentFilterId,
   onClose,
   initialFocus = 'summary',
+  highlightCallbackId,
 }: Props) {
   const historyRef = useRef<HTMLDivElement>(null)
+  const callbackRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
   const { data: client, isLoading, isError } = useQuery({
     queryKey: ['client', clientId],
@@ -109,6 +112,17 @@ export default function ClientRecordModal({
     return () => clearTimeout(t)
   }, [client, initialFocus])
 
+  useEffect(() => {
+    if (!client || !highlightCallbackId) return
+    const t = setTimeout(() => {
+      callbackRefs.current.get(highlightCallbackId)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
+    }, 150)
+    return () => clearTimeout(t)
+  }, [client, highlightCallbackId])
+
   const callLogs = (client?.callLogs ?? [])
     .filter((l) => !agentFilterId || l.agentId === agentFilterId)
     .sort((a, b) => callLogDisplayTime(b).getTime() - callLogDisplayTime(a).getTime())
@@ -120,6 +134,7 @@ export default function ClientRecordModal({
 
   const callLogById = new Map((client?.callLogs ?? []).map((l) => [l.id, l]))
   const callbacks = (client?.callbacks ?? []).filter((cb) => {
+    if (highlightCallbackId && cb.id === highlightCallbackId) return true
     if (cb.completed) return false
     if (agentFilterId && cb.agentId !== agentFilterId) return false
     if (!registeredContactId) return true
@@ -244,11 +259,22 @@ export default function ClientRecordModal({
                   {callbacks.map((cb) => (
                     <div
                       key={cb.id}
-                      className={`rounded-lg border px-3 py-2 text-sm ${callbackStyle(cb.scheduledAt)}`}
+                      ref={(el) => {
+                        if (el) callbackRefs.current.set(cb.id, el)
+                        else callbackRefs.current.delete(cb.id)
+                      }}
+                      className={`rounded-lg border px-3 py-2 text-sm ${callbackStyle(cb.scheduledAt)} ${
+                        cb.id === highlightCallbackId
+                          ? 'ring-2 ring-blue-400 ring-offset-1 shadow-sm'
+                          : ''
+                      }`}
                     >
                       <div className="flex items-center gap-2 font-medium">
                         <CalendarClock size={13} />
                         {format(new Date(cb.scheduledAt), "dd/MM/yyyy HH:mm", { locale: es })}
+                        {cb.completed && (
+                          <span className="text-xs font-semibold text-green-700">Completado</span>
+                        )}
                         {cb.agent?.name && (
                           <span className="text-xs font-normal opacity-75">
                             · {cb.agent.name}
