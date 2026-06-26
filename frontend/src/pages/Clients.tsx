@@ -1235,17 +1235,30 @@ export default function Clients() {
   const deepLinkFilter = VALID_PIPELINE_FILTERS.has(initialFilter) ? initialFilter : ''
   const initialRegisteredFrom = searchParams.get('registeredFrom') ?? ''
   const initialRegisteredTo = searchParams.get('registeredTo') ?? ''
+  const hasUrlDateParams = !!(initialRegisteredFrom || initialRegisteredTo)
+  const useDayDefault = !hasUrlDateParams && !initialAgentId && !deepLinkFilter
+  const defaultRegisteredFrom = hasUrlDateParams
+    ? initialRegisteredFrom
+    : useDayDefault
+      ? todayLocal()
+      : ''
+  const defaultRegisteredTo = hasUrlDateParams
+    ? initialRegisteredTo
+    : useDayDefault
+      ? todayLocal()
+      : ''
+  const defaultGroupMode: GroupMode = useDayDefault ? 'day' : ''
 
   const [search, setSearch] = useState('')
   const [pipelineFilter, setPipelineFilter] = useState(deepLinkFilter)
   const [agentId, setAgentId] = useState(initialAgentId)
   const [batchId, setBatchId] = useState('')
-  const [registeredFrom, setRegisteredFrom] = useState(initialRegisteredFrom)
-  const [registeredTo, setRegisteredTo] = useState(initialRegisteredTo)
+  const [registeredFrom, setRegisteredFrom] = useState(defaultRegisteredFrom)
+  const [registeredTo, setRegisteredTo] = useState(defaultRegisteredTo)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(readStoredPageSize)
   const [visibleColumns, setVisibleColumns] = useState(readStoredColumnVisibility)
-  const [groupMode, setGroupMode] = useState<GroupMode>('')
+  const [groupMode, setGroupMode] = useState<GroupMode>(defaultGroupMode)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [recordModal, setRecordModal] = useState<{
     clientId: string
@@ -1313,11 +1326,16 @@ export default function Clients() {
   }
 
   const clearDateFilter = () => {
-    setRegisteredFrom('')
-    setRegisteredTo('')
-    setGroupMode((prev) =>
-      prev === 'week' || prev === 'month' || prev === 'day' ? '' : prev
-    )
+    if (groupMode === 'day' || groupMode === 'week' || groupMode === 'month') {
+      const today = todayLocal()
+      setRegisteredFrom(today)
+      setRegisteredTo(today)
+      setGroupMode('day')
+    } else {
+      setRegisteredFrom('')
+      setRegisteredTo('')
+    }
+    setExpandedGroups(new Set())
     setPage(1)
   }
 
