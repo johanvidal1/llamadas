@@ -4,7 +4,6 @@ const DEFAULT_TIMEZONE = 'America/Lima'
 const IANA_TIMEZONE_PATTERN = /^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+)+$/
 
 let cachedTimezone: string | null = null
-let cachedTimezoneSql: Prisma.Sql | null = null
 
 function isValidIanaTimezone(tz: string): boolean {
   if (!IANA_TIMEZONE_PATTERN.test(tz)) return false
@@ -26,15 +25,13 @@ export function getAppTimezone(): string {
 
 /** Safe Prisma fragment for `AT TIME ZONE` (validated env only). */
 export function appTimezoneSql(): Prisma.Sql {
-  if (!cachedTimezoneSql) {
-    cachedTimezoneSql = Prisma.sql`${getAppTimezone()}`
-  }
-  return cachedTimezoneSql
+  const tz = getAppTimezone().replace(/'/g, "''")
+  return Prisma.raw(`'${tz}'`)
 }
 
 /**
  * Naive UTC timestamp column → local wall clock (timestamp without tz).
- * Use for EXTRACT(HOUR/ISODOW) and `::date` filters on stored UTC wall clock.
+ * Use for EXTRACT(HOUR/ISODOW) on stored UTC wall clock.
  */
 export function toLocalWallClockSql(columnRef: string): Prisma.Sql {
   return Prisma.sql`(${Prisma.raw(columnRef)} AT TIME ZONE 'UTC') AT TIME ZONE ${appTimezoneSql()}`

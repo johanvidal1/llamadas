@@ -199,19 +199,14 @@ export async function fetchCallHeatmap(params: {
   let fromDate: Date
   let toDate: Date
 
-  let fromYmd: string
-  let toYmd: string
-
   if (params.from && params.to) {
     const range = resolvePeriodRange('range', undefined, params.from, params.to)
     fromDate = range.from
     toDate = range.to
-    fromYmd = parseYmdString(params.from) ?? range.date
-    toYmd = parseYmdString(params.to) ?? fromYmd
   } else {
     const weeks = Math.min(Math.max(Number(params.weeks) || 4, 1), 12)
-    toYmd = todayYmdInAppTz()
-    fromYmd = addDaysYmd(toYmd, -weeks * 7, getAppTimezone())
+    const toYmd = todayYmdInAppTz()
+    const fromYmd = addDaysYmd(toYmd, -weeks * 7, getAppTimezone())
     fromDate = localDayStartUtc(fromYmd)
     toDate = localDayEndUtc(toYmd)
   }
@@ -228,8 +223,8 @@ export async function fetchCallHeatmap(params: {
       EXTRACT(HOUR FROM ${localCalledAt})::int AS hour,
       COUNT(*)::bigint AS calls
     FROM "CallLog" cl
-    WHERE ${localCalledAt}::date >= ${fromYmd}::date
-      AND ${localCalledAt}::date <= ${toYmd}::date
+    WHERE cl."calledAt" >= ${fromDate}
+      AND cl."calledAt" <= ${toDate}
       ${agentFilter}
       AND EXTRACT(HOUR FROM ${localCalledAt}) >= 9
       AND EXTRACT(HOUR FROM ${localCalledAt}) <= 18
