@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
 import { buildCalledAtRange } from '../lib/callActivity'
+import { incrementDailyMetricsForNewCall } from '../lib/dailyAgentMetrics'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { recomputeContactStatus, statusForDisposition } from '../lib/contactStatus'
 import {
@@ -219,6 +220,8 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
       notes: data.notes,
     },
   })
+
+  void incrementDailyMetricsForNewCall(callLog).catch(() => {})
 
   if (contactId) {
     await recomputeContactStatus(contactId)

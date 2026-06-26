@@ -1,6 +1,15 @@
+import { prisma } from './prisma'
+
 type CallLogRow = { calledAt: Date; agentId: string }
 
 export type CallActivityGranularity = 'day' | 'week' | 'month'
+
+export type CallActivityFilters = {
+  agentId?: string
+  batchId?: string
+  from: Date
+  to: Date
+}
 
 function periodKey(date: Date, granularity: CallActivityGranularity): string {
   const y = date.getFullYear()
@@ -134,4 +143,340 @@ export function buildCalledAtRange(
 export function parseGranularity(value: string | undefined): CallActivityGranularity {
   if (value === 'week' || value === 'month') return value
   return 'day'
+}
+
+function periodKeyFromSqlValue(value: Date, granularity: CallActivityGranularity): string {
+  const d = value instanceof Date ? value : new Date(value)
+  if (granularity === 'month') {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  }
+  return periodKey(d, granularity)
+}
+
+function fillPeriodBuckets(
+  from: Date,
+  to: Date,
+  granularity: CallActivityGranularity
+): Map<string, number> {
+  const counts = new Map<string, number>()
+  const cursor = new Date(from)
+  cursor.setHours(0, 0, 0, 0)
+  const end = new Date(to)
+  end.setHours(23, 59, 59, 999)
+
+  while (cursor <= end) {
+    const key = periodKey(cursor, granularity)
+    if (!counts.has(key)) counts.set(key, 0)
+    if (granularity === 'day') cursor.setDate(cursor.getDate() + 1)
+    else if (granularity === 'week') cursor.setDate(cursor.getDate() + 7)
+    else cursor.setMonth(cursor.getMonth() + 1)
+  }
+  return counts
+}
+
+/** SQL-aggregated call counts by period (replaces loading all CallLog rows). */
+export async function fetchCallActivitySeriesSql(
+  filters: CallActivityFilters,
+  granularity: CallActivityGranularity
+): Promise<{ period: string; count: number }[]> {
+  const { from, to, agentId, batchId } = filters
+  const truncUnit = granularity === 'day' ? null : granularity
+
+  let rawRows: { period: Date; count: bigint }[]
+
+  if (truncUnit) {
+    if (agentId && batchId) {
+      rawRows = await prisma.$queryRaw<{ period: Date; count: bigint }[]>`
+        SELECT DATE_TRUNC(${truncUnit}, cl."calledAt") AS period, COUNT(*)::bigint AS count
+        FROM "CallLog" cl
+        INNER JOIN "Company" co ON co.id = cl."companyId"
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+          AND cl."agentId" = ${agentId} AND co."importBatchId" = ${batchId}
+        GROUP BY 1 ORDER BY 1
+      `
+    } else if (agentId) {
+      rawRows = await prisma.$queryRaw<{ period: Date; count: bigint }[]>`
+        SELECT DATE_TRUNC(${truncUnit}, cl."calledAt") AS period, COUNT(*)::bigint AS count
+        FROM "CallLog" cl
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND cl."agentId" = ${agentId}
+        GROUP BY 1 ORDER BY 1
+      `
+    } else if (batchId) {
+      rawRows = await prisma.$queryRaw<{ period: Date; count: bigint }[]>`
+        SELECT DATE_TRUNC(${truncUnit}, cl."calledAt") AS period, COUNT(*)::bigint AS count
+        FROM "CallLog" cl
+        INNER JOIN "Company" co ON co.id = cl."companyId"
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND co."importBatchId" = ${batchId}
+        GROUP BY 1 ORDER BY 1
+      `
+    } else {
+      rawRows = await prisma.$queryRaw<{ period: Date; count: bigint }[]>`
+        SELECT DATE_TRUNC(${truncUnit}, cl."calledAt") AS period, COUNT(*)::bigint AS count
+        FROM "CallLog" cl
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+        GROUP BY 1 ORDER BY 1
+      `
+    }
+  } else if (agentId && batchId) {
+    rawRows = await prisma.$queryRaw<{ period: Date; count: bigint }[]>`
+      SELECT DATE(cl."calledAt") AS period, COUNT(*)::bigint AS count
+      FROM "CallLog" cl
+      INNER JOIN "Company" co ON co.id = cl."companyId"
+      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+        AND cl."agentId" = ${agentId} AND co."importBatchId" = ${batchId}
+      GROUP BY DATE(cl."calledAt") ORDER BY 1
+    `
+  } else if (agentId) {
+    rawRows = await prisma.$queryRaw<{ period: Date; count: bigint }[]>`
+      SELECT DATE(cl."calledAt") AS period, COUNT(*)::bigint AS count
+      FROM "CallLog" cl
+      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND cl."agentId" = ${agentId}
+      GROUP BY DATE(cl."calledAt") ORDER BY 1
+    `
+  } else if (batchId) {
+    rawRows = await prisma.$queryRaw<{ period: Date; count: bigint }[]>`
+      SELECT DATE(cl."calledAt") AS period, COUNT(*)::bigint AS count
+      FROM "CallLog" cl
+      INNER JOIN "Company" co ON co.id = cl."companyId"
+      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND co."importBatchId" = ${batchId}
+      GROUP BY DATE(cl."calledAt") ORDER BY 1
+    `
+  } else {
+    rawRows = await prisma.$queryRaw<{ period: Date; count: bigint }[]>`
+      SELECT DATE(cl."calledAt") AS period, COUNT(*)::bigint AS count
+      FROM "CallLog" cl
+      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+      GROUP BY DATE(cl."calledAt") ORDER BY 1
+    `
+  }
+
+  const counts = fillPeriodBuckets(from, to, granularity)
+  for (const row of rawRows) {
+    const key = periodKeyFromSqlValue(row.period, granularity)
+    counts.set(key, Number(row.count))
+  }
+
+  return [...counts.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([period, count]) => ({ period, count }))
+}
+
+export type AgentGapSqlRow = {
+  agentId: string
+  totalCalls: bigint
+  avgGapMinutes: number | null
+  medianGapMinutes: number | null
+  gapCount: bigint
+}
+
+/** Per-agent gap stats via SQL window functions (no full log scan in JS). */
+export async function fetchAgentGapStatsSql(
+  filters: CallActivityFilters
+): Promise<AgentGapSqlRow[]> {
+  const { from, to, agentId, batchId } = filters
+
+  if (agentId && batchId) {
+    return prisma.$queryRaw<AgentGapSqlRow[]>`
+      WITH gaps AS (
+        SELECT
+          cl."agentId",
+          EXTRACT(EPOCH FROM (
+            cl."calledAt" - LAG(cl."calledAt") OVER (PARTITION BY cl."agentId" ORDER BY cl."calledAt")
+          )) / 60.0 AS gap_minutes
+        FROM "CallLog" cl
+        INNER JOIN "Company" co ON co.id = cl."companyId"
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+          AND cl."agentId" = ${agentId} AND co."importBatchId" = ${batchId}
+      )
+      SELECT
+        g."agentId",
+        COUNT(*)::bigint + 1 AS "totalCalls",
+        AVG(g.gap_minutes) FILTER (WHERE g.gap_minutes >= 0) AS "avgGapMinutes",
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY g.gap_minutes) FILTER (WHERE g.gap_minutes >= 0) AS "medianGapMinutes",
+        COUNT(g.gap_minutes) FILTER (WHERE g.gap_minutes >= 0)::bigint AS "gapCount"
+      FROM gaps g
+      GROUP BY g."agentId"
+    `
+  }
+
+  if (agentId) {
+    return prisma.$queryRaw<AgentGapSqlRow[]>`
+      WITH gaps AS (
+        SELECT
+          cl."agentId",
+          EXTRACT(EPOCH FROM (
+            cl."calledAt" - LAG(cl."calledAt") OVER (PARTITION BY cl."agentId" ORDER BY cl."calledAt")
+          )) / 60.0 AS gap_minutes
+        FROM "CallLog" cl
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND cl."agentId" = ${agentId}
+      )
+      SELECT
+        g."agentId",
+        COUNT(*)::bigint + 1 AS "totalCalls",
+        AVG(g.gap_minutes) FILTER (WHERE g.gap_minutes >= 0) AS "avgGapMinutes",
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY g.gap_minutes) FILTER (WHERE g.gap_minutes >= 0) AS "medianGapMinutes",
+        COUNT(g.gap_minutes) FILTER (WHERE g.gap_minutes >= 0)::bigint AS "gapCount"
+      FROM gaps g
+      GROUP BY g."agentId"
+    `
+  }
+
+  if (batchId) {
+    return prisma.$queryRaw<AgentGapSqlRow[]>`
+      WITH gaps AS (
+        SELECT
+          cl."agentId",
+          EXTRACT(EPOCH FROM (
+            cl."calledAt" - LAG(cl."calledAt") OVER (PARTITION BY cl."agentId" ORDER BY cl."calledAt")
+          )) / 60.0 AS gap_minutes
+        FROM "CallLog" cl
+        INNER JOIN "Company" co ON co.id = cl."companyId"
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND co."importBatchId" = ${batchId}
+      )
+      SELECT
+        g."agentId",
+        COUNT(*)::bigint + 1 AS "totalCalls",
+        AVG(g.gap_minutes) FILTER (WHERE g.gap_minutes >= 0) AS "avgGapMinutes",
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY g.gap_minutes) FILTER (WHERE g.gap_minutes >= 0) AS "medianGapMinutes",
+        COUNT(g.gap_minutes) FILTER (WHERE g.gap_minutes >= 0)::bigint AS "gapCount"
+      FROM gaps g
+      GROUP BY g."agentId"
+    `
+  }
+
+  return prisma.$queryRaw<AgentGapSqlRow[]>`
+    WITH gaps AS (
+      SELECT
+        cl."agentId",
+        EXTRACT(EPOCH FROM (
+          cl."calledAt" - LAG(cl."calledAt") OVER (PARTITION BY cl."agentId" ORDER BY cl."calledAt")
+        )) / 60.0 AS gap_minutes
+      FROM "CallLog" cl
+      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+    )
+    SELECT
+      g."agentId",
+      COUNT(*)::bigint + 1 AS "totalCalls",
+      AVG(g.gap_minutes) FILTER (WHERE g.gap_minutes >= 0) AS "avgGapMinutes",
+      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY g.gap_minutes) FILTER (WHERE g.gap_minutes >= 0) AS "medianGapMinutes",
+      COUNT(g.gap_minutes) FILTER (WHERE g.gap_minutes >= 0)::bigint AS "gapCount"
+    FROM gaps g
+    GROUP BY g."agentId"
+  `
+}
+
+export async function fetchTotalCallsSql(filters: CallActivityFilters): Promise<number> {
+  const { from, to, agentId, batchId } = filters
+  if (agentId && batchId) {
+    const rows = await prisma.$queryRaw<{ count: bigint }[]>`
+      SELECT COUNT(*)::bigint AS count FROM "CallLog" cl
+      INNER JOIN "Company" co ON co.id = cl."companyId"
+      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+        AND cl."agentId" = ${agentId} AND co."importBatchId" = ${batchId}
+    `
+    return Number(rows[0]?.count ?? 0)
+  }
+  if (agentId) {
+    const rows = await prisma.$queryRaw<{ count: bigint }[]>`
+      SELECT COUNT(*)::bigint AS count FROM "CallLog" cl
+      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND cl."agentId" = ${agentId}
+    `
+    return Number(rows[0]?.count ?? 0)
+  }
+  if (batchId) {
+    const rows = await prisma.$queryRaw<{ count: bigint }[]>`
+      SELECT COUNT(*)::bigint AS count FROM "CallLog" cl
+      INNER JOIN "Company" co ON co.id = cl."companyId"
+      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND co."importBatchId" = ${batchId}
+    `
+    return Number(rows[0]?.count ?? 0)
+  }
+  const rows = await prisma.$queryRaw<{ count: bigint }[]>`
+    SELECT COUNT(*)::bigint AS count FROM "CallLog" cl
+    WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+  `
+  return Number(rows[0]?.count ?? 0)
+}
+
+export async function fetchGlobalGapStatsSql(
+  filters: CallActivityFilters
+): Promise<{
+  avgGapMinutes: number | null
+  medianGapMinutes: number | null
+  gapCount: number
+}> {
+  const { from, to, agentId, batchId } = filters
+  let rows: { avgGapMinutes: number | null; medianGapMinutes: number | null; gapCount: bigint }[]
+
+  if (agentId && batchId) {
+    rows = await prisma.$queryRaw`
+      WITH gaps AS (
+        SELECT EXTRACT(EPOCH FROM (
+          cl."calledAt" - LAG(cl."calledAt") OVER (ORDER BY cl."calledAt")
+        )) / 60.0 AS gap_minutes
+        FROM "CallLog" cl
+        INNER JOIN "Company" co ON co.id = cl."companyId"
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+          AND cl."agentId" = ${agentId} AND co."importBatchId" = ${batchId}
+      )
+      SELECT
+        AVG(gap_minutes) FILTER (WHERE gap_minutes >= 0) AS "avgGapMinutes",
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY gap_minutes) FILTER (WHERE gap_minutes >= 0) AS "medianGapMinutes",
+        COUNT(gap_minutes) FILTER (WHERE gap_minutes >= 0)::bigint AS "gapCount"
+      FROM gaps
+    `
+  } else if (agentId) {
+    rows = await prisma.$queryRaw`
+      WITH gaps AS (
+        SELECT EXTRACT(EPOCH FROM (
+          cl."calledAt" - LAG(cl."calledAt") OVER (ORDER BY cl."calledAt")
+        )) / 60.0 AS gap_minutes
+        FROM "CallLog" cl
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND cl."agentId" = ${agentId}
+      )
+      SELECT
+        AVG(gap_minutes) FILTER (WHERE gap_minutes >= 0) AS "avgGapMinutes",
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY gap_minutes) FILTER (WHERE gap_minutes >= 0) AS "medianGapMinutes",
+        COUNT(gap_minutes) FILTER (WHERE gap_minutes >= 0)::bigint AS "gapCount"
+      FROM gaps
+    `
+  } else if (batchId) {
+    rows = await prisma.$queryRaw`
+      WITH gaps AS (
+        SELECT EXTRACT(EPOCH FROM (
+          cl."calledAt" - LAG(cl."calledAt") OVER (ORDER BY cl."calledAt")
+        )) / 60.0 AS gap_minutes
+        FROM "CallLog" cl
+        INNER JOIN "Company" co ON co.id = cl."companyId"
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND co."importBatchId" = ${batchId}
+      )
+      SELECT
+        AVG(gap_minutes) FILTER (WHERE gap_minutes >= 0) AS "avgGapMinutes",
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY gap_minutes) FILTER (WHERE gap_minutes >= 0) AS "medianGapMinutes",
+        COUNT(gap_minutes) FILTER (WHERE gap_minutes >= 0)::bigint AS "gapCount"
+      FROM gaps
+    `
+  } else {
+    rows = await prisma.$queryRaw`
+      WITH gaps AS (
+        SELECT EXTRACT(EPOCH FROM (
+          cl."calledAt" - LAG(cl."calledAt") OVER (ORDER BY cl."calledAt")
+        )) / 60.0 AS gap_minutes
+        FROM "CallLog" cl
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+      )
+      SELECT
+        AVG(gap_minutes) FILTER (WHERE gap_minutes >= 0) AS "avgGapMinutes",
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY gap_minutes) FILTER (WHERE gap_minutes >= 0) AS "medianGapMinutes",
+        COUNT(gap_minutes) FILTER (WHERE gap_minutes >= 0)::bigint AS "gapCount"
+      FROM gaps
+    `
+  }
+
+  const row = rows[0]
+  return {
+    avgGapMinutes: row?.avgGapMinutes ?? null,
+    medianGapMinutes: row?.medianGapMinutes ?? null,
+    gapCount: Number(row?.gapCount ?? 0),
+  }
 }

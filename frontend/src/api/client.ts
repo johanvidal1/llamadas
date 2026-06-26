@@ -479,6 +479,90 @@ export const getDashboardStats = (batchId?: string) =>
     .get<DashboardStats>('/dashboard/stats', { params: batchId ? { batchId } : undefined })
     .then((r) => r.data)
 export const getAgentStats = () => api.get('/dashboard/agents-stats').then((r) => r.data)
+export type DailyActivityPoint = {
+  date: string
+  calls: number
+  newRegistrations: number
+  updatedRegistrations: number
+  contactedCompanies?: number
+}
+
+export type HourlyActivityPoint = {
+  hour: number
+  calls: number
+  newRegistrations: number
+  updatedRegistrations: number
+}
+
+export type ReportTrendsResponse = {
+  series: DailyActivityPoint[]
+  from: string
+  to: string
+  granularity: CallActivityGranularity
+  source: 'table' | 'sql'
+}
+
+export type ReportHourlyResponse = {
+  date: string
+  agentId: string
+  series: HourlyActivityPoint[]
+}
+
+export type GetReportTrendsParams = {
+  from?: string
+  to?: string
+  agentId?: string
+  granularity?: CallActivityGranularity
+}
+
+export const getReportTrends = (params?: GetReportTrendsParams) =>
+  api.get<ReportTrendsResponse>('/dashboard/reports/trends', { params }).then((r) => r.data)
+
+export const getReportHourly = (params: { date?: string; agentId: string }) =>
+  api.get<ReportHourlyResponse>('/dashboard/reports/hourly', { params }).then((r) => r.data)
+
+export type ReportChartPeriod = 'day' | 'week' | 'month'
+
+export type AgentCallChartRow = {
+  agentId: string
+  name: string
+  calls: number
+}
+
+export type AgentCallsChartResponse = {
+  period: ReportChartPeriod
+  date: string
+  from: string
+  to: string
+  agents: AgentCallChartRow[]
+}
+
+export type CallHeatmapCell = {
+  dow: number
+  hour: number
+  calls: number
+}
+
+export type CallHeatmapResponse = {
+  weeks: number
+  cells: CallHeatmapCell[]
+}
+
+export const getReportAgentCalls = (params?: {
+  period?: ReportChartPeriod
+  date?: string
+}) =>
+  api
+    .get<AgentCallsChartResponse>('/dashboard/reports/agent-calls', { params })
+    .then((r) => r.data)
+
+export const getReportCallHeatmap = (params?: { weeks?: number; agentId?: string }) =>
+  api
+    .get<CallHeatmapResponse>('/dashboard/reports/call-heatmap', { params })
+    .then((r) => r.data)
+
+export type SparklinePoint = { date: string; calls: number }
+
 export type ReportsSection = 'summary' | 'agents' | 'batches'
 
 export type ReportsSummaryResponse = Pick<
@@ -585,9 +669,10 @@ export type ReportsResponse = {
     avgCallsPerContact: number
     pendingCallbacks: number
     overdueCallbacks: number
+    sparkline?: SparklinePoint[]
     assignmentRuns?: BatchAssignmentRunMetrics[]
   }>
-  callsByDay: { date: string; count: number }[]
+  callsByDay: DailyActivityPoint[]
   dispositionBreakdown: { disposition: string; count: number }[]
   batchProgress: BatchProgressRow[]
   assignedCompanies: number

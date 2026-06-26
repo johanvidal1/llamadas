@@ -45,6 +45,7 @@ model User {
   callbacks   Callback[]
   sessions    UserSession[]
   assignmentReleases AssignmentRelease[] @relation("AssignmentReleaseBy")
+  dailyAgentMetrics    DailyAgentMetrics[]
 }
 
 model UserSession {
@@ -207,6 +208,23 @@ model CallLog {
   @@index([agentId, calledAt])
   @@index([companyId])
   @@index([disposition])
+}
+
+model DailyAgentMetrics {
+  id                   String   @id @default(cuid())
+  date                 DateTime @db.Date
+  agentId              String
+  agent                User     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  calls                Int      @default(0)
+  newRegistrations     Int      @default(0)
+  updatedRegistrations Int      @default(0)
+  contactedCompanies   Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([date, agentId])
+  @@index([date])
+  @@index([agentId, date])
 }
 
 model Callback {

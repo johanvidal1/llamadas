@@ -10,11 +10,15 @@ import {
   resolveRunBatchId,
 } from '../lib/companyDisposition'
 import {
-  buildCallActivitySeries,
-  buildCallGapStats,
+  fetchAgentGapStatsSql,
+  fetchCallActivitySeriesSql,
+  fetchGlobalGapStatsSql,
+  fetchTotalCallsSql,
   parseDateParam,
   parseGranularity,
 } from '../lib/callActivity'
+import { fetchDailyActivityFromSql, fetchHourlyActivity, fetchReportTrends, fetchAgentSparklines } from '../lib/reportTrends'
+import { fetchAgentCallsByPeriod, fetchCallHeatmap } from '../lib/reportCharts'
 
 const router = Router()
 
@@ -451,45 +455,24 @@ type BatchAssignmentRun = {
   closeRate: number
 }
 
-function buildCallsByDayMap(): Record<string, number> {
-  const callsByDay: Record<string, number> = {}
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date()
-    d.setDate(d.getDate() - i)
-    callsByDay[d.toISOString().slice(0, 10)] = 0
-  }
-  return callsByDay
-}
-
 async function fetchCallsByDay(
   thirtyDaysAgo: Date,
   filterAgentId?: string
-): Promise<Record<string, number>> {
-  const callsByDay = buildCallsByDayMap()
-  const rows = filterAgentId
-    ? await prisma.$queryRaw<{ day: Date; count: bigint }[]>`
-        SELECT DATE("calledAt") AS day, COUNT(*)::bigint AS count
-        FROM "CallLog"
-        WHERE "calledAt" >= ${thirtyDaysAgo} AND "agentId" = ${filterAgentId}
-        GROUP BY DATE("calledAt")
-      `
-    : await prisma.$queryRaw<{ day: Date; count: bigint }[]>`
-        SELECT DATE("calledAt") AS day, COUNT(*)::bigint AS count
-        FROM "CallLog"
-        WHERE "calledAt" >= ${thirtyDaysAgo}
-        GROUP BY DATE("calledAt")
-      `
-
-  for (const row of rows) {
-    const day =
-      row.day instanceof Date
-        ? row.day.toISOString().slice(0, 10)
-        : String(row.day).slice(0, 10)
-    if (day in callsByDay) {
-      callsByDay[day] = Number(row.count)
-    }
-  }
-  return callsByDay
+): Promise<
+  {
+    date: string
+    count: number
+    newRegistrations: number
+    updatedRegistrations: number
+  }[]
+> {
+  const rows = await fetchDailyActivityFromSql(thirtyDaysAgo, filterAgentId)
+  return rows.map((r) => ({
+    date: r.date,
+    count: r.calls,
+    newRegistrations: r.newRegistrations,
+    updatedRegistrations: r.updatedRegistrations,
+  }))
 }
 
 async function buildBatchAgentBreakdown(batchId: string): Promise<AgentBreakdownRow[]> {
@@ -597,7 +580,7 @@ async function buildReportsSummary(filterAgentId?: string) {
   const companyMap = toStatusMap(funnelCompanyStatuses)
 
   return {
-    callsByDay: Object.entries(callsByDay).map(([date, count]) => ({ date, count })),
+    callsByDay,
     dispositionBreakdown: dispositionBreakdown.map((d) => ({
       disposition: d.disposition,
       count: d._count.disposition,
@@ -662,12 +645,16 @@ async function buildReportsAgents(filterAgentId?: string) {
   }
 
   const agentIds = agents.map((a) => a.id)
+  const [statusMaps, sparklinesByAgent] = await Promise.all([
+    buildAgentStatusMaps(agentIds, filterAgentId),
+    fetchAgentSparklines(agentIds, 7),
+  ])
   const {
     agentContactStatusMap,
     agentCompanyStatusMap,
     agentCompanyPipelineMap,
     agentAssignedCompaniesMap,
-  } = await buildAgentStatusMaps(agentIds, filterAgentId)
+  } = statusMaps
 
   const agentPerformance = agents.map((a) => {
     const assigned = a._count.assignments
@@ -736,6 +723,7 @@ async function buildReportsAgents(filterAgentId?: string) {
       avgCallsPerContact,
       pendingCallbacks: pendingMap[a.id] ?? 0,
       overdueCallbacks: overdueMap[a.id] ?? 0,
+      sparkline: sparklinesByAgent[a.id] ?? [],
     }
   })
 
@@ -1240,6 +1228,39 @@ async function buildSingleBatchMetrics(batchId: string, filterAgentId?: string) 
   }
 }
 
+// GET /api/dashboard/reports/trends
+router.get('/reports/trends', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const { from, to, agentId, granularity } = req.query as Record<string, string>
+  const data = await fetchReportTrends({ from, to, agentId, granularity })
+  res.json(data)
+})
+
+// GET /api/dashboard/reports/agent-calls
+router.get('/reports/agent-calls', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const { period, date } = req.query as Record<string, string>
+  const data = await fetchAgentCallsByPeriod({ period, date })
+  res.json(data)
+})
+
+// GET /api/dashboard/reports/call-heatmap
+router.get('/reports/call-heatmap', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const { weeks, agentId } = req.query as Record<string, string>
+  const data = await fetchCallHeatmap({ weeks, agentId })
+  res.json(data)
+})
+
+// GET /api/dashboard/reports/hourly
+router.get('/reports/hourly', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const { date, agentId } = req.query as Record<string, string>
+  if (!agentId) {
+    res.status(400).json({ error: 'Se requiere agentId' })
+    return
+  }
+  const dateStr = date ?? new Date().toISOString().slice(0, 10)
+  const series = await fetchHourlyActivity(dateStr, agentId)
+  res.json({ date: dateStr, agentId, series })
+})
+
 // GET /api/dashboard/call-activity
 router.get('/call-activity', requireAdmin, async (req: AuthRequest, res: Response) => {
   const { agentId, batchId, from, to, granularity: granularityParam } = req.query as Record<
@@ -1257,50 +1278,30 @@ router.get('/call-activity', requireAdmin, async (req: AuthRequest, res: Respons
   const toDate = parseDateParam(to, now)
   toDate.setHours(23, 59, 59, 999)
   const granularity = parseGranularity(granularityParam)
+  const activityFilters = { from: fromDate, to: toDate, agentId, batchId }
 
-  const callWhere = {
-    calledAt: { gte: fromDate, lte: toDate },
-    ...(agentId ? { agentId } : {}),
-    ...(batchId ? { company: { importBatchId: batchId } } : {}),
-  }
-
-  const [callLogs, agents] = await Promise.all([
-    prisma.callLog.findMany({
-      where: callWhere,
-      select: { calledAt: true, agentId: true },
-      orderBy: { calledAt: 'asc' },
-    }),
+  const [series, gapRows, totalCalls, globalStats, agents] = await Promise.all([
+    fetchCallActivitySeriesSql(activityFilters, granularity),
+    fetchAgentGapStatsSql(activityFilters),
+    fetchTotalCallsSql(activityFilters),
+    fetchGlobalGapStatsSql(activityFilters),
     prisma.user.findMany({
       where: { role: 'AGENT', active: true },
       select: { id: true, name: true },
     }),
   ])
 
-  const series = buildCallActivitySeries(callLogs, fromDate, toDate, granularity)
-
-  const logsByAgent = new Map<string, { calledAt: Date; agentId: string }[]>()
-  for (const log of callLogs) {
-    if (!logsByAgent.has(log.agentId)) logsByAgent.set(log.agentId, [])
-    logsByAgent.get(log.agentId)!.push(log)
-  }
-
   const agentNameMap = Object.fromEntries(agents.map((a) => [a.id, a.name]))
-  const byAgent = [...logsByAgent.entries()]
-    .map(([id, logs]) => {
-      const stats = buildCallGapStats(logs)
-      return {
-        agentId: id,
-        name: agentNameMap[id] ?? 'Desconocido',
-        totalCalls: stats.totalCalls,
-        avgGapMinutes: stats.avgGapMinutes,
-        medianGapMinutes: stats.medianGapMinutes,
-        gapCount: stats.gapCount,
-      }
-    })
+  const byAgent = gapRows
+    .map((row) => ({
+      agentId: row.agentId,
+      name: agentNameMap[row.agentId] ?? 'Desconocido',
+      totalCalls: Number(row.totalCalls),
+      avgGapMinutes: row.avgGapMinutes,
+      medianGapMinutes: row.medianGapMinutes,
+      gapCount: Number(row.gapCount),
+    }))
     .sort((a, b) => b.totalCalls - a.totalCalls)
-
-  const totalCalls = callLogs.length
-  const globalStats = buildCallGapStats(callLogs)
 
   res.json({
     series,

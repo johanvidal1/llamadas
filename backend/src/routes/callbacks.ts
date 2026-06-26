@@ -1,6 +1,7 @@
 import { Router, Response } from 'express'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma'
+import { incrementDailyMetricsForNewCall } from '../lib/dailyAgentMetrics'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { getAclaracionForDisposition } from '../lib/responseOptions'
 
@@ -120,7 +121,7 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
         },
       })
 
-      await tx.callLog.create({
+      const callLog = await tx.callLog.create({
         data: {
           companyId: existing.companyId,
           agentId: existing.agentId,
@@ -131,10 +132,11 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
         },
       })
 
-      return updated
+      return { updated, callLog }
     })
 
-    res.json(callback)
+    void incrementDailyMetricsForNewCall(callback.callLog).catch(() => {})
+    res.json(callback.updated)
     return
   }
 
