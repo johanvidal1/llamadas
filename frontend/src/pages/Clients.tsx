@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { getClients, getUsers, getImports, type ClientsListResponse, type ClientListItem } from '../api/client'
+import { useQuery, useQueries } from '@tanstack/react-query'
+import { getClients, getUsers, getImports, type AppUser, type ClientsListResponse, type ClientListItem } from '../api/client'
 import { DispositionBadge } from '../components/StatusBadge'
 import {
   AGENT_PIPELINE_FUNNEL,
@@ -12,7 +12,7 @@ import {
 } from '../config/companyPipeline'
 import { getResponseOption } from '../config/responseOptions'
 import ClientRecordModal from '../components/ClientRecordModal'
-import { Search, Phone, User, CalendarClock, ArrowLeft, Eye, Calendar, X, ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react'
+import { Search, Phone, User, CalendarClock, ArrowLeft, Eye, Calendar, X, ChevronDown, ChevronRight, SlidersHorizontal, Loader2 } from 'lucide-react'
 import { format, isPast, isToday, startOfMonth, startOfWeek, endOfWeek } from 'date-fns'
 import { es } from 'date-fns/locale'
 function hasRecord(c: { lastDisposition?: string | null; _count: { callLogs: number } }): boolean {
@@ -935,6 +935,57 @@ function formatDateChip(from: string, to: string): string {
   return `hasta ${fmt(to)}`
 }
 
+type AgentStats = { total: number; registered: number; pending: number }
+
+function AgentGroupHeader({
+  group,
+  stats,
+}: {
+  group: DisplayGroup
+  stats?: AgentStats
+}) {
+  const isUnassigned = group.key === UNASSIGNED_AGENT_KEY
+  const loadedCount = group.clients.length
+  const total = isUnassigned ? loadedCount : (stats?.total ?? loadedCount)
+  const pending = isUnassigned
+    ? group.clients.filter((c) => isPending(c)).length
+    : (stats?.pending ?? 0)
+  const registered = isUnassigned
+    ? loadedCount - pending
+    : (stats?.registered ?? Math.max(0, total - pending))
+  const registeredPct = total > 0 ? (registered / total) * 100 : 0
+  const pendingPct = total > 0 ? (pending / total) * 100 : 0
+
+  return (
+    <div className="flex-1 min-w-0 text-left">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="font-medium text-gray-900">{group.title}</span>
+        {isUnassigned ? (
+          <span className="text-sm text-gray-500">
+            {loadedCount} empresa{loadedCount === 1 ? '' : 's'}
+          </span>
+        ) : (
+          <span className="text-sm text-gray-500">
+            {total} empresa{total === 1 ? '' : 's'}
+            {' · '}
+            <span className="text-emerald-700">{registered} registradas</span>
+            {' · '}
+            <span className="text-amber-700">{pending} pendientes</span>
+          </span>
+        )}
+      </div>
+      {!isUnassigned && total > 0 && (
+        <div className="mt-1.5 max-w-xs">
+          <div className="h-1 bg-gray-100 rounded-full overflow-hidden flex w-full">
+            <div className="h-full bg-emerald-500" style={{ width: `${registeredPct}%` }} />
+            <div className="h-full bg-amber-400" style={{ width: `${pendingPct}%` }} />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Clients() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -980,10 +1031,30 @@ export default function Clients() {
   const { data: usersData = [] } = useQuery({ queryKey: ['users'], queryFn: getUsers })
   const agents = useMemo(
     () =>
-      (usersData as { id: string; name: string; role: string; active: boolean }[])
-        .filter((u) => u.role === 'AGENT' && u.active),
+      (usersData as AppUser[])
+        .filter((u) => u.role === 'AGENT' && u.active)
+        .map((u) => ({
+          id: u.id,
+          name: u.name,
+          assignedCompanies: u.assignedCompanies ?? 0,
+          pendingCompanies: u.pendingCompanies ?? 0,
+        })),
     [usersData]
   )
+
+  const agentStatsById = useMemo(() => {
+    const map = new Map<string, AgentStats>()
+    for (const a of agents) {
+      const total = a.assignedCompanies
+      const pending = a.pendingCompanies
+      map.set(a.id, {
+        total,
+        pending,
+        registered: Math.max(0, total - pending),
+      })
+    }
+    return map
+  }, [agents])
 
   const { data: imports = [] } = useQuery({ queryKey: ['imports'], queryFn: getImports })
   const batches = imports as { id: string; filename: string; createdAt: string; totalRecords: number }[]
@@ -1056,6 +1127,67 @@ export default function Clients() {
     if (groupMode === 'month') return groupClientsByMonth(clients)
     return []
   }, [groupMode, clients, agents])
+
+  const lazyAgentIds = useMemo(() => {
+    if (groupMode !== 'agent' || agentId) return []
+    return [...expandedGroups].filter((k) => k !== UNASSIGNED_AGENT_KEY)
+  }, [groupMode, agentId, expandedGroups])
+
+  const lazyAgentQueries = useQueries({
+    queries: lazyAgentIds.map((id) => ({
+      queryKey: [
+        'clients',
+        'agent-group',
+        id,
+        { search, batchId, registeredFrom, registeredTo, pageSize, pipelineFilter },
+      ],
+      queryFn: () =>
+        getClients({
+          search: search || undefined,
+          agentId: id,
+          batchId: batchId || undefined,
+          registeredFrom: registeredFrom || undefined,
+          registeredTo: registeredTo || undefined,
+          page: 1,
+          limit: pageSize,
+          sortBy: 'activity',
+          ...pipelineFilterToParams(pipelineFilter),
+        }),
+      staleTime: 30_000,
+    })),
+  })
+
+  const lazyClientsByAgentId = useMemo(() => {
+    const map = new Map<string, { clients: ClientListItem[]; isLoading: boolean }>()
+    lazyAgentIds.forEach((id, i) => {
+      const q = lazyAgentQueries[i]
+      map.set(id, {
+        clients: q.data?.clients ?? [],
+        isLoading: q.isLoading,
+      })
+    })
+    return map
+  }, [lazyAgentIds, lazyAgentQueries])
+
+  const expandStatusGroups = (groupKeys: string[]) => {
+    setPipelineFilter('')
+    setGroupMode('status')
+    setExpandedGroups(new Set(groupKeys))
+    setPage(1)
+  }
+
+  const statusChipRegisteredActive =
+    groupMode === 'status' &&
+    expandedGroups.has(STATUS_GROUP_REGISTERED) &&
+    !expandedGroups.has(STATUS_GROUP_PENDING)
+  const statusChipPendingActive =
+    groupMode === 'status' &&
+    expandedGroups.has(STATUS_GROUP_PENDING) &&
+    !expandedGroups.has(STATUS_GROUP_REGISTERED)
+  const statusChipAssignedActive =
+    groupMode === 'status' &&
+    expandedGroups.has(STATUS_GROUP_PENDING) &&
+    expandedGroups.has(STATUS_GROUP_REGISTERED)
 
   useEffect(() => {
     if (agentId && groupMode === 'agent') setGroupMode('')
@@ -1379,22 +1511,29 @@ export default function Clients() {
 
             {agentId && assignmentSummary && (
               <div className="flex flex-wrap gap-2 shrink-0 lg:pt-5">
-                <div className="flex flex-col items-center gap-0.5 px-4 py-2 min-w-[5.5rem] rounded-lg border border-slate-200 bg-slate-50 text-center">
+                <button
+                  type="button"
+                  onClick={() =>
+                    expandStatusGroups([STATUS_GROUP_PENDING, STATUS_GROUP_REGISTERED])
+                  }
+                  className={`flex flex-col items-center gap-0.5 px-4 py-2 min-w-[5.5rem] rounded-lg border text-center transition-colors ${
+                    statusChipAssignedActive
+                      ? 'border-slate-400 bg-slate-100 text-slate-900 ring-2 ring-offset-1 ring-slate-400'
+                      : 'border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100'
+                  }`}
+                >
                   <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Asignadas</span>
                   <span className="text-lg font-bold tabular-nums text-slate-800">
                     {assignmentSummary.assignedCompanies}
                   </span>
-                </div>
+                </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (pipelineFilter === 'PENDING') setPipelineFilter('')
-                    setPage(1)
-                  }}
+                  onClick={() => expandStatusGroups([STATUS_GROUP_REGISTERED])}
                   className={`flex flex-col items-center gap-0.5 px-4 py-2 min-w-[5.5rem] rounded-lg border text-center transition-colors ${
-                    pipelineFilter && pipelineFilter !== 'PENDING'
-                      ? 'border-emerald-200 bg-emerald-50/50 text-emerald-800 hover:bg-emerald-50'
-                      : 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                    statusChipRegisteredActive
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-800 ring-2 ring-offset-1 ring-emerald-400'
+                      : 'border-emerald-200 bg-emerald-50/50 text-emerald-800 hover:bg-emerald-50'
                   }`}
                 >
                   <span className="text-[10px] font-medium uppercase tracking-wide opacity-80">Registradas</span>
@@ -1404,9 +1543,9 @@ export default function Clients() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setPipelineFilter('PENDING'); setPage(1) }}
+                  onClick={() => expandStatusGroups([STATUS_GROUP_PENDING])}
                   className={`flex flex-col items-center gap-0.5 px-4 py-2 min-w-[5.5rem] rounded-lg border text-center transition-colors ${
-                    pipelineFilter === 'PENDING'
+                    statusChipPendingActive
                       ? 'bg-amber-50 border-amber-300 text-amber-800 ring-2 ring-offset-1 ring-amber-400'
                       : 'border-amber-200 bg-amber-50/50 text-amber-800 hover:bg-amber-50'
                   }`}
@@ -1439,7 +1578,17 @@ export default function Clients() {
           <div className="p-3 space-y-3">
             {total > pageSize && (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                Mostrando las primeras {pageSize} empresas del filtro actual. Refina los filtros para ver grupos completos.
+                {groupMode === 'agent' ? (
+                  <>
+                    Los totales por agente son completos. Al expandir, la tabla muestra hasta {pageSize}{' '}
+                    empresas del listado cargado. Filtra por agente para ver el listado completo.
+                  </>
+                ) : (
+                  <>
+                    Mostrando las primeras {pageSize} empresas del filtro actual. Refina los filtros para
+                    ver grupos completos.
+                  </>
+                )}
               </p>
             )}
             <div className="flex justify-end gap-3 text-sm">
@@ -1461,6 +1610,13 @@ export default function Clients() {
             <div className="space-y-2">
               {displayGroups.map((group) => {
                 const expanded = expandedGroups.has(group.key)
+                const lazyEntry =
+                  groupMode === 'agent' && !agentId && group.key !== UNASSIGNED_AGENT_KEY
+                    ? lazyClientsByAgentId.get(group.key)
+                    : undefined
+                const groupClients =
+                  lazyEntry && !lazyEntry.isLoading ? lazyEntry.clients : group.clients
+                const groupLoading = expanded && lazyEntry?.isLoading
                 return (
                   <div key={group.key} className="rounded-lg border border-gray-200 overflow-hidden">
                     <button
@@ -1473,32 +1629,48 @@ export default function Clients() {
                       ) : (
                         <ChevronRight size={18} className="text-gray-500 shrink-0" />
                       )}
-                      <span className="font-medium text-gray-900">{group.title}</span>
-                      <span className="text-sm text-gray-500">
-                        {group.clients.length} empresa{group.clients.length === 1 ? '' : 's'}
-                      </span>
+                      {groupMode === 'agent' ? (
+                        <AgentGroupHeader
+                          group={group}
+                          stats={agentStatsById.get(group.key)}
+                        />
+                      ) : (
+                        <>
+                          <span className="font-medium text-gray-900">{group.title}</span>
+                          <span className="text-sm text-gray-500">
+                            {group.clients.length} empresa{group.clients.length === 1 ? '' : 's'}
+                          </span>
+                        </>
+                      )}
                     </button>
                     {expanded && (
                       <div className="overflow-x-auto border-t border-gray-100">
-                        <table className="w-full min-w-[1000px] text-sm">
-                          <ClientsTableHead
-                            showAgentColumn={false}
-                            showBatchColumn={showBatchColumn}
-                            visibleColumns={visibleColumns}
-                          />
-                          <tbody className="divide-y divide-gray-100">
-                            {group.clients.map((c) => (
-                              <ClientTableRow
-                                key={c.id}
-                                client={c}
-                                showAgentColumn={false}
-                                showBatchColumn={showBatchColumn}
-                                visibleColumns={visibleColumns}
-                                onOpenRecord={openRecord}
-                              />
-                            ))}
-                          </tbody>
-                        </table>
+                        {groupLoading ? (
+                          <div className="flex items-center justify-center gap-2 py-10 text-gray-400">
+                            <Loader2 size={20} className="animate-spin" />
+                            <span className="text-sm">Cargando empresas…</span>
+                          </div>
+                        ) : (
+                          <table className="w-full min-w-[1000px] text-sm">
+                            <ClientsTableHead
+                              showAgentColumn={false}
+                              showBatchColumn={showBatchColumn}
+                              visibleColumns={visibleColumns}
+                            />
+                            <tbody className="divide-y divide-gray-100">
+                              {groupClients.map((c) => (
+                                <ClientTableRow
+                                  key={c.id}
+                                  client={c}
+                                  showAgentColumn={false}
+                                  showBatchColumn={showBatchColumn}
+                                  visibleColumns={visibleColumns}
+                                  onOpenRecord={openRecord}
+                                />
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
                       </div>
                     )}
                   </div>
