@@ -12,8 +12,8 @@ import {
 } from '../config/companyPipeline'
 import { getResponseOption } from '../config/responseOptions'
 import ClientRecordModal from '../components/ClientRecordModal'
-import { Search, Phone, User, CalendarClock, ArrowLeft, Eye, Calendar, X, ChevronDown, ChevronRight, SlidersHorizontal, Loader2 } from 'lucide-react'
-import { format, isPast, isToday, startOfMonth, startOfWeek, endOfWeek } from 'date-fns'
+import { Search, Phone, User, CalendarClock, ArrowLeft, Eye, Calendar, X, ChevronDown, ChevronRight, SlidersHorizontal, Loader2, LayoutList } from 'lucide-react'
+import { format, isPast, isToday, isYesterday, startOfMonth, startOfWeek, endOfWeek, addDays, startOfDay } from 'date-fns'
 import { es } from 'date-fns/locale'
 function hasRecord(c: { lastDisposition?: string | null; _count: { callLogs: number } }): boolean {
   return !!(c.lastDisposition || c._count.callLogs > 0)
@@ -50,7 +50,8 @@ function isMonthPreset(from: string, to: string): boolean {
   return from === monthStartLocal() && to === todayLocal()
 }
 
-type GroupMode = '' | 'agent' | 'status' | 'week' | 'month'
+type GroupMode = '' | 'agent' | 'status' | 'day' | 'week' | 'month'
+type DateGroupMode = '' | 'day' | 'week' | 'month'
 
 function isFunnelChipFilter(filter: string): boolean {
   return AGENT_PIPELINE_FUNNEL.some((f) => f.key === filter)
@@ -383,6 +384,85 @@ function groupClientsByMonth(clients: ClientListItem[]): DisplayGroup[] {
     }))
 }
 
+function formatDayGroupLabel(dayKey: string): string {
+  const date = new Date(dayKey + 'T12:00:00')
+  if (isToday(date)) return 'Hoy'
+  if (isYesterday(date)) return 'Ayer'
+  return format(date, 'd MMM yyyy', { locale: es })
+}
+
+function dayBorderClass(dayKey: string): string {
+  const date = new Date(dayKey + 'T12:00:00')
+  const today = startOfDay(new Date())
+  const day = startOfDay(date)
+  if (isToday(date)) return 'border-amber-400'
+  if (day < today) return 'border-gray-300'
+  return 'border-blue-300'
+}
+
+function generateCalendarDays(from: string, to: string): string[] {
+  if (!from && !to) return []
+  const start = from || to
+  const end = to || from
+  const days: string[] = []
+  let current = new Date(start + 'T12:00:00')
+  const endDate = new Date(end + 'T12:00:00')
+  while (current <= endDate) {
+    days.push(format(current, 'yyyy-MM-dd'))
+    current = addDays(current, 1)
+  }
+  return days.sort((a, b) => b.localeCompare(a))
+}
+
+function bucketClientsByDay(clients: ClientListItem[]): Map<string, ClientListItem[]> {
+  const byDay = new Map<string, ClientListItem[]>()
+  for (const client of clients) {
+    const ms = firstRegisteredAtMs(client)
+    if (ms === null) continue
+    const dayKey = format(new Date(ms), 'yyyy-MM-dd')
+    const list = byDay.get(dayKey) ?? []
+    list.push(client)
+    byDay.set(dayKey, list)
+  }
+  return byDay
+}
+
+function buildDayDisplayGroups(
+  clients: ClientListItem[],
+  registeredFrom: string,
+  registeredTo: string
+): DisplayGroup[] {
+  const bucketed = bucketClientsByDay(clients)
+  const dayKeys =
+    registeredFrom || registeredTo
+      ? generateCalendarDays(registeredFrom, registeredTo)
+      : [...bucketed.keys()].sort((a, b) => b.localeCompare(a))
+
+  return dayKeys.map((key) => ({
+    key,
+    title: formatDayGroupLabel(key),
+    borderClass: dayBorderClass(key),
+    clients: sortClientsForAdminQueue(bucketed.get(key) ?? []),
+  }))
+}
+
+function viewModeButtonLabel(mode: GroupMode): string {
+  switch (mode) {
+    case 'agent':
+      return 'Vista: Por agente'
+    case 'status':
+      return 'Vista: Por pendientes / registradas'
+    case 'day':
+      return 'Vista: Por día'
+    case 'week':
+      return 'Vista: Por semana'
+    case 'month':
+      return 'Vista: Por mes'
+    default:
+      return 'Vista: Sin agrupar'
+  }
+}
+
 function dateFilterButtonLabel(from: string, to: string): string {
   if (!from && !to) return 'Por fecha'
   if (isTodayPreset(from, to)) return 'Hoy'
@@ -410,8 +490,8 @@ function DateFilterPicker({
   const [customOpen, setCustomOpen] = useState(false)
   const [draftFrom, setDraftFrom] = useState(registeredFrom)
   const [draftTo, setDraftTo] = useState(registeredTo)
-  const [draftGroupMode, setDraftGroupMode] = useState<'' | 'week' | 'month'>(
-    groupMode === 'week' || groupMode === 'month' ? groupMode : ''
+  const [draftGroupMode, setDraftGroupMode] = useState<DateGroupMode>(
+    groupMode === 'day' || groupMode === 'week' || groupMode === 'month' ? groupMode : ''
   )
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -439,7 +519,9 @@ function DateFilterPicker({
   const openCustom = () => {
     setDraftFrom(registeredFrom)
     setDraftTo(registeredTo)
-    setDraftGroupMode(groupMode === 'week' || groupMode === 'month' ? groupMode : '')
+    setDraftGroupMode(
+      groupMode === 'day' || groupMode === 'week' || groupMode === 'month' ? groupMode : ''
+    )
     setCustomOpen(true)
   }
 
@@ -472,9 +554,9 @@ function DateFilterPicker({
             <div className="space-y-0.5">
               <button
                 type="button"
-                onClick={() => applyPreset(todayLocal(), todayLocal(), '')}
+                onClick={() => applyPreset(todayLocal(), todayLocal(), 'day')}
                 className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                  isTodayPreset(registeredFrom, registeredTo)
+                  isTodayPreset(registeredFrom, registeredTo) && groupMode === 'day'
                     ? 'bg-emerald-50 text-emerald-800 font-medium'
                     : 'text-gray-700 hover:bg-gray-50'
                 }`}
@@ -483,9 +565,9 @@ function DateFilterPicker({
               </button>
               <button
                 type="button"
-                onClick={() => applyPreset(weekStartLocal(), todayLocal(), 'week')}
+                onClick={() => applyPreset(weekStartLocal(), todayLocal(), 'day')}
                 className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                  isWeekPreset(registeredFrom, registeredTo) && groupMode === 'week'
+                  isWeekPreset(registeredFrom, registeredTo) && groupMode === 'day'
                     ? 'bg-emerald-50 text-emerald-800 font-medium'
                     : 'text-gray-700 hover:bg-gray-50'
                 }`}
@@ -494,9 +576,9 @@ function DateFilterPicker({
               </button>
               <button
                 type="button"
-                onClick={() => applyPreset(monthStartLocal(), todayLocal(), 'month')}
+                onClick={() => applyPreset(monthStartLocal(), todayLocal(), 'day')}
                 className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                  isMonthPreset(registeredFrom, registeredTo) && groupMode === 'month'
+                  isMonthPreset(registeredFrom, registeredTo) && groupMode === 'day'
                     ? 'bg-emerald-50 text-emerald-800 font-medium'
                     : 'text-gray-700 hover:bg-gray-50'
                 }`}
@@ -560,6 +642,7 @@ function DateFilterPicker({
                   {(
                     [
                       { value: '' as const, label: 'Sin agrupar' },
+                      { value: 'day' as const, label: 'Por día' },
                       { value: 'week' as const, label: 'Por semana' },
                       { value: 'month' as const, label: 'Por mes' },
                     ] as const
@@ -598,6 +681,161 @@ function DateFilterPicker({
               </div>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DayGroupHeader({
+  group,
+  loadedClients,
+  isPartial,
+}: {
+  group: DisplayGroup
+  loadedClients?: ClientListItem[]
+  isPartial?: boolean
+}) {
+  const clients = loadedClients ?? group.clients
+  const count = clients.length
+  const pending = clients.filter((c) => isPending(c)).length
+  const registered = count - pending
+
+  return (
+    <div className="flex-1 min-w-0 text-left">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="font-medium text-gray-900">{group.title}</span>
+        <span className="text-sm text-gray-500">
+          {count > 0 ? (
+            <>
+              {count} empresa{count === 1 ? '' : 's'}
+              {' · '}
+              <span className="text-emerald-700">{registered} registradas</span>
+              {' · '}
+              <span className="text-amber-700">{pending} pendientes</span>
+            </>
+          ) : isPartial ? (
+            <span className="text-gray-400">Sin datos cargados · expandir para ver</span>
+          ) : (
+            <>0 empresas</>
+          )}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function ViewModePicker({
+  groupMode,
+  agentId,
+  hasDateFilter,
+  onChange,
+}: {
+  groupMode: GroupMode
+  agentId: string
+  hasDateFilter: boolean
+  onChange: (mode: GroupMode) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const isGrouped = groupMode !== ''
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [open])
+
+  const selectMode = (mode: GroupMode) => {
+    onChange(mode)
+    setOpen(false)
+  }
+
+  const optionClass = (active: boolean) =>
+    `w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
+      active ? 'bg-violet-50 text-violet-800 font-medium' : 'text-gray-700 hover:bg-gray-50'
+    }`
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="true"
+        className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+          open || isGrouped
+            ? 'border-violet-300 bg-violet-50 text-violet-800 hover:bg-violet-100'
+            : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+        }`}
+      >
+        <LayoutList size={15} />
+        {viewModeButtonLabel(groupMode)}
+        <ChevronDown size={15} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1.5 w-72 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
+          <p className="px-3 pt-1 pb-2 text-xs font-medium text-gray-500">Agrupar vista</p>
+          <div className="space-y-0.5">
+            <button
+              type="button"
+              onClick={() => selectMode('')}
+              className={optionClass(groupMode === '')}
+            >
+              Sin agrupar
+            </button>
+            {!agentId && (
+              <button
+                type="button"
+                onClick={() => selectMode('agent')}
+                className={optionClass(groupMode === 'agent')}
+              >
+                Por agente
+              </button>
+            )}
+            {agentId && (
+              <button
+                type="button"
+                onClick={() => selectMode('status')}
+                className={optionClass(groupMode === 'status')}
+              >
+                Por pendientes / registradas
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => selectMode('day')}
+              className={optionClass(groupMode === 'day')}
+            >
+              Por día
+              {!hasDateFilter && (
+                <span className="block text-[11px] font-normal text-gray-400 mt-0.5">
+                  Mejor con filtro de fecha
+                </span>
+              )}
+            </button>
+            {hasDateFilter && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => selectMode('week')}
+                  className={optionClass(groupMode === 'week')}
+                >
+                  Por semana
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectMode('month')}
+                  className={optionClass(groupMode === 'month')}
+                >
+                  Por mes
+                </button>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -1060,19 +1298,26 @@ export default function Clients() {
   const batches = imports as { id: string; filename: string; createdAt: string; totalRecords: number }[]
 
   const effectiveGroupBy =
-    groupMode === 'agent' || groupMode === 'status' || groupMode === 'week' || groupMode === 'month'
+    groupMode === 'agent' ||
+    groupMode === 'status' ||
+    groupMode === 'day' ||
+    groupMode === 'week' ||
+    groupMode === 'month'
 
   const applyDateFilter = (from: string, to: string, mode: GroupMode) => {
     setRegisteredFrom(from)
     setRegisteredTo(to)
     setGroupMode(mode)
+    setExpandedGroups(new Set())
     setPage(1)
   }
 
   const clearDateFilter = () => {
     setRegisteredFrom('')
     setRegisteredTo('')
-    setGroupMode((prev) => (prev === 'week' || prev === 'month' ? '' : prev))
+    setGroupMode((prev) =>
+      prev === 'week' || prev === 'month' || prev === 'day' ? '' : prev
+    )
     setPage(1)
   }
 
@@ -1123,15 +1368,21 @@ export default function Clients() {
   const displayGroups = useMemo((): DisplayGroup[] => {
     if (groupMode === 'agent') return groupClientsByAgent(clients, agents)
     if (groupMode === 'status') return groupClientsByStatus(clients)
+    if (groupMode === 'day') return buildDayDisplayGroups(clients, registeredFrom, registeredTo)
     if (groupMode === 'week') return groupClientsByWeek(clients)
     if (groupMode === 'month') return groupClientsByMonth(clients)
     return []
-  }, [groupMode, clients, agents])
+  }, [groupMode, clients, agents, registeredFrom, registeredTo])
 
   const lazyAgentIds = useMemo(() => {
     if (groupMode !== 'agent' || agentId) return []
     return [...expandedGroups].filter((k) => k !== UNASSIGNED_AGENT_KEY)
   }, [groupMode, agentId, expandedGroups])
+
+  const lazyDayKeys = useMemo(() => {
+    if (groupMode !== 'day') return []
+    return [...expandedGroups]
+  }, [groupMode, expandedGroups])
 
   const lazyAgentQueries = useQueries({
     queries: lazyAgentIds.map((id) => ({
@@ -1157,6 +1408,30 @@ export default function Clients() {
     })),
   })
 
+  const lazyDayQueries = useQueries({
+    queries: lazyDayKeys.map((dayKey) => ({
+      queryKey: [
+        'clients',
+        'day-group',
+        dayKey,
+        { search, agentId, batchId, pageSize, pipelineFilter },
+      ],
+      queryFn: () =>
+        getClients({
+          search: search || undefined,
+          agentId: agentId || undefined,
+          batchId: batchId || undefined,
+          registeredFrom: dayKey,
+          registeredTo: dayKey,
+          page: 1,
+          limit: pageSize,
+          sortBy: 'activity',
+          ...pipelineFilterToParams(pipelineFilter),
+        }),
+      staleTime: 30_000,
+    })),
+  })
+
   const lazyClientsByAgentId = useMemo(() => {
     const map = new Map<string, { clients: ClientListItem[]; isLoading: boolean }>()
     lazyAgentIds.forEach((id, i) => {
@@ -1168,6 +1443,20 @@ export default function Clients() {
     })
     return map
   }, [lazyAgentIds, lazyAgentQueries])
+
+  const lazyClientsByDayKey = useMemo(() => {
+    const map = new Map<string, { clients: ClientListItem[]; isLoading: boolean }>()
+    lazyDayKeys.forEach((dayKey, i) => {
+      const q = lazyDayQueries[i]
+      map.set(dayKey, {
+        clients: q.data?.clients ?? [],
+        isLoading: q.isLoading,
+      })
+    })
+    return map
+  }, [lazyDayKeys, lazyDayQueries])
+
+  const dayGroupsPartial = groupMode === 'day' && total > pageSize
 
   const expandStatusGroups = (groupKeys: string[]) => {
     setPipelineFilter('')
@@ -1216,6 +1505,17 @@ export default function Clients() {
           return new Set([...prev].filter((k) => validKeys.has(k)))
         }
         return displayGroups.length > 0 ? new Set([displayGroups[0].key]) : new Set()
+      })
+      return
+    }
+    if (groupMode === 'day') {
+      setExpandedGroups((prev) => {
+        const validKeys = new Set(displayGroups.map((g) => g.key))
+        const filtered = new Set([...prev].filter((k) => validKeys.has(k)))
+        if (filtered.size > 0) return filtered
+        const today = todayLocal()
+        if (validKeys.has(today)) return new Set([today])
+        return new Set()
       })
       return
     }
@@ -1374,97 +1674,93 @@ export default function Clients() {
       </div>
 
       {/* Filters */}
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[200px]">
+      <div className="space-y-3">
+        <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm space-y-3">
+          <div className="relative w-full">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
-              className="input pl-9 py-2"
+              className="input pl-9 py-2 w-full"
               placeholder="Buscar por RUC, razón social, contacto..."
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1) }}
             />
           </div>
 
-          {agents.length > 0 && (
-            <select
-              className="input w-auto min-w-[150px] py-2"
-              value={agentId}
-              onChange={(e) => {
-                const newAgentId = e.target.value
-                setAgentId(newAgentId)
-                setGroupMode((prev) => {
-                  if (newAgentId && prev === 'agent') return ''
-                  if (!newAgentId && prev === 'status') return ''
-                  return prev
-                })
-                setPage(1)
-              }}
-            >
-              <option value="">Todos los agentes</option>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {agents.length > 0 && (
+              <select
+                className="input w-auto min-w-[150px] py-2"
+                value={agentId}
+                onChange={(e) => {
+                  const newAgentId = e.target.value
+                  setAgentId(newAgentId)
+                  setGroupMode((prev) => {
+                    if (newAgentId && prev === 'agent') return ''
+                    if (!newAgentId && prev === 'status') return ''
+                    return prev
+                  })
+                  setPage(1)
+                }}
+              >
+                <option value="">Todos los agentes</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            )}
 
-          {agents.length > 0 && (
+            {batches.length > 0 && (
+              <select
+                className="input w-auto min-w-[170px] py-2"
+                value={batchId}
+                onChange={(e) => { setBatchId(e.target.value); setPage(1) }}
+              >
+                <option value="">Todos los lotes</option>
+                {batches.map((b, i) => (
+                  <option key={b.id} value={b.id}>
+                    {i === 0 ? '★ ' : ''}{b.filename.replace(/\.[^.]+$/, '')} · {format(new Date(b.createdAt), 'd MMM yy', { locale: es })}
+                  </option>
+                ))}
+              </select>
+            )}
+
             <select
               className="input w-auto min-w-[170px] py-2"
-              value={groupMode === 'agent' || groupMode === 'status' ? groupMode : ''}
-              onChange={(e) => {
-                const value = e.target.value as '' | 'agent' | 'status'
-                setGroupMode(value)
-                if (value) setExpandedGroups(new Set())
-                setPage(1)
-              }}
+              value={PIPELINE_FILTER_OPERATIONAL.some((f) => f.value === pipelineFilter) ? pipelineFilter : ''}
+              onChange={(e) => { setPipelineFilter(e.target.value); setPage(1) }}
             >
-              <option value="">Sin agrupar</option>
-              {!agentId && <option value="agent">Por agente</option>}
-              {agentId && <option value="status">Por pendientes / registradas</option>}
-            </select>
-          )}
-
-          {batches.length > 0 && (
-            <select
-              className="input w-auto min-w-[170px] py-2"
-              value={batchId}
-              onChange={(e) => { setBatchId(e.target.value); setPage(1) }}
-            >
-              <option value="">Todos los lotes</option>
-              {batches.map((b, i) => (
-                <option key={b.id} value={b.id}>
-                  {i === 0 ? '★ ' : ''}{b.filename.replace(/\.[^.]+$/, '')} · {format(new Date(b.createdAt), 'd MMM yy', { locale: es })}
+              {PIPELINE_FILTER_OPERATIONAL.map((f) => (
+                <option key={f.value || 'all'} value={f.value}>
+                  {f.label}
                 </option>
               ))}
             </select>
-          )}
 
-          <select
-            className="input w-auto min-w-[170px] py-2"
-            value={PIPELINE_FILTER_OPERATIONAL.some((f) => f.value === pipelineFilter) ? pipelineFilter : ''}
-            onChange={(e) => { setPipelineFilter(e.target.value); setPage(1) }}
-          >
-            {PIPELINE_FILTER_OPERATIONAL.map((f) => (
-              <option key={f.value || 'all'} value={f.value}>
-                {f.label}
-              </option>
-            ))}
-          </select>
+            <ViewModePicker
+              groupMode={groupMode}
+              agentId={agentId}
+              hasDateFilter={hasDateFilter}
+              onChange={(mode) => {
+                setGroupMode(mode)
+                setExpandedGroups(new Set())
+                setPage(1)
+              }}
+            />
 
-          <DateFilterPicker
-            registeredFrom={registeredFrom}
-            registeredTo={registeredTo}
-            groupMode={groupMode}
-            onApply={applyDateFilter}
-            onClear={clearDateFilter}
-          />
+            <DateFilterPicker
+              registeredFrom={registeredFrom}
+              registeredTo={registeredTo}
+              groupMode={groupMode}
+              onApply={applyDateFilter}
+              onClear={clearDateFilter}
+            />
 
-          <ColumnVisibilityPicker
-            visibleColumns={visibleColumns}
-            onChange={setVisibleColumns}
-          />
+            <ColumnVisibilityPicker
+              visibleColumns={visibleColumns}
+              onChange={setVisibleColumns}
+            />
+          </div>
         </div>
 
         <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
@@ -1565,7 +1861,7 @@ export default function Clients() {
       <div className="card overflow-x-auto">
         {isLoading ? (
           <div className="p-8 text-center text-gray-400">Cargando...</div>
-        ) : clients.length === 0 ? (
+        ) : clients.length === 0 && !effectiveGroupBy ? (
           <div className="p-12 text-center text-gray-400">
             <User size={40} className="mx-auto mb-2" />
             {hasDateFilter ? (
@@ -1583,6 +1879,11 @@ export default function Clients() {
                     Los totales por agente son completos. Al expandir, la tabla muestra hasta {pageSize}{' '}
                     empresas del listado cargado. Filtra por agente para ver el listado completo.
                   </>
+                ) : groupMode === 'day' ? (
+                  <>
+                    Los conteos en cada día pueden ser parciales. Expande un día para cargar hasta {pageSize}{' '}
+                    empresas de ese día con los filtros actuales.
+                  </>
                 ) : (
                   <>
                     Mostrando las primeras {pageSize} empresas del filtro actual. Refina los filtros para
@@ -1591,6 +1892,17 @@ export default function Clients() {
                 )}
               </p>
             )}
+            {displayGroups.length === 0 ? (
+              <div className="p-8 text-center text-gray-400">
+                <User size={40} className="mx-auto mb-2" />
+                {hasDateFilter ? (
+                  <p>Ningún registro en este período. Prueba otro rango o quita el filtro de fecha.</p>
+                ) : (
+                  <p>No hay grupos para mostrar</p>
+                )}
+              </div>
+            ) : (
+              <>
             <div className="flex justify-end gap-3 text-sm">
               <button
                 type="button"
@@ -1610,13 +1922,18 @@ export default function Clients() {
             <div className="space-y-2">
               {displayGroups.map((group) => {
                 const expanded = expandedGroups.has(group.key)
-                const lazyEntry =
+                const lazyAgentEntry =
                   groupMode === 'agent' && !agentId && group.key !== UNASSIGNED_AGENT_KEY
                     ? lazyClientsByAgentId.get(group.key)
                     : undefined
+                const lazyDayEntry =
+                  groupMode === 'day' ? lazyClientsByDayKey.get(group.key) : undefined
+                const lazyEntry = lazyDayEntry ?? lazyAgentEntry
                 const groupClients =
                   lazyEntry && !lazyEntry.isLoading ? lazyEntry.clients : group.clients
                 const groupLoading = expanded && lazyEntry?.isLoading
+                const headerClients =
+                  lazyEntry && !lazyEntry.isLoading ? lazyEntry.clients : group.clients
                 return (
                   <div key={group.key} className="rounded-lg border border-gray-200 overflow-hidden">
                     <button
@@ -1633,6 +1950,12 @@ export default function Clients() {
                         <AgentGroupHeader
                           group={group}
                           stats={agentStatsById.get(group.key)}
+                        />
+                      ) : groupMode === 'day' ? (
+                        <DayGroupHeader
+                          group={group}
+                          loadedClients={headerClients}
+                          isPartial={dayGroupsPartial}
                         />
                       ) : (
                         <>
@@ -1677,6 +2000,8 @@ export default function Clients() {
                 )
               })}
             </div>
+              </>
+            )}
           </div>
         ) : (
           <>
