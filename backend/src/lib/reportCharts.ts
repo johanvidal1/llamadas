@@ -12,7 +12,12 @@ import {
   toLocalWallClockSql,
 } from './appTimezone'
 import { FUNNEL_PIPELINE_KEYS, pipelineBucketForDisposition } from './companyDisposition'
-import { SALES_FUNNEL_DISPOSITIONS } from './responseOptions'
+import { RESPONSE_OPTIONS, SALES_FUNNEL_DISPOSITIONS } from './responseOptions'
+
+/** Zero-progress dispositions agents can select (excludes audit-only e.g. AGENDA_COMPLETADA). */
+const ZERO_PROGRESS_CALL_DISPOSITIONS = RESPONSE_OPTIONS.filter(
+  (o) => o.progress === 0 && o.agentSelectable !== false
+).map((o) => o.code)
 
 export type ReportPeriod = 'day' | 'week' | 'month' | 'range'
 
@@ -186,6 +191,46 @@ export async function fetchFunnelByPeriod(params: {
     from: from.toISOString(),
     to: to.toISOString(),
     stages,
+    total,
+  }
+}
+
+export async function fetchZeroResponsesByPeriod(params: {
+  from?: string
+  to?: string
+  agentId?: string
+}): Promise<{ from: string; to: string; dispositions: Record<string, number>; total: number }> {
+  const { from, to } = resolvePeriodRange('range', undefined, params.from, params.to)
+
+  const agentFilter = params.agentId
+    ? Prisma.sql`AND cl."agentId" = ${params.agentId}`
+    : Prisma.sql`AND cl."agentId" IN (SELECT id FROM "User" WHERE role = 'AGENT' AND active = true)`
+
+  const rows = await prisma.$queryRaw<{ disposition: string; calls: bigint }[]>`
+    SELECT cl.disposition, COUNT(*)::bigint AS calls
+    FROM "CallLog" cl
+    WHERE cl."calledAt" >= ${from}
+      AND cl."calledAt" <= ${to}
+      AND cl.disposition IN (${Prisma.join(ZERO_PROGRESS_CALL_DISPOSITIONS)})
+      ${agentFilter}
+    GROUP BY cl.disposition
+  `
+
+  const dispositions = Object.fromEntries(
+    ZERO_PROGRESS_CALL_DISPOSITIONS.map((k) => [k, 0])
+  ) as Record<string, number>
+  for (const row of rows) {
+    if ((ZERO_PROGRESS_CALL_DISPOSITIONS as readonly string[]).includes(row.disposition)) {
+      dispositions[row.disposition] = Number(row.calls)
+    }
+  }
+
+  const total = Object.values(dispositions).reduce((sum, n) => sum + n, 0)
+
+  return {
+    from: from.toISOString(),
+    to: to.toISOString(),
+    dispositions,
     total,
   }
 }

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { CallHeatmapCell } from '../api/client'
 
 const DAY_LABELS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
+const DAY_FULL_LABELS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
 const HOURS = Array.from({ length: 10 }, (_, i) => i + 9)
 
 function intensityColor(calls: number, max: number): string {
@@ -15,13 +16,24 @@ function intensityColor(calls: number, max: number): string {
   return '#1d4ed8'
 }
 
-type TooltipState = {
+type CellTooltipState = {
+  kind: 'cell'
   dow: number
   hour: number
   calls: number
   x: number
   y: number
 } | null
+
+type DayTooltipState = {
+  kind: 'day'
+  dow: number
+  total: number
+  x: number
+  y: number
+} | null
+
+type TooltipState = CellTooltipState | DayTooltipState
 
 export function CallHeatmapChart({
   cells,
@@ -34,16 +46,18 @@ export function CallHeatmapChart({
 }) {
   const [tooltip, setTooltip] = useState<TooltipState>(null)
 
-  const { grid, maxCalls, totalCalls } = useMemo(() => {
+  const { grid, maxCalls, totalCalls, dowTotals } = useMemo(() => {
     const lookup = new Map<string, number>()
+    const byDow = Array.from({ length: 7 }, () => 0)
     let max = 0
     let total = 0
     for (const cell of cells) {
       lookup.set(`${cell.dow}:${cell.hour}`, cell.calls)
+      byDow[cell.dow - 1] += cell.calls
       max = Math.max(max, cell.calls)
       total += cell.calls
     }
-    return { grid: lookup, maxCalls: max, totalCalls: total }
+    return { grid: lookup, maxCalls: max, totalCalls: total, dowTotals: byDow }
   }, [cells])
 
   if (loading) {
@@ -69,9 +83,14 @@ export function CallHeatmapChart({
 
   return (
     <div className="relative">
-      <p className="text-xs text-gray-500 mb-3">
-        {periodLabel} · horario 9:00–18:00 (hora Perú)
-      </p>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 mb-3">
+        <p className="text-xs text-gray-500">
+          {periodLabel} · horario 9:00–18:00 (hora Perú)
+        </p>
+        <p className="text-sm font-semibold text-gray-900">
+          {totalCalls.toLocaleString('es-PE')} llamadas en el periodo
+        </p>
+      </div>
 
       <div
         className="grid gap-1 text-[10px]"
@@ -93,7 +112,23 @@ export function CallHeatmapChart({
           const dow = dayIndex + 1
           return (
             <div key={dow} className="contents">
-              <div className="flex items-center text-gray-500 font-medium pr-1">{dayLabel}</div>
+              <div
+                className="flex items-center text-gray-500 font-medium pr-1 cursor-default rounded-sm hover:text-gray-700 hover:bg-gray-50"
+                onMouseEnter={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const parent = e.currentTarget.closest('.relative')?.getBoundingClientRect()
+                  if (!parent) return
+                  setTooltip({
+                    kind: 'day',
+                    dow,
+                    total: dowTotals[dayIndex],
+                    x: rect.left - parent.left + rect.width / 2,
+                    y: rect.top - parent.top + rect.height / 2,
+                  })
+                }}
+              >
+                {dayLabel}
+              </div>
               {HOURS.map((hour) => {
                 const calls = grid.get(`${dow}:${hour}`) ?? 0
                 return (
@@ -106,6 +141,7 @@ export function CallHeatmapChart({
                       const parent = e.currentTarget.closest('.relative')?.getBoundingClientRect()
                       if (!parent) return
                       setTooltip({
+                        kind: 'cell',
                         dow,
                         hour,
                         calls,
@@ -124,13 +160,26 @@ export function CallHeatmapChart({
       {tooltip && (
         <div
           className="absolute z-20 pointer-events-none -translate-x-1/2 -translate-y-full mb-1 px-2.5 py-1.5 rounded-lg bg-gray-900 text-white text-xs shadow-lg whitespace-nowrap"
-          style={{ left: tooltip.x, top: tooltip.y - 6 }}
+          style={{
+            left: tooltip.x,
+            top: tooltip.kind === 'day' ? tooltip.y - 4 : tooltip.y - 6,
+          }}
         >
-          <span className="font-medium">{DAY_LABELS[tooltip.dow - 1]}</span>
-          {' · '}
-          {tooltip.hour}:00–{tooltip.hour + 1}:00
-          <br />
-          <span className="text-blue-200">{tooltip.calls} llamadas</span>
+          {tooltip.kind === 'day' ? (
+            <>
+              <span className="font-medium">{DAY_FULL_LABELS[tooltip.dow - 1]} (en el periodo)</span>
+              <br />
+              <span className="text-blue-200">{tooltip.total} llamadas</span>
+            </>
+          ) : (
+            <>
+              <span className="font-medium">{DAY_LABELS[tooltip.dow - 1]}</span>
+              {' · '}
+              {tooltip.hour}:00–{tooltip.hour + 1}:00
+              <br />
+              <span className="text-blue-200">{tooltip.calls} llamadas</span>
+            </>
+          )}
         </div>
       )}
 

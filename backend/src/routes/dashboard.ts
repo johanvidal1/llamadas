@@ -25,7 +25,12 @@ import {
   todayYmdInAppTz,
 } from '../lib/appTimezone'
 import { fetchDailyActivityFromSql, fetchHourlyActivity, fetchReportTrends, fetchAgentSparklines } from '../lib/reportTrends'
-import { fetchAgentCallsByPeriod, fetchCallHeatmap, fetchFunnelByPeriod } from '../lib/reportCharts'
+import {
+  fetchAgentCallsByPeriod,
+  fetchCallHeatmap,
+  fetchFunnelByPeriod,
+  fetchZeroResponsesByPeriod,
+} from '../lib/reportCharts'
 
 const router = Router()
 
@@ -1253,6 +1258,13 @@ router.get('/reports/agent-calls', requireAdmin, async (req: AuthRequest, res: R
 router.get('/reports/funnel-by-period', requireAdmin, async (req: AuthRequest, res: Response) => {
   const { from, to, agentId } = req.query as Record<string, string>
   const data = await fetchFunnelByPeriod({ from, to, agentId })
+  res.json(data)
+})
+
+// GET /api/dashboard/reports/zero-by-period
+router.get('/reports/zero-by-period', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const { from, to, agentId } = req.query as Record<string, string>
+  const data = await fetchZeroResponsesByPeriod({ from, to, agentId })
   res.json(data)
 })
 

@@ -591,6 +591,13 @@ export type FunnelByPeriodResponse = {
   total: number
 }
 
+export type ZeroByPeriodResponse = {
+  from: string
+  to: string
+  dispositions: Record<string, number>
+  total: number
+}
+
 export const getReportAgentCalls = (params?: {
   period?: ReportChartPeriod
   date?: string
@@ -604,6 +611,11 @@ export const getReportAgentCalls = (params?: {
 export const getReportFunnelByPeriod = (params: { from: string; to: string; agentId?: string }) =>
   api
     .get<FunnelByPeriodResponse>('/dashboard/reports/funnel-by-period', { params })
+    .then((r) => r.data)
+
+export const getReportZeroByPeriod = (params: { from: string; to: string; agentId?: string }) =>
+  api
+    .get<ZeroByPeriodResponse>('/dashboard/reports/zero-by-period', { params })
     .then((r) => r.data)
 
 export const getReportCallHeatmap = (params?: { from?: string; to?: string; weeks?: number; agentId?: string }) =>

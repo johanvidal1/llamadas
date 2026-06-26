@@ -10,6 +10,14 @@ const FUNNEL_CHART_COLORS: Record<string, string> = {
   VENTA_CERRADA: '#047857',
 }
 
+export type DonutSeriesRow = {
+  key: string
+  name: string
+  fullLabel: string
+  color: string
+  highlight?: boolean
+}
+
 type FunnelSlice = {
   key: string
   name: string
@@ -17,36 +25,55 @@ type FunnelSlice = {
   value: number
   pct: number
   color: string
+  highlight?: boolean
 }
 
 export function FunnelDonutChart({
   pipeline,
+  series,
   loading,
   onStageClick,
+  emptyMessage = 'Sin llamadas en el periodo',
+  legendScrollThreshold = 6,
 }: {
   pipeline: Record<string, number>
+  series?: DonutSeriesRow[]
   loading?: boolean
   onStageClick: (stageKey: string) => void
+  emptyMessage?: string
+  legendScrollThreshold?: number
 }) {
+  const legendRows: DonutSeriesRow[] = series ?? AGENT_PIPELINE_FUNNEL.map((row) => ({
+    key: row.key,
+    name: row.shortLabel ?? row.label,
+    fullLabel: row.fullLabel,
+    color: FUNNEL_CHART_COLORS[row.key] ?? '#6b7280',
+  }))
+
   const { slices, total } = useMemo(() => {
-    const funnelTotal = AGENT_PIPELINE_FUNNEL.reduce(
+    const chartTotal = legendRows.reduce(
       (sum, row) => sum + (pipeline[row.key] ?? 0),
       0
     )
-    const built: FunnelSlice[] = AGENT_PIPELINE_FUNNEL.map((row) => {
-      const value = pipeline[row.key] ?? 0
-      return {
-        key: row.key,
-        name: row.shortLabel ?? row.label,
-        fullLabel: row.fullLabel,
-        value,
-        pct: funnelTotal > 0 ? Math.round((value / funnelTotal) * 100) : 0,
-        color: FUNNEL_CHART_COLORS[row.key] ?? '#6b7280',
-      }
-    }).filter((s) => s.value > 0)
+    const built: FunnelSlice[] = legendRows
+      .map((row) => {
+        const value = pipeline[row.key] ?? 0
+        return {
+          key: row.key,
+          name: row.name,
+          fullLabel: row.fullLabel,
+          value,
+          pct: chartTotal > 0 ? Math.round((value / chartTotal) * 100) : 0,
+          color: row.color,
+          highlight: row.highlight,
+        }
+      })
+      .filter((s) => s.value > 0)
 
-    return { slices: built, total: funnelTotal }
-  }, [pipeline])
+    return { slices: built, total: chartTotal }
+  }, [pipeline, legendRows])
+
+  const legendScrollable = slices.length > legendScrollThreshold
 
   if (loading) {
     return (
@@ -59,7 +86,7 @@ export function FunnelDonutChart({
   if (total === 0) {
     return (
       <p className="text-sm text-gray-400 text-center py-20">
-        Sin llamadas de embudo en el periodo
+        {emptyMessage}
       </p>
     )
   }
@@ -107,7 +134,12 @@ export function FunnelDonutChart({
               label={false}
             >
               {slices.map((slice) => (
-                <Cell key={slice.key} fill={slice.color} />
+                <Cell
+                  key={slice.key}
+                  fill={slice.color}
+                  stroke={slice.highlight ? slice.color : '#fff'}
+                  strokeWidth={slice.highlight ? 3 : 2}
+                />
               ))}
             </Pie>
             <Tooltip
@@ -131,28 +163,37 @@ export function FunnelDonutChart({
         </div>
       </div>
 
-      <div className="mt-3 space-y-1.5 max-h-32 overflow-y-auto pr-1">
-        {AGENT_PIPELINE_FUNNEL.map((row) => {
+      <div
+        className={`mt-3 space-y-1.5${legendScrollable ? ' max-h-32 overflow-y-auto pr-1' : ''}`}
+      >
+        {legendRows.map((row) => {
           const count = pipeline[row.key] ?? 0
           if (count === 0) return null
           const pct = total > 0 ? Math.round((count / total) * 100) : 0
+          const highlighted = row.highlight ?? row.key === 'VOLVER_A_LLAMAR'
           return (
             <button
               key={row.key}
               type="button"
               onClick={() => onStageClick(row.key)}
-              className="w-full flex items-center justify-between text-xs rounded-md px-2 py-1 hover:bg-gray-50 transition-colors text-left"
+              className={`w-full flex items-center justify-between text-xs rounded-md px-2 py-1 hover:bg-gray-50 transition-colors text-left${
+                highlighted ? ' bg-blue-50/60 ring-1 ring-blue-100' : ''
+              }`}
             >
               <span className="flex items-center gap-2 min-w-0">
                 <span
-                  className="w-2.5 h-2.5 rounded-full shrink-0"
-                  style={{ backgroundColor: FUNNEL_CHART_COLORS[row.key] }}
+                  className={`w-2.5 h-2.5 rounded-full shrink-0${highlighted ? ' ring-2 ring-blue-300 ring-offset-1' : ''}`}
+                  style={{ backgroundColor: row.color }}
                 />
-                <span className="text-gray-700 truncate">{row.shortLabel ?? row.label}</span>
+                <span className={`truncate ${highlighted ? 'font-bold text-blue-800' : 'text-gray-700'}`}>
+                  {row.name}
+                </span>
               </span>
-              <span className="text-gray-900 font-semibold shrink-0 ml-2">
+              <span className={`shrink-0 ml-2 ${highlighted ? 'font-bold text-blue-900' : 'text-gray-900 font-semibold'}`}>
                 {count}
-                <span className="text-gray-400 font-normal ml-1">({pct}%)</span>
+                <span className={`font-normal ml-1 ${highlighted ? 'text-blue-500' : 'text-gray-400'}`}>
+                  ({pct}%)
+                </span>
               </span>
             </button>
           )

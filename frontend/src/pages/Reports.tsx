@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useQuery, keepPreviousData, useQueryClient } from '@tanstack/react-query'
 import {
   getReports, getUsers, getClients, getCallbacks, getAssignmentRunCompanies, getUntrackedCompanies,
-  getBatchReportBreakdown, getAgentReportRuns, getReportAgentCalls, getReportCallHeatmap, getReportFunnelByPeriod,
+  getBatchReportBreakdown, getAgentReportRuns, getReportAgentCalls, getReportCallHeatmap, getReportFunnelByPeriod, getReportZeroByPeriod,
   type BatchAgentBreakdownRow,
   type ReportChartPeriod,
 } from '../api/client'
@@ -17,7 +17,7 @@ import {
 import { StatusBadge, DispositionBadge } from '../components/StatusBadge'
 import { StatusHelpPopover } from '../components/StatusHelpPopover'
 import { AgentCallsBarChart } from '../components/AgentCallsBarChart'
-import { FunnelDonutChart } from '../components/FunnelDonutChart'
+import { FunnelDonutChart, type DonutSeriesRow } from '../components/FunnelDonutChart'
 import { CallHeatmapChart } from '../components/CallHeatmapChart'
 import type { StatusHelpKey } from '../config/statusHelp'
 import {
@@ -798,6 +798,25 @@ function ReportsBatchSkeleton() {
 
 type ChartFilterMode = 'day' | 'week' | 'month' | 'custom'
 
+const ZERO_CHART_COLORS: Record<string, string> = {
+  NO_CONTESTA: '#9ca3af',
+  VOLVER_A_LLAMAR: '#3b82f6',
+  SIN_LLEGADA_DECISOR: '#64748b',
+  RUC_SUSPENDIDO: '#fb923c',
+  CLIENTE_ACTUAL: '#06b6d4',
+  NO_INTERESADO: '#f87171',
+}
+
+const ZERO_CHART_SERIES: DonutSeriesRow[] = ZERO_PROGRESS_OPTIONS.filter(
+  (o) => o.agentSelectable !== false
+).map((o) => ({
+  key: o.code,
+  name: o.code === 'VOLVER_A_LLAMAR' ? 'Volver a llamar' : o.label.charAt(0) + o.label.slice(1).toLowerCase(),
+  fullLabel: o.label,
+  color: ZERO_CHART_COLORS[o.code] ?? '#6b7280',
+  highlight: o.code === 'VOLVER_A_LLAMAR',
+}))
+
 function chartTodayLocal(): string {
   return format(new Date(), 'yyyy-MM-dd')
 }
@@ -1063,6 +1082,7 @@ export default function Reports() {
   const [chartAnchor, setChartAnchor] = useState(chartTodayLocal)
   const [chartCustomFrom, setChartCustomFrom] = useState(chartTodayLocal)
   const [chartCustomTo, setChartCustomTo] = useState(chartTodayLocal)
+  const [leftChartView, setLeftChartView] = useState<'funnel' | 'zero'>('funnel')
 
   const chartRange = useMemo(
     () => deriveChartRange(chartMode, chartAnchor, chartCustomFrom, chartCustomTo),
@@ -1182,6 +1202,22 @@ export default function Reports() {
   })
 
   const {
+    data: zeroPeriodData,
+    isLoading: zeroPeriodLoading,
+    isFetching: zeroPeriodFetching,
+  } = useQuery({
+    queryKey: ['reports-zero-by-period', filterKey, chartRange.from, chartRange.to],
+    queryFn: () =>
+      getReportZeroByPeriod({
+        from: chartRange.from,
+        to: chartRange.to,
+        agentId: filterAgentId || undefined,
+      }),
+    staleTime: 120_000,
+    placeholderData: keepPreviousData,
+  })
+
+  const {
     data: heatmapData,
     isLoading: heatmapLoading,
     isFetching: heatmapFetching,
@@ -1197,7 +1233,7 @@ export default function Reports() {
     placeholderData: keepPreviousData,
   })
 
-  const isFetching = summaryFetching || agentsFetching || batchesFetching || agentCallsFetching || funnelPeriodFetching || heatmapFetching
+  const isFetching = summaryFetching || agentsFetching || batchesFetching || agentCallsFetching || funnelPeriodFetching || zeroPeriodFetching || heatmapFetching
   const hasAnyData = !!(summaryData || agentsData || batchesData)
 
   const handleRefresh = () => {
@@ -1217,6 +1253,7 @@ export default function Reports() {
     void queryClient.invalidateQueries({ queryKey: ['agent-report-runs'] })
     void queryClient.invalidateQueries({ queryKey: ['reports-agent-calls'] })
     void queryClient.invalidateQueries({ queryKey: ['reports-funnel-by-period'] })
+    void queryClient.invalidateQueries({ queryKey: ['reports-zero-by-period'] })
     void queryClient.invalidateQueries({ queryKey: ['reports-call-heatmap'] })
   }
 
@@ -1316,6 +1353,131 @@ export default function Reports() {
           )}
         </div>
       </div>
+
+      {/* ── Análisis visual ── */}
+      <section>
+        <div className="card p-5 md:p-6 space-y-5">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider">
+              Análisis visual
+            </h2>
+            <ReportChartPeriodFilter
+              mode={chartMode}
+              anchor={chartAnchor}
+              customFrom={chartCustomFrom}
+              customTo={chartCustomTo}
+              periodLabel={chartPeriodLabel}
+              onModeChange={(mode) => {
+                if (mode === 'custom') {
+                  const current = deriveChartRange(
+                    chartMode === 'custom' ? 'day' : chartMode,
+                    chartAnchor,
+                    chartCustomFrom,
+                    chartCustomTo
+                  )
+                  setChartCustomFrom(current.from)
+                  setChartCustomTo(current.to)
+                }
+                setChartMode(mode)
+              }}
+              onAnchorChange={setChartAnchor}
+              onCustomApply={(from, to) => {
+                setChartCustomFrom(from)
+                setChartCustomTo(to)
+                setChartMode('custom')
+              }}
+            />
+          </div>
+
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 mb-1">Llamadas por agente</h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Llamadas totales y empresas registradas · {chartPeriodLabel}
+            </p>
+            <AgentCallsBarChart
+              data={agentCallsData?.agents ?? []}
+              loading={agentCallsLoading && !agentCallsData}
+              highlightedAgentId={filterAgentId || undefined}
+              periodLabel={chartPeriodLabel}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr] gap-5 pt-2 border-t border-gray-100">
+            <div className="lg:pr-5 lg:border-r lg:border-gray-100">
+              <div className="flex items-start justify-between gap-2 mb-3 flex-wrap">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-1">
+                    {leftChartView === 'funnel' ? 'Embudo comercial' : 'Respuestas 0%'}
+                  </h3>
+                  <p className="text-xs text-gray-500">
+                    {leftChartView === 'funnel'
+                      ? `Llamadas por etapa · ${chartPeriodLabel}`
+                      : `Llamadas sin avance · ${chartPeriodLabel}`}
+                    {filterAgentId && (
+                      <span className="text-gray-400"> — {filteredAgentName ?? 'agente filtrado'}</span>
+                    )}
+                  </p>
+                </div>
+                <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-50 text-xs shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setLeftChartView('funnel')}
+                    className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                      leftChartView === 'funnel'
+                        ? 'bg-white text-gray-900 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    Embudo comercial
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLeftChartView('zero')}
+                    className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                      leftChartView === 'zero'
+                        ? 'bg-white text-gray-900 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    Respuestas 0%
+                  </button>
+                </div>
+              </div>
+              {leftChartView === 'funnel' ? (
+                <FunnelDonutChart
+                  pipeline={funnelPeriodData?.stages ?? {}}
+                  loading={funnelPeriodLoading && !funnelPeriodData}
+                  onStageClick={goToClientsFilter}
+                  emptyMessage="Sin llamadas de embudo en el periodo"
+                />
+              ) : (
+                <FunnelDonutChart
+                  pipeline={zeroPeriodData?.dispositions ?? {}}
+                  series={ZERO_CHART_SERIES}
+                  loading={zeroPeriodLoading && !zeroPeriodData}
+                  onStageClick={goToClientsFilter}
+                  emptyMessage="Sin llamadas con respuesta 0% en el periodo"
+                  legendScrollThreshold={4}
+                />
+              )}
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900 mb-1">Actividad por día y hora</h3>
+              <p className="text-xs text-gray-500 mb-3">
+                Intensidad de llamadas en horario laboral
+                {filterAgentId && (
+                  <span className="text-gray-400"> — {filteredAgentName ?? 'agente filtrado'}</span>
+                )}
+              </p>
+              <CallHeatmapChart
+                cells={heatmapData?.cells ?? []}
+                periodLabel={chartPeriodLabel}
+                loading={heatmapLoading && !heatmapData}
+              />
+            </div>
+          </div>
+        </div>
+      </section>
 
       {summaryLoading && !summaryData ? (
         <>
@@ -1516,87 +1678,6 @@ export default function Reports() {
       </section>
       </>
       ) : null}
-
-      {/* ── Análisis visual ── */}
-      <section>
-        <div className="card p-5 md:p-6 space-y-5">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider">
-              Análisis visual
-            </h2>
-            <ReportChartPeriodFilter
-              mode={chartMode}
-              anchor={chartAnchor}
-              customFrom={chartCustomFrom}
-              customTo={chartCustomTo}
-              periodLabel={chartPeriodLabel}
-              onModeChange={(mode) => {
-                if (mode === 'custom') {
-                  const current = deriveChartRange(
-                    chartMode === 'custom' ? 'day' : chartMode,
-                    chartAnchor,
-                    chartCustomFrom,
-                    chartCustomTo
-                  )
-                  setChartCustomFrom(current.from)
-                  setChartCustomTo(current.to)
-                }
-                setChartMode(mode)
-              }}
-              onAnchorChange={setChartAnchor}
-              onCustomApply={(from, to) => {
-                setChartCustomFrom(from)
-                setChartCustomTo(to)
-                setChartMode('custom')
-              }}
-            />
-          </div>
-
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900 mb-1">Llamadas por agente</h3>
-            <p className="text-xs text-gray-500 mb-3">
-              Llamadas totales y empresas registradas · {chartPeriodLabel}
-            </p>
-            <AgentCallsBarChart
-              data={agentCallsData?.agents ?? []}
-              loading={agentCallsLoading && !agentCallsData}
-              highlightedAgentId={filterAgentId || undefined}
-              periodLabel={chartPeriodLabel}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr] gap-5 pt-2 border-t border-gray-100">
-            <div className="lg:pr-5 lg:border-r lg:border-gray-100">
-              <h3 className="text-sm font-semibold text-gray-900 mb-1">Embudo comercial</h3>
-              <p className="text-xs text-gray-500 mb-3">
-                Llamadas por etapa · {chartPeriodLabel}
-                {filterAgentId && (
-                  <span className="text-gray-400"> — {filteredAgentName ?? 'agente filtrado'}</span>
-                )}
-              </p>
-              <FunnelDonutChart
-                pipeline={funnelPeriodData?.stages ?? {}}
-                loading={funnelPeriodLoading && !funnelPeriodData}
-                onStageClick={goToClientsFilter}
-              />
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-gray-900 mb-1">Actividad por día y hora</h3>
-              <p className="text-xs text-gray-500 mb-3">
-                Intensidad de llamadas en horario laboral
-                {filterAgentId && (
-                  <span className="text-gray-400"> — {filteredAgentName ?? 'agente filtrado'}</span>
-                )}
-              </p>
-              <CallHeatmapChart
-                cells={heatmapData?.cells ?? []}
-                periodLabel={chartPeriodLabel}
-                loading={heatmapLoading && !heatmapData}
-              />
-            </div>
-          </div>
-        </div>
-      </section>
 
       {agentsLoading && !agentsData ? (
         <ReportsAgentTableSkeleton />
