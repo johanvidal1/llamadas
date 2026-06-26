@@ -479,8 +479,49 @@ export const getDashboardStats = (batchId?: string) =>
     .get<DashboardStats>('/dashboard/stats', { params: batchId ? { batchId } : undefined })
     .then((r) => r.data)
 export const getAgentStats = () => api.get('/dashboard/agents-stats').then((r) => r.data)
-export const getReports = (agentId?: string) =>
-  api.get<ReportsResponse>('/dashboard/reports', { params: agentId ? { agentId } : undefined }).then((r) => r.data)
+export type ReportsSection = 'summary' | 'agents' | 'batches'
+
+export type ReportsSummaryResponse = Pick<
+  ReportsResponse,
+  'callsByDay' | 'dispositionBreakdown' | 'assignedCompanies' | 'companyPipeline' | 'funnel'
+>
+
+export type ReportsAgentsResponse = Pick<ReportsResponse, 'agentPerformance'>
+
+export type ReportsBatchesResponse = Pick<ReportsResponse, 'batchProgress'>
+
+export const getReports = (
+  agentId?: string,
+  options?: { refresh?: boolean; sections?: ReportsSection[] }
+) =>
+  api
+    .get<Partial<ReportsResponse>>('/dashboard/reports', {
+      params: {
+        ...(agentId ? { agentId } : {}),
+        ...(options?.refresh ? { refresh: 'true' } : {}),
+        ...(options?.sections?.length ? { sections: options.sections.join(',') } : {}),
+      },
+    })
+    .then((r) => r.data)
+
+export const getAgentReportRuns = (agentId: string, options?: { refresh?: boolean }) =>
+  api
+    .get<{ assignmentRuns: BatchAssignmentRunMetrics[] }>(
+      `/dashboard/reports/agent/${agentId}/runs`,
+      { params: options?.refresh ? { refresh: 'true' } : undefined }
+    )
+    .then((r) => r.data)
+
+export type BatchReportBreakdownResponse =
+  | { agentBreakdown: BatchAgentBreakdownRow[]; assignmentRuns?: undefined }
+  | { assignmentRuns: BatchAssignmentRunMetrics[]; agentBreakdown?: undefined }
+
+export const getBatchReportBreakdown = (batchId: string, agentId?: string) =>
+  api
+    .get<BatchReportBreakdownResponse>(`/dashboard/reports/batch/${batchId}/breakdown`, {
+      params: agentId ? { agentId } : undefined,
+    })
+    .then((r) => r.data)
 
 export type BatchAgentBreakdownRow = {
   agentId: string
@@ -544,7 +585,7 @@ export type ReportsResponse = {
     avgCallsPerContact: number
     pendingCallbacks: number
     overdueCallbacks: number
-    assignmentRuns: BatchAssignmentRunMetrics[]
+    assignmentRuns?: BatchAssignmentRunMetrics[]
   }>
   callsByDay: { date: string; count: number }[]
   dispositionBreakdown: { disposition: string; count: number }[]

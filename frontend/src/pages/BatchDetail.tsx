@@ -135,7 +135,7 @@ export default function BatchDetail() {
 
   const { data: agentsData } = useQuery({
     queryKey: ['reports', null],
-    queryFn: () => getReports(),
+    queryFn: () => getReports(undefined, { sections: ['agents'] }),
     staleTime: 120_000,
   })
 

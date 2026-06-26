@@ -1,8 +1,9 @@
 import { useState, Fragment } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useQuery, keepPreviousData, useQueryClient } from '@tanstack/react-query'
 import {
   getReports, getUsers, getClients, getCallbacks, getAssignmentRunCompanies, getUntrackedCompanies,
+  getBatchReportBreakdown, getAgentReportRuns,
   type BatchAgentBreakdownRow,
 } from '../api/client'
 import { format, isPast, isToday } from 'date-fns'
@@ -447,6 +448,278 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
   )
 }
 
+function AgentExpandedRuns({ agentId, expanded }: { agentId: string; expanded: boolean }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['agent-report-runs', agentId],
+    queryFn: () => getAgentReportRuns(agentId),
+    enabled: expanded,
+    staleTime: 300_000,
+  })
+
+  if (isLoading) {
+    return (
+      <tr className="bg-gray-50/80">
+        <td colSpan={11} className="px-4 py-2 pl-10 text-xs text-gray-400">
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            Cargando asignaciones...
+          </div>
+        </td>
+      </tr>
+    )
+  }
+
+  const runs = data?.assignmentRuns ?? []
+  if (runs.length === 0) {
+    return (
+      <tr className="bg-gray-50/80">
+        <td colSpan={11} className="px-4 py-2 pl-10 text-xs text-gray-400">
+          Sin asignaciones registradas
+        </td>
+      </tr>
+    )
+  }
+
+  return (
+    <>
+      {runs.map((run) => (
+        <tr key={run.id} className="bg-gray-50/80 text-xs">
+          <td className="px-4 py-2 w-8" />
+          <td className="px-4 py-2 pl-10 text-gray-600">
+            <AgentRunSubRowLabel run={run} />
+          </td>
+          <td className="px-3 py-2 text-right font-medium text-gray-700">{run.companyCount}</td>
+          <td className="px-3 py-2 text-right text-gray-700">{run.contactedCompanies}</td>
+          <td className="px-3 py-2 text-right text-gray-500">{run.pendingCompanies}</td>
+          <td className="px-3 py-2 text-right">
+            <span className={`font-medium ${run.contactedPct >= 70 ? 'text-green-700' : run.contactedPct >= 40 ? 'text-amber-600' : 'text-gray-700'}`}>
+              {run.contactedPct}%
+            </span>
+          </td>
+          <td className="px-3 py-2 text-right text-green-700 font-medium">{run.inFunnel}</td>
+          <td className="px-3 py-2 text-right text-gray-700">{run.callCount}</td>
+          <td className="px-3 py-2 text-right text-emerald-700 font-medium">{run.ventaCerrada}</td>
+          <td className="px-3 py-2 text-right">
+            <span className={`font-medium ${run.closeRate >= 20 ? 'text-green-700' : run.closeRate >= 10 ? 'text-amber-600' : 'text-gray-600'}`}>
+              {run.closeRate}%
+            </span>
+          </td>
+          <td className="px-3 py-2 text-right text-gray-400">—</td>
+        </tr>
+      ))}
+    </>
+  )
+}
+
+function BatchExpandedRows({
+  batch,
+  filterAgentId,
+  expandedRuns,
+  expandedBatchAgents,
+  toggleRunExpand,
+  toggleBatchAgentExpand,
+}: {
+  batch: BatchProgress
+  filterAgentId: string
+  expandedRuns: Record<string, boolean>
+  expandedBatchAgents: Record<string, Record<string, boolean>>
+  toggleRunExpand: (runId: string, e: React.MouseEvent) => void
+  toggleBatchAgentExpand: (batchId: string, agentId: string, e?: React.MouseEvent) => void
+}) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['reports-batch-breakdown', batch.id, filterAgentId || null],
+    queryFn: () => getBatchReportBreakdown(batch.id, filterAgentId || undefined),
+    staleTime: 300_000,
+  })
+
+  if (isLoading) {
+    return (
+      <tr className="bg-gray-50/80">
+        <td colSpan={9} className="px-4 py-3 pl-10">
+          <div className="flex items-center gap-2 text-xs text-gray-400">
+            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            Cargando desglose...
+          </div>
+        </td>
+      </tr>
+    )
+  }
+
+  if (isError || !data) {
+    return (
+      <tr className="bg-gray-50/80">
+        <td colSpan={9} className="px-4 py-3 pl-10 text-xs text-red-500">
+          No se pudo cargar el desglose
+        </td>
+      </tr>
+    )
+  }
+
+  const runs = data.assignmentRuns ?? []
+  const agentBreakdown = data.agentBreakdown ?? []
+
+  if (filterAgentId) {
+    return (
+      <>
+        {runs.map((run) => {
+          const runExpanded = expandedRuns[run.id] ?? false
+          return (
+            <Fragment key={run.id}>
+              <tr
+                className="bg-gray-50/80 text-xs cursor-pointer hover:bg-gray-100/80"
+                onClick={(e) => toggleRunExpand(run.id, e)}
+              >
+                <td className="px-4 py-2 text-gray-400 w-8">
+                  <ChevronRight
+                    size={12}
+                    className={`transition-transform ${runExpanded ? 'rotate-90' : ''}`}
+                  />
+                </td>
+                <td className="px-4 py-2 pl-10 text-gray-600">
+                  {run.isLegacy ? (
+                    'Asignación anterior (sin historial)'
+                  ) : (
+                    <>
+                      {format(new Date(run.assignedAt!), 'd MMM yyyy, HH:mm', { locale: es })}
+                      {' · '}
+                      por {run.assignedBy.name}
+                    </>
+                  )}
+                </td>
+                <td className="px-4 py-2" />
+                <td className="px-3 py-2 text-right">
+                  <span className="font-bold text-gray-700">{run.companyCount}</span>
+                  <span className="text-gray-400 font-normal"> de </span>
+                  <span className="text-gray-500">{batch.batchTotalCompanies}</span>
+                </td>
+                <td className="px-3 py-2 text-right text-gray-700 font-medium">{run.callCount}</td>
+                <td className="px-3 py-2 text-right">
+                  <span className="text-blue-700 font-medium">{run.contactedCompanies}</span>
+                  <span className="text-gray-400 ml-1">({run.contactedPct}%)</span>
+                </td>
+                <td className="px-3 py-2 text-right text-green-700 font-medium">{run.inFunnel}</td>
+                <td className="px-3 py-2 text-right text-emerald-700 font-medium">{run.ventaCerrada}</td>
+                <td className="px-4 py-2">
+                  <Bar
+                    pct={run.contactedPct}
+                    color={run.contactedPct >= 70 ? 'bg-green-500' : run.contactedPct >= 40 ? 'bg-amber-400' : 'bg-blue-400'}
+                  />
+                </td>
+              </tr>
+              {runExpanded && (
+                <RunCompanyDetail
+                  runId={run.id}
+                  expanded={runExpanded}
+                  isLegacy={run.isLegacy}
+                  agentId={filterAgentId ?? undefined}
+                  batchId={batch.id}
+                />
+              )}
+            </Fragment>
+          )
+        })}
+        {runs.length === 0 && (
+          <tr className="bg-gray-50/80">
+            <td colSpan={9} className="px-4 py-2 pl-10 text-xs text-gray-400">
+              Sin asignaciones en este lote
+            </td>
+          </tr>
+        )}
+      </>
+    )
+  }
+
+  return (
+    <>
+      {agentBreakdown.map((a) => {
+        const agentExpanded = expandedBatchAgents[batch.id]?.[a.agentId] ?? false
+        const agentRuns = a.assignmentRuns ?? []
+        return (
+          <Fragment key={`${batch.id}:${a.agentId}`}>
+            <tr
+              className="bg-gray-50/80 text-xs cursor-pointer hover:bg-gray-100/80"
+              onClick={() => toggleBatchAgentExpand(batch.id, a.agentId)}
+            >
+              <td className="px-4 py-2 text-gray-400 w-8">
+                <ChevronRight
+                  size={12}
+                  className={`transition-transform ${agentExpanded ? 'rotate-90' : ''}`}
+                />
+              </td>
+              <td className="px-4 py-2 pl-10 text-gray-700">
+                <span className="font-medium text-gray-900">{a.agentName}</span>
+                <span className="text-gray-400"> · </span>
+                <span className="text-gray-500">Asignadas: {a.assignedCompanies}</span>
+              </td>
+              <td className="px-4 py-2 text-gray-500">—</td>
+              <td className="px-3 py-2 text-right">
+                <span className="font-bold text-gray-700">{a.assignedCompanies}</span>
+                <span className="text-gray-400 font-normal"> de </span>
+                <span className="text-gray-500">{batch.batchTotalCompanies}</span>
+              </td>
+              <td className="px-3 py-2 text-right text-gray-700 font-medium">{a.callCount}</td>
+              <td className="px-3 py-2 text-right">
+                <span className="text-blue-700 font-medium">{a.contactedCompanies}</span>
+                <span className="text-gray-400 ml-1">({a.contactedPct}%)</span>
+              </td>
+              <td className="px-3 py-2 text-right text-green-700 font-medium">{a.inFunnel}</td>
+              <td className="px-3 py-2 text-right text-emerald-700 font-medium">{a.ventaCerrada}</td>
+              <td className="px-4 py-2">
+                <Bar
+                  pct={a.contactedPct}
+                  color={a.contactedPct >= 70 ? 'bg-green-500' : a.contactedPct >= 40 ? 'bg-amber-400' : 'bg-blue-400'}
+                />
+              </td>
+            </tr>
+            {agentExpanded && agentRuns.map((run) => (
+              <tr key={`${batch.id}:${a.agentId}:${run.id}`} className="bg-gray-50/60 text-xs">
+                <td className="px-4 py-2 w-8" />
+                <td className="px-4 py-2 pl-14 text-gray-600">
+                  {run.isLegacy ? (
+                    'Asignación anterior (sin historial)'
+                  ) : (
+                    <>
+                      {format(new Date(run.assignedAt!), 'd MMM yyyy, HH:mm', { locale: es })}
+                      {' · '}
+                      por {run.assignedBy.name}
+                    </>
+                  )}
+                </td>
+                <td className="px-4 py-2" />
+                <td className="px-3 py-2 text-right">
+                  <span className="font-bold text-gray-700">{run.companyCount}</span>
+                  <span className="text-gray-400 font-normal"> de </span>
+                  <span className="text-gray-500">{a.assignedCompanies}</span>
+                </td>
+                <td className="px-3 py-2 text-right text-gray-700 font-medium">{run.callCount}</td>
+                <td className="px-3 py-2 text-right">
+                  <span className="text-blue-700 font-medium">{run.contactedCompanies}</span>
+                  <span className="text-gray-400 ml-1">({run.contactedPct}%)</span>
+                </td>
+                <td className="px-3 py-2 text-right text-green-700 font-medium">{run.inFunnel}</td>
+                <td className="px-3 py-2 text-right text-emerald-700 font-medium">{run.ventaCerrada}</td>
+                <td className="px-4 py-2">
+                  <Bar
+                    pct={run.contactedPct}
+                    color={run.contactedPct >= 70 ? 'bg-green-500' : run.contactedPct >= 40 ? 'bg-amber-400' : 'bg-blue-400'}
+                  />
+                </td>
+              </tr>
+            ))}
+          </Fragment>
+        )
+      })}
+      {agentBreakdown.length === 0 && (
+        <tr className="bg-gray-50/80">
+          <td colSpan={9} className="px-4 py-2 pl-10 text-xs text-gray-400">
+            Sin agentes asignados en este lote
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
 // ─── Loading skeletons ────────────────────────────────────────────────────────
 
 function ReportsPipelineSkeleton() {
@@ -539,6 +812,7 @@ function useSortedAgents(agents: AgentPerf[]) {
 
 export default function Reports() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [filterAgentId, setFilterAgentId] = useState('')
   const [drillDown, setDrillDown] = useState<DrillDown | null>(null)
   const [showStatusDetail, setShowStatusDetail] = useState(false)
@@ -586,33 +860,74 @@ export default function Reports() {
 
   const agents = users.filter((u) => u.role === 'AGENT' && u.active)
 
-  const { data, isLoading, isFetching, refetch } = useQuery<ReportsData>({
-    queryKey: ['reports', filterAgentId],
-    queryFn: () => getReports(filterAgentId || undefined),
+  const filterKey = filterAgentId || 'all'
+
+  const {
+    data: summaryData,
+    isLoading: summaryLoading,
+    isFetching: summaryFetching,
+  } = useQuery({
+    queryKey: ['reports-summary', filterKey],
+    queryFn: () => getReports(filterAgentId || undefined, { sections: ['summary'] }),
     staleTime: 300_000,
     placeholderData: keepPreviousData,
   })
 
-  const isInitialLoading = isLoading && !data
-  const isUpdating = isFetching && !!data
+  const {
+    data: agentsData,
+    isLoading: agentsLoading,
+    isFetching: agentsFetching,
+  } = useQuery({
+    queryKey: ['reports-agents', filterKey],
+    queryFn: () => getReports(filterAgentId || undefined, { sections: ['agents'] }),
+    staleTime: 300_000,
+    placeholderData: keepPreviousData,
+  })
+
+  const {
+    data: batchesData,
+    isLoading: batchesLoading,
+    isFetching: batchesFetching,
+  } = useQuery({
+    queryKey: ['reports-batches', filterKey],
+    queryFn: () => getReports(filterAgentId || undefined, { sections: ['batches'] }),
+    staleTime: 300_000,
+    placeholderData: keepPreviousData,
+  })
+
+  const isFetching = summaryFetching || agentsFetching || batchesFetching
+  const hasAnyData = !!(summaryData || agentsData || batchesData)
 
   const handleRefresh = () => {
-    refetch()
+    const refreshOpts = { refresh: true as const }
+    void queryClient.fetchQuery({
+      queryKey: ['reports-summary', filterKey],
+      queryFn: () => getReports(filterAgentId || undefined, { ...refreshOpts, sections: ['summary'] }),
+    })
+    void queryClient.fetchQuery({
+      queryKey: ['reports-agents', filterKey],
+      queryFn: () => getReports(filterAgentId || undefined, { ...refreshOpts, sections: ['agents'] }),
+    })
+    void queryClient.fetchQuery({
+      queryKey: ['reports-batches', filterKey],
+      queryFn: () => getReports(filterAgentId || undefined, { ...refreshOpts, sections: ['batches'] }),
+    })
+    void queryClient.invalidateQueries({ queryKey: ['agent-report-runs'] })
   }
 
-  const { sorted: sortedAgents, sortBy, asc, toggle } = useSortedAgents(data?.agentPerformance ?? [])
+  const { sorted: sortedAgents, sortBy, asc, toggle } = useSortedAgents(agentsData?.agentPerformance ?? [])
 
-  const funnel = data?.funnel
-  const dispositionBreakdown = data?.dispositionBreakdown ?? []
-  const batchProgress = data?.batchProgress ?? []
-  const companyPipeline = data?.companyPipeline
-  const assignedCompanies = data?.assignedCompanies
+  const funnel = summaryData?.funnel
+  const dispositionBreakdown = summaryData?.dispositionBreakdown ?? []
+  const batchProgress = batchesData?.batchProgress ?? []
+  const companyPipeline = summaryData?.companyPipeline
+  const assignedCompanies = summaryData?.assignedCompanies
   const companies = funnel?.companies
   const totalDisp = dispositionBreakdown.reduce((s, d) => s + d.count, 0)
   const pipelineTotal = assignedCompanies ?? 0
   const pipelinePending = companyPipeline?.PENDING ?? 0
   const pipelineWithResponse = pipelineTotal - pipelinePending
-  const zeroProgressBreakdown = data ? [
+  const zeroProgressBreakdown = summaryData ? [
     ...ZERO_PROGRESS_OPTIONS.map((opt) => ({
       disposition: opt.code,
       label: opt.label,
@@ -645,6 +960,8 @@ export default function Reports() {
       : <ChevronDown size={13} className="text-gray-300" />
 
   const filteredAgentName = agents.find((a) => a.id === filterAgentId)?.name
+
+  const isUpdating = isFetching && hasAnyData
 
   return (
     <div className="p-4 md:p-6 space-y-7">
@@ -695,15 +1012,13 @@ export default function Reports() {
         </div>
       </div>
 
-      {isInitialLoading ? (
+      {summaryLoading && !summaryData ? (
         <>
           <ReportsPipelineSkeleton />
           <ReportsKpiSkeleton />
-          <ReportsAgentTableSkeleton />
-          <ReportsBatchSkeleton />
         </>
-      ) : data ? (
-        <>
+      ) : summaryData ? (
+      <>
       {/* ── Company pipeline (primary) ── */}
       <section>
         <div className="card p-6 overflow-visible">
@@ -894,7 +1209,13 @@ export default function Reports() {
           </div>
         )}
       </section>
+      </>
+      ) : null}
 
+      {agentsLoading && !agentsData ? (
+        <ReportsAgentTableSkeleton />
+      ) : agentsData ? (
+      <>
       {/* ── Agent performance table ── */}
       <section>
         <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Rendimiento por agente</h2>
@@ -923,8 +1244,7 @@ export default function Reports() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {sortedAgents.map((a, idx) => {
-                const runs = a.assignmentRuns ?? []
-                const isExpandable = runs.length >= 1
+                const isExpandable = a.assignedCompanies > 0
                 const isExpanded = expandedAgents[a.id] ?? false
 
                 return (
@@ -1002,31 +1322,9 @@ export default function Reports() {
                           : <span className="text-gray-400">0</span>}
                       </td>
                     </tr>
-                    {isExpanded && runs.map((run) => (
-                      <tr key={run.id} className="bg-gray-50/80 text-xs">
-                        <td className="px-4 py-2 w-8" />
-                        <td className="px-4 py-2 pl-10 text-gray-600">
-                          <AgentRunSubRowLabel run={run} />
-                        </td>
-                        <td className="px-3 py-2 text-right font-medium text-gray-700">{run.companyCount}</td>
-                        <td className="px-3 py-2 text-right text-gray-700">{run.contactedCompanies}</td>
-                        <td className="px-3 py-2 text-right text-gray-500">{run.pendingCompanies}</td>
-                        <td className="px-3 py-2 text-right">
-                          <span className={`font-medium ${run.contactedPct >= 70 ? 'text-green-700' : run.contactedPct >= 40 ? 'text-amber-600' : 'text-gray-700'}`}>
-                            {run.contactedPct}%
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-right text-green-700 font-medium">{run.inFunnel}</td>
-                        <td className="px-3 py-2 text-right text-gray-700">{run.callCount}</td>
-                        <td className="px-3 py-2 text-right text-emerald-700 font-medium">{run.ventaCerrada}</td>
-                        <td className="px-3 py-2 text-right">
-                          <span className={`font-medium ${run.closeRate >= 20 ? 'text-green-700' : run.closeRate >= 10 ? 'text-amber-600' : 'text-gray-600'}`}>
-                            {run.closeRate}%
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-right text-gray-400">—</td>
-                      </tr>
-                    ))}
+                    {isExpanded && (
+                      <AgentExpandedRuns agentId={a.id} expanded={isExpanded} />
+                    )}
                   </Fragment>
                 )
               })}
@@ -1039,7 +1337,13 @@ export default function Reports() {
       </section>
 
       {drillDown && <DrillDownDrawer drill={drillDown} onClose={() => setDrillDown(null)} />}
+      </>
+      ) : null}
 
+      {batchesLoading && !batchesData ? (
+        <ReportsBatchSkeleton />
+      ) : batchesData ? (
+      <>
       {/* ── Batch progress ── */}
       <section>
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
@@ -1082,15 +1386,9 @@ export default function Reports() {
                 const assigned = filterAgentId
                   ? (b.assignedToAgentCompanies ?? 0)
                   : b.assignedCompanies
-                const runs = b.assignmentRuns ?? []
-                const agentBreakdown = b.agentBreakdown ?? []
-                const runCompanyTotal = runs.reduce((sum, r) => sum + r.companyCount, 0)
-                const legacyCount = runs.find((r) => r.isLegacy)?.companyCount ?? 0
-                const trackedTotal = runCompanyTotal - legacyCount
-                const showBreakdownHint = !!filterAgentId && assigned !== runCompanyTotal && runs.length > 0
                 const isExpandable = filterAgentId
-                  ? runs.length >= 1
-                  : agentBreakdown.length > 0
+                  ? assigned > 0
+                  : b.assignedCompanies > 0
                 const isExpanded = expandedBatches[b.id] ?? false
 
                 return (
@@ -1122,11 +1420,6 @@ export default function Reports() {
                             {b.unassignedCompanies} sin asignar
                           </span>
                         )}
-                        {showBreakdownHint && (
-                          <span className="text-gray-400 text-xs block leading-tight mt-0.5">
-                            Desglose: {trackedTotal} en historial + {legacyCount} anterior
-                          </span>
-                        )}
                       </td>
                       <td className="px-3 py-3 text-right">
                         <span className="text-gray-700 font-medium">{b.callCount}</span>
@@ -1146,141 +1439,16 @@ export default function Reports() {
                         </div>
                       </td>
                     </tr>
-                    {isExpanded && filterAgentId && runs.map((run) => {
-                      const runExpanded = expandedRuns[run.id] ?? false
-                      return (
-                        <Fragment key={run.id}>
-                          <tr
-                            className="bg-gray-50/80 text-xs cursor-pointer hover:bg-gray-100/80"
-                            onClick={(e) => toggleRunExpand(run.id, e)}
-                          >
-                            <td className="px-4 py-2 text-gray-400 w-8">
-                              <ChevronRight
-                                size={12}
-                                className={`transition-transform ${runExpanded ? 'rotate-90' : ''}`}
-                              />
-                            </td>
-                            <td className="px-4 py-2 pl-10 text-gray-600">
-                              {run.isLegacy ? (
-                                'Asignación anterior (sin historial)'
-                              ) : (
-                                <>
-                                  {format(new Date(run.assignedAt!), 'd MMM yyyy, HH:mm', { locale: es })}
-                                  {' · '}
-                                  por {run.assignedBy.name}
-                                </>
-                              )}
-                            </td>
-                            <td className="px-4 py-2" />
-                            <td className="px-3 py-2 text-right">
-                              <span className="font-bold text-gray-700">{run.companyCount}</span>
-                              <span className="text-gray-400 font-normal"> de </span>
-                              <span className="text-gray-500">{b.batchTotalCompanies}</span>
-                            </td>
-                            <td className="px-3 py-2 text-right text-gray-700 font-medium">{run.callCount}</td>
-                            <td className="px-3 py-2 text-right">
-                              <span className="text-blue-700 font-medium">{run.contactedCompanies}</span>
-                              <span className="text-gray-400 ml-1">({run.contactedPct}%)</span>
-                            </td>
-                            <td className="px-3 py-2 text-right text-green-700 font-medium">{run.inFunnel}</td>
-                            <td className="px-3 py-2 text-right text-emerald-700 font-medium">{run.ventaCerrada}</td>
-                            <td className="px-4 py-2">
-                              <Bar
-                                pct={run.contactedPct}
-                                color={run.contactedPct >= 70 ? 'bg-green-500' : run.contactedPct >= 40 ? 'bg-amber-400' : 'bg-blue-400'}
-                              />
-                            </td>
-                          </tr>
-                          {runExpanded && (
-                            <RunCompanyDetail
-                              runId={run.id}
-                              expanded={runExpanded}
-                              isLegacy={run.isLegacy}
-                              agentId={filterAgentId ?? undefined}
-                              batchId={b.id}
-                            />
-                          )}
-                        </Fragment>
-                      )
-                    })}
-                    {isExpanded && !filterAgentId && agentBreakdown.map((a) => {
-                      const agentExpanded = expandedBatchAgents[b.id]?.[a.agentId] ?? false
-                      const agentRuns = a.assignmentRuns ?? []
-                      return (
-                        <Fragment key={`${b.id}:${a.agentId}`}>
-                          <tr
-                            className="bg-gray-50/80 text-xs cursor-pointer hover:bg-gray-100/80"
-                            onClick={() => toggleBatchAgentExpand(b.id, a.agentId)}
-                          >
-                            <td className="px-4 py-2 text-gray-400 w-8">
-                              <ChevronRight
-                                size={12}
-                                className={`transition-transform ${agentExpanded ? 'rotate-90' : ''}`}
-                              />
-                            </td>
-                            <td className="px-4 py-2 pl-10 text-gray-700">
-                              <span className="font-medium text-gray-900">{a.agentName}</span>
-                              <span className="text-gray-400"> · </span>
-                              <span className="text-gray-500">Asignadas: {a.assignedCompanies}</span>
-                            </td>
-                            <td className="px-4 py-2 text-gray-500">—</td>
-                            <td className="px-3 py-2 text-right">
-                              <span className="font-bold text-gray-700">{a.assignedCompanies}</span>
-                              <span className="text-gray-400 font-normal"> de </span>
-                              <span className="text-gray-500">{b.batchTotalCompanies}</span>
-                            </td>
-                            <td className="px-3 py-2 text-right text-gray-700 font-medium">{a.callCount}</td>
-                            <td className="px-3 py-2 text-right">
-                              <span className="text-blue-700 font-medium">{a.contactedCompanies}</span>
-                              <span className="text-gray-400 ml-1">({a.contactedPct}%)</span>
-                            </td>
-                            <td className="px-3 py-2 text-right text-green-700 font-medium">{a.inFunnel}</td>
-                            <td className="px-3 py-2 text-right text-emerald-700 font-medium">{a.ventaCerrada}</td>
-                            <td className="px-4 py-2">
-                              <Bar
-                                pct={a.contactedPct}
-                                color={a.contactedPct >= 70 ? 'bg-green-500' : a.contactedPct >= 40 ? 'bg-amber-400' : 'bg-blue-400'}
-                              />
-                            </td>
-                          </tr>
-                          {agentExpanded && agentRuns.map((run) => (
-                            <tr key={`${b.id}:${a.agentId}:${run.id}`} className="bg-gray-50/60 text-xs">
-                              <td className="px-4 py-2 w-8" />
-                              <td className="px-4 py-2 pl-14 text-gray-600">
-                                {run.isLegacy ? (
-                                  'Asignación anterior (sin historial)'
-                                ) : (
-                                  <>
-                                    {format(new Date(run.assignedAt!), 'd MMM yyyy, HH:mm', { locale: es })}
-                                    {' · '}
-                                    por {run.assignedBy.name}
-                                  </>
-                                )}
-                              </td>
-                              <td className="px-4 py-2" />
-                              <td className="px-3 py-2 text-right">
-                                <span className="font-bold text-gray-700">{run.companyCount}</span>
-                                <span className="text-gray-400 font-normal"> de </span>
-                                <span className="text-gray-500">{a.assignedCompanies}</span>
-                              </td>
-                              <td className="px-3 py-2 text-right text-gray-700 font-medium">{run.callCount}</td>
-                              <td className="px-3 py-2 text-right">
-                                <span className="text-blue-700 font-medium">{run.contactedCompanies}</span>
-                                <span className="text-gray-400 ml-1">({run.contactedPct}%)</span>
-                              </td>
-                              <td className="px-3 py-2 text-right text-green-700 font-medium">{run.inFunnel}</td>
-                              <td className="px-3 py-2 text-right text-emerald-700 font-medium">{run.ventaCerrada}</td>
-                              <td className="px-4 py-2">
-                                <Bar
-                                  pct={run.contactedPct}
-                                  color={run.contactedPct >= 70 ? 'bg-green-500' : run.contactedPct >= 40 ? 'bg-amber-400' : 'bg-blue-400'}
-                                />
-                              </td>
-                            </tr>
-                          ))}
-                        </Fragment>
-                      )
-                    })}
+                    {isExpanded && (
+                      <BatchExpandedRows
+                        batch={b}
+                        filterAgentId={filterAgentId}
+                        expandedRuns={expandedRuns}
+                        expandedBatchAgents={expandedBatchAgents}
+                        toggleRunExpand={toggleRunExpand}
+                        toggleBatchAgentExpand={toggleBatchAgentExpand}
+                      />
+                    )}
                   </Fragment>
                 )
               })}
@@ -1291,7 +1459,7 @@ export default function Reports() {
           </table>
         </div>
       </section>
-        </>
+      </>
       ) : null}
     </div>
   )
