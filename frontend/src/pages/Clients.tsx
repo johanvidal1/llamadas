@@ -1016,6 +1016,9 @@ function ClientTableRow({
         .map((ct) => ct.assignment!.agent!.name)
     ),
   ]
+  if (c.lastCallAgent?.name && !agentNames.includes(c.lastCallAgent.name)) {
+    agentNames.push(c.lastCallAgent.name)
+  }
   const aclaracion =
     c.lastAclaracion ??
     (c.lastDisposition ? getResponseOption(c.lastDisposition)?.aclaracion : undefined)
@@ -1237,16 +1240,8 @@ export default function Clients() {
   const initialRegisteredTo = searchParams.get('registeredTo') ?? ''
   const hasUrlDateParams = !!(initialRegisteredFrom || initialRegisteredTo)
   const useDayDefault = !hasUrlDateParams && !initialAgentId && !deepLinkFilter
-  const defaultRegisteredFrom = hasUrlDateParams
-    ? initialRegisteredFrom
-    : useDayDefault
-      ? todayLocal()
-      : ''
-  const defaultRegisteredTo = hasUrlDateParams
-    ? initialRegisteredTo
-    : useDayDefault
-      ? todayLocal()
-      : ''
+  const defaultRegisteredFrom = hasUrlDateParams ? initialRegisteredFrom : ''
+  const defaultRegisteredTo = hasUrlDateParams ? initialRegisteredTo : ''
   const defaultGroupMode: GroupMode = useDayDefault ? 'day' : ''
 
   const [search, setSearch] = useState('')
@@ -1326,15 +1321,8 @@ export default function Clients() {
   }
 
   const clearDateFilter = () => {
-    if (groupMode === 'day' || groupMode === 'week' || groupMode === 'month') {
-      const today = todayLocal()
-      setRegisteredFrom(today)
-      setRegisteredTo(today)
-      setGroupMode('day')
-    } else {
-      setRegisteredFrom('')
-      setRegisteredTo('')
-    }
+    setRegisteredFrom('')
+    setRegisteredTo('')
     setExpandedGroups(new Set())
     setPage(1)
   }
@@ -1381,7 +1369,7 @@ export default function Clients() {
   const selectedBatch = batchId ? batches.find((b) => b.id === batchId) : null
   const selectedAgent = agentId ? agents.find((a) => a.id === agentId) : null
   const hasActiveFilters = !!(search || pipelineFilter || agentId || batchId || hasDateFilter)
-  const showAgentColumn = !agentId && !effectiveGroupBy
+  const showAgentColumn = !agentId
   const showBatchColumn = !batchId
   const displayGroups = useMemo((): DisplayGroup[] => {
     if (groupMode === 'agent') return groupClientsByAgent(clients, agents)
@@ -1994,7 +1982,7 @@ export default function Clients() {
                         ) : (
                           <table className="w-full min-w-[1000px] text-sm">
                             <ClientsTableHead
-                              showAgentColumn={false}
+                              showAgentColumn={showAgentColumn}
                               showBatchColumn={showBatchColumn}
                               visibleColumns={visibleColumns}
                             />
@@ -2003,7 +1991,7 @@ export default function Clients() {
                                 <ClientTableRow
                                   key={c.id}
                                   client={c}
-                                  showAgentColumn={false}
+                                  showAgentColumn={showAgentColumn}
                                   showBatchColumn={showBatchColumn}
                                   visibleColumns={visibleColumns}
                                   onOpenRecord={openRecord}

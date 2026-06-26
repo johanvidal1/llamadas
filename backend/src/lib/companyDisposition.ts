@@ -55,6 +55,8 @@ export async function getLastDispositionByCompanyIds(
       aclaracion: string | null
       lastCalledAt: Date | null
       lastCallContactId: string | null
+      lastCallAgentId: string | null
+      lastCallAgent: { id: string; name: string } | null
       callLogCount: number
     }
   >
@@ -66,6 +68,8 @@ export async function getLastDispositionByCompanyIds(
       aclaracion: string | null
       lastCalledAt: Date | null
       lastCallContactId: string | null
+      lastCallAgentId: string | null
+      lastCallAgent: { id: string; name: string } | null
       callLogCount: number
     }
   >()
@@ -84,6 +88,8 @@ export async function getLastDispositionByCompanyIds(
       aclaracion: true,
       calledAt: true,
       contactId: true,
+      agentId: true,
+      agent: { select: { id: true, name: true } },
     },
     orderBy: { calledAt: 'desc' },
   })
@@ -97,6 +103,8 @@ export async function getLastDispositionByCompanyIds(
         aclaracion: log.aclaracion,
         lastCalledAt: log.calledAt,
         lastCallContactId: log.contactId,
+        lastCallAgentId: log.agentId,
+        lastCallAgent: log.agent,
         callLogCount: 0,
       })
     }
@@ -113,6 +121,8 @@ export async function getLastDispositionByCompanyIds(
         aclaracion: null,
         lastCalledAt: null,
         lastCallContactId: null,
+        lastCallAgentId: null,
+        lastCallAgent: null,
         callLogCount: 0,
       })
     }

@@ -196,6 +196,8 @@ export type ClientListItem = {
   /** Earliest scoped call timestamp (first registration). */
   firstRegisteredAt?: string | null
   lastCallContactId?: string | null
+  /** Agent who saved the most recent scoped call log. */
+  lastCallAgent?: { id?: string; name: string } | null
   /** Scoped call-log count (matches lastCalledAt / disposition agent filter). */
   callLogCount?: number
   contacts: {

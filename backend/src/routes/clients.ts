@@ -107,6 +107,7 @@ async function enrichWithLastDisposition(
     lastCalledAt: string | null
     firstRegisteredAt: string | null
     lastCallContactId: string | null
+    lastCallAgent?: { id: string; name: string } | null
     callLogCount: number
   })[]
 > {
@@ -129,6 +130,7 @@ async function enrichWithLastDisposition(
       lastCalledAt: last?.lastCalledAt?.toISOString() ?? null,
       firstRegisteredAt: firstAt?.toISOString() ?? null,
       lastCallContactId: last?.lastCallContactId ?? null,
+      lastCallAgent: last?.lastCallAgent ?? null,
       callLogCount: last?.callLogCount ?? 0,
     }
   })
