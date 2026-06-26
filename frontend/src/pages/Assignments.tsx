@@ -18,6 +18,7 @@ import {
   type AssignmentRun,
   type AssignmentRunCompany,
   type ReleasePreview,
+  type AppUser,
 } from '../api/client'
 import toast from 'react-hot-toast'
 import { UserCheck, Users, AlertCircle, X, ChevronDown, ChevronRight, History, PackageOpen, Search, Loader2 } from 'lucide-react'
@@ -102,6 +103,87 @@ type AssignableImport = {
 
 function importAvailabilityLabel(unassigned: number, total: number) {
   return `${unassigned} sin asignar de ${total}`
+}
+
+const COMPANIES_BAR_TOOLTIP =
+  'Registradas: empresas con al menos un registro de llamada. Pendientes: sin respuesta aún.'
+
+function AgentCompaniesSummary({
+  assignedCompanies = 0,
+  pendingCompanies = 0,
+  compact = false,
+}: {
+  assignedCompanies?: number
+  pendingCompanies?: number
+  compact?: boolean
+}) {
+  const assigned = assignedCompanies ?? 0
+  const pending = pendingCompanies ?? 0
+  const registered = Math.max(0, assigned - pending)
+  const registeredPct = assigned > 0 ? (registered / assigned) * 100 : 0
+  const pendingPct = assigned > 0 ? (pending / assigned) * 100 : 0
+
+  if (assigned === 0) {
+    return (
+      <div className={compact ? '' : 'mb-4'}>
+        {compact ? (
+          <p className="text-xs text-gray-400">Sin empresas asignadas</p>
+        ) : (
+          <>
+            <p className="text-2xl font-bold text-gray-400">0</p>
+            <p className="text-xs text-gray-500">Empresas asignadas</p>
+            <p className="text-xs text-gray-400 mt-1">Sin empresas asignadas</p>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  const bar = (
+    <div
+      className={`${compact ? 'h-1' : 'h-1.5'} bg-gray-100 rounded-full overflow-hidden flex w-full`}
+      title={COMPANIES_BAR_TOOLTIP}
+    >
+      <div
+        className="h-full bg-emerald-500 transition-all"
+        style={{ width: `${registeredPct}%` }}
+      />
+      <div
+        className="h-full bg-amber-400 transition-all"
+        style={{ width: `${pendingPct}%` }}
+      />
+    </div>
+  )
+
+  if (compact) {
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="text-sm font-semibold text-gray-900">
+            {assigned}{' '}
+            <span className="text-xs font-normal text-gray-500">empresas asignadas</span>
+          </p>
+        </div>
+        {bar}
+        <div className="flex justify-between text-xs">
+          <span className="text-emerald-700">{registered} registradas</span>
+          <span className="text-amber-700">{pending} pendientes</span>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mb-4">
+      <p className="text-2xl font-bold text-gray-900">{assigned}</p>
+      <p className="text-xs text-gray-500 mb-2">Empresas asignadas</p>
+      {bar}
+      <div className="flex justify-between mt-1.5 text-xs">
+        <span className="text-emerald-700">{registered} registradas</span>
+        <span className="text-amber-700">{pending} pendientes</span>
+      </div>
+    </div>
+  )
 }
 
 export default function Assignments() {
@@ -702,16 +784,7 @@ export default function Assignments() {
       <div>
         <h2 className="font-semibold text-gray-900 mb-4">Estado de asignaciones por agente</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {agents.map(
-            (a: {
-              id: string
-              name: string
-              email: string
-              assignedCompanies?: number
-              assignmentRunCount?: number
-              lastAssignmentAt?: string | null
-              _count: { assignments: number; callLogs: number }
-            }) => (
+          {agents.map((a: AppUser) => (
               <div
                 key={a.id}
                 className="card p-5 cursor-pointer hover:shadow-md hover:border-blue-200 transition-all"
@@ -726,11 +799,11 @@ export default function Assignments() {
                     <p className="text-xs text-gray-400">{a.email}</p>
                   </div>
                 </div>
+                <AgentCompaniesSummary
+                  assignedCompanies={a.assignedCompanies}
+                  pendingCompanies={a.pendingCompanies}
+                />
                 <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <p className="text-xl font-bold text-gray-900">{a.assignedCompanies ?? 0}</p>
-                    <p className="text-xs text-gray-500">Empresas</p>
-                  </div>
                   <div>
                     <p className="text-xl font-bold text-gray-900">{a.assignmentRunCount ?? 0}</p>
                     <p className="text-xs text-gray-500">Asignaciones</p>
@@ -739,7 +812,7 @@ export default function Assignments() {
                     <p className="text-xl font-bold text-gray-900">{a._count.callLogs}</p>
                     <p className="text-xs text-gray-500">Llamadas</p>
                   </div>
-                  <div>
+                  <div className="col-span-2">
                     <p className="text-base font-bold text-gray-900 leading-tight">
                       {a.lastAssignmentAt
                         ? format(new Date(a.lastAssignmentAt), 'd MMM yyyy, HH:mm', { locale: es })
@@ -749,8 +822,7 @@ export default function Assignments() {
                   </div>
                 </div>
               </div>
-            )
-          )}
+            ))}
           {agents.length === 0 && (
             <div className="col-span-3 card p-8 text-center text-gray-400">
               <Users size={32} className="mx-auto mb-2" />
@@ -762,11 +834,7 @@ export default function Assignments() {
 
       {/* ── Agent detail drawer ── */}
       {drawerAgentId && (() => {
-        const agent = agents.find((a: { id: string }) => a.id === drawerAgentId) as {
-          id: string; name: string; email: string
-          assignedCompanies?: number
-          _count: { assignments: number; callLogs: number }
-        } | undefined
+        const agent = agents.find((a: AppUser) => a.id === drawerAgentId)
 
         const searchQuery = drawerSearch.trim()
         const isSearching = searchQuery.length > 0
@@ -825,11 +893,12 @@ export default function Assignments() {
                     <X size={20} />
                   </button>
                 </div>
+                <AgentCompaniesSummary
+                  assignedCompanies={agent?.assignedCompanies}
+                  pendingCompanies={agent?.pendingCompanies}
+                  compact
+                />
                 <div className="flex items-center gap-6 text-center">
-                  <div>
-                    <p className="text-xl font-bold text-gray-900">{agent?.assignedCompanies ?? 0}</p>
-                    <p className="text-xs text-gray-500">Empresas</p>
-                  </div>
                   <div>
                     <p className="text-xl font-bold text-gray-900">{drawerRuns.length}</p>
                     <p className="text-xs text-gray-500">Asignaciones</p>
