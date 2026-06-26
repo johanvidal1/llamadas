@@ -207,6 +207,7 @@ model CallLog {
   @@index([calledAt])
   @@index([agentId, calledAt])
   @@index([companyId])
+  @@index([companyId, calledAt])
   @@index([disposition])
 }
 

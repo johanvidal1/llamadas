@@ -182,6 +182,32 @@ export type GetClientsParams = {
   registeredFrom?: string
   registeredTo?: string
   sortBy?: string
+  includePipeline?: boolean
+}
+
+export type ClientsPipelineSummaryResponse = {
+  pipelineCounts: Record<string, number>
+  assignmentSummary?: {
+    assignedCompanies: number
+    pendingCompanies: number
+    registeredCompanies: number
+  }
+  registrationCount?: number
+  total?: number
+  page?: number
+  limit?: number
+}
+
+export type ClientsDaySummaryEntry = {
+  dayKey: string
+  count: number
+  registered: number
+  pending: number
+}
+
+export type ClientsDaySummaryResponse = {
+  days: ClientsDaySummaryEntry[]
+  total: number
 }
 
 /** Response shape for the Clients admin list (date filter fields optional). */
@@ -228,6 +254,12 @@ export type ClientsListResponse = {
 
 export const getClients = (params?: GetClientsParams) =>
   api.get('/clients', { params }).then((r) => r.data)
+
+export const getClientsPipelineSummary = (params?: Omit<GetClientsParams, 'page' | 'limit' | 'sortBy' | 'includePipeline'>) =>
+  api.get('/clients/pipeline-summary', { params }).then((r) => r.data as ClientsPipelineSummaryResponse)
+
+export const getClientsDaySummary = (params?: Omit<GetClientsParams, 'page' | 'limit' | 'sortBy' | 'includePipeline'>) =>
+  api.get('/clients/day-summary', { params }).then((r) => r.data as ClientsDaySummaryResponse)
 export const getClient = (id: string) => api.get(`/clients/${id}`).then((r) => r.data)
 export const updateClient = (id: string, data: object) =>
   api.put(`/clients/${id}`, data).then((r) => r.data)

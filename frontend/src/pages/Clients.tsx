@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useQuery, useQueries } from '@tanstack/react-query'
-import { getClients, getUsers, getImports, type AppUser, type ClientsListResponse, type ClientListItem } from '../api/client'
+import { useQuery, useQueries, keepPreviousData } from '@tanstack/react-query'
+import { getClients, getClientsPipelineSummary, getClientsDaySummary, getUsers, getImports, type AppUser, type ClientsListResponse, type ClientListItem } from '../api/client'
 import { DispositionBadge } from '../components/StatusBadge'
 import {
   AGENT_PIPELINE_FUNNEL,
@@ -691,15 +691,17 @@ function DayGroupHeader({
   group,
   loadedClients,
   isPartial,
+  summary,
 }: {
   group: DisplayGroup
   loadedClients?: ClientListItem[]
   isPartial?: boolean
+  summary?: { count: number; registered: number; pending: number }
 }) {
   const clients = loadedClients ?? group.clients
-  const count = clients.length
-  const pending = clients.filter((c) => isPending(c)).length
-  const registered = count - pending
+  const count = summary?.count ?? clients.length
+  const pending = summary?.pending ?? clients.filter((c) => isPending(c)).length
+  const registered = summary?.registered ?? count - pending
 
   return (
     <div className="flex-1 min-w-0 text-left">
@@ -1227,6 +1229,27 @@ function AgentGroupHeader({
   )
 }
 
+function ClientsFunnelSkeleton() {
+  return (
+    <div className="flex flex-wrap gap-2 overflow-x-auto animate-pulse">
+      {[...Array(6)].map((_, i) => (
+        <div key={i} className="h-[4.5rem] min-w-[5.5rem] bg-gray-100 rounded-lg border border-gray-200" />
+      ))}
+    </div>
+  )
+}
+
+function ClientsTableSkeleton() {
+  return (
+    <div className="animate-pulse">
+      <div className="h-11 bg-gray-50 border-b border-gray-200" />
+      {[...Array(8)].map((_, i) => (
+        <div key={i} className="h-12 border-b border-gray-100 bg-gray-50/50" />
+      ))}
+    </div>
+  )
+}
+
 export default function Clients() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -1312,6 +1335,17 @@ export default function Clients() {
     groupMode === 'week' ||
     groupMode === 'month'
 
+  const effectiveLimit = effectiveGroupBy ? Math.min(pageSize, 50) : pageSize
+
+  const clientsFilterParams = {
+    search: search || undefined,
+    agentId: agentId || undefined,
+    batchId: batchId || undefined,
+    registeredFrom: registeredFrom || undefined,
+    registeredTo: registeredTo || undefined,
+    ...pipelineFilterToParams(pipelineFilter),
+  }
+
   const applyDateFilter = (from: string, to: string, mode: GroupMode) => {
     setRegisteredFrom(from)
     setRegisteredTo(to)
@@ -1338,32 +1372,46 @@ export default function Clients() {
         registeredFrom,
         registeredTo,
         page: effectiveGroupBy ? 1 : page,
-        pageSize,
+        pageSize: effectiveLimit,
         grouped: effectiveGroupBy,
         groupMode,
         sortBy: 'activity',
+        includePipeline: false,
       },
     ],
     queryFn: () =>
       getClients({
-        search: search || undefined,
-        agentId: agentId || undefined,
-        batchId: batchId || undefined,
-        registeredFrom: registeredFrom || undefined,
-        registeredTo: registeredTo || undefined,
+        ...clientsFilterParams,
         page: effectiveGroupBy ? 1 : page,
-        limit: pageSize,
+        limit: effectiveLimit,
         sortBy: 'activity',
-        ...pipelineFilterToParams(pipelineFilter),
+        includePipeline: false,
       }),
+    placeholderData: keepPreviousData,
+  })
+
+  const { data: pipelineData, isLoading: pipelineLoading } = useQuery({
+    queryKey: ['clients', 'pipeline-summary', clientsFilterParams],
+    queryFn: () => getClientsPipelineSummary(clientsFilterParams),
+    placeholderData: keepPreviousData,
+  })
+
+  const useDaySummary = groupMode === 'day' && !registeredFrom && !registeredTo
+  const { data: daySummaryData } = useQuery({
+    queryKey: ['clients', 'day-summary', clientsFilterParams],
+    queryFn: () => getClientsDaySummary(clientsFilterParams),
+    enabled: useDaySummary,
+    placeholderData: keepPreviousData,
   })
 
   const clients = data?.clients ?? []
-  const total = data?.total ?? 0
+  const total = useDaySummary
+    ? (daySummaryData?.total ?? data?.total ?? 0)
+    : (data?.total ?? 0)
   const showFlatPagination = !effectiveGroupBy && total > pageSize
-  const registrationCount = data?.registrationCount
-  const pipelineCounts = data?.pipelineCounts
-  const assignmentSummary = data?.assignmentSummary
+  const registrationCount = data?.registrationCount ?? pipelineData?.registrationCount
+  const pipelineCounts = pipelineData?.pipelineCounts
+  const assignmentSummary = pipelineData?.assignmentSummary ?? data?.assignmentSummary
   const funnelTotal = pipelineCounts ? sumFunnelStages(pipelineCounts) : null
   const hasDateFilter = !!(registeredFrom || registeredTo)
   const selectedBatch = batchId ? batches.find((b) => b.id === batchId) : null
@@ -1374,11 +1422,31 @@ export default function Clients() {
   const displayGroups = useMemo((): DisplayGroup[] => {
     if (groupMode === 'agent') return groupClientsByAgent(clients, agents)
     if (groupMode === 'status') return groupClientsByStatus(clients)
-    if (groupMode === 'day') return buildDayDisplayGroups(clients, registeredFrom, registeredTo)
+    if (groupMode === 'day') {
+      if (useDaySummary && daySummaryData?.days) {
+        return daySummaryData.days.map((day) => ({
+          key: day.dayKey,
+          title: formatDayGroupLabel(day.dayKey),
+          borderClass: dayBorderClass(day.dayKey),
+          clients: bucketClientsByDay(clients).get(day.dayKey) ?? [],
+        }))
+      }
+      return buildDayDisplayGroups(clients, registeredFrom, registeredTo)
+    }
     if (groupMode === 'week') return groupClientsByWeek(clients)
     if (groupMode === 'month') return groupClientsByMonth(clients)
     return []
-  }, [groupMode, clients, agents, registeredFrom, registeredTo])
+  }, [groupMode, clients, agents, registeredFrom, registeredTo, useDaySummary, daySummaryData?.days])
+
+  const daySummaryByKey = useMemo(() => {
+    const map = new Map<string, { count: number; registered: number; pending: number }>()
+    if (daySummaryData?.days) {
+      for (const day of daySummaryData.days) {
+        map.set(day.dayKey, { count: day.count, registered: day.registered, pending: day.pending })
+      }
+    }
+    return map
+  }, [daySummaryData?.days])
 
   const lazyAgentIds = useMemo(() => {
     if (groupMode !== 'agent' || agentId) return []
@@ -1387,8 +1455,13 @@ export default function Clients() {
 
   const lazyDayKeys = useMemo(() => {
     if (groupMode !== 'day') return []
-    return [...expandedGroups]
-  }, [groupMode, expandedGroups])
+    return [...expandedGroups].filter((dayKey) => {
+      const group = displayGroups.find((g) => g.key === dayKey)
+      if (!group) return true
+      if (group.clients.length > 0 && !hasDateFilter) return false
+      return true
+    })
+  }, [groupMode, expandedGroups, displayGroups, hasDateFilter])
 
   const lazyAgentQueries = useQueries({
     queries: lazyAgentIds.map((id) => ({
@@ -1396,19 +1469,16 @@ export default function Clients() {
         'clients',
         'agent-group',
         id,
-        { search, batchId, registeredFrom, registeredTo, pageSize, pipelineFilter },
+        { search, batchId, registeredFrom, registeredTo, effectiveLimit, pipelineFilter },
       ],
       queryFn: () =>
         getClients({
-          search: search || undefined,
+          ...clientsFilterParams,
           agentId: id,
-          batchId: batchId || undefined,
-          registeredFrom: registeredFrom || undefined,
-          registeredTo: registeredTo || undefined,
           page: 1,
-          limit: pageSize,
+          limit: effectiveLimit,
           sortBy: 'activity',
-          ...pipelineFilterToParams(pipelineFilter),
+          includePipeline: false,
         }),
       staleTime: 30_000,
     })),
@@ -1420,19 +1490,17 @@ export default function Clients() {
         'clients',
         'day-group',
         dayKey,
-        { search, agentId, batchId, pageSize, pipelineFilter },
+        { search, agentId, batchId, effectiveLimit, pipelineFilter },
       ],
       queryFn: () =>
         getClients({
-          search: search || undefined,
-          agentId: agentId || undefined,
-          batchId: batchId || undefined,
+          ...clientsFilterParams,
           registeredFrom: dayKey,
           registeredTo: dayKey,
           page: 1,
-          limit: pageSize,
+          limit: effectiveLimit,
           sortBy: 'activity',
-          ...pipelineFilterToParams(pipelineFilter),
+          includePipeline: false,
         }),
       staleTime: 30_000,
     })),
@@ -1462,7 +1530,7 @@ export default function Clients() {
     return map
   }, [lazyDayKeys, lazyDayQueries])
 
-  const dayGroupsPartial = groupMode === 'day' && total > pageSize
+  const dayGroupsPartial = groupMode === 'day' && !useDaySummary && total > effectiveLimit
 
   const expandStatusGroups = (groupKeys: string[]) => {
     setPipelineFilter('')
@@ -1517,11 +1585,7 @@ export default function Clients() {
     if (groupMode === 'day') {
       setExpandedGroups((prev) => {
         const validKeys = new Set(displayGroups.map((g) => g.key))
-        const filtered = new Set([...prev].filter((k) => validKeys.has(k)))
-        if (filtered.size > 0) return filtered
-        const today = todayLocal()
-        if (validKeys.has(today)) return new Set([today])
-        return new Set()
+        return new Set([...prev].filter((k) => validKeys.has(k)))
       })
       return
     }
@@ -1781,7 +1845,10 @@ export default function Clients() {
                 )}
               </div>
               <div className="flex flex-wrap gap-2 overflow-x-auto">
-                {AGENT_PIPELINE_FUNNEL.map((f) => {
+                {pipelineLoading && !pipelineCounts ? (
+                  <ClientsFunnelSkeleton />
+                ) : (
+                AGENT_PIPELINE_FUNNEL.map((f) => {
                   const isActive = pipelineFilter === f.key
                   const count = pipelineCounts?.[f.key] ?? 0
                   return (
@@ -1807,7 +1874,8 @@ export default function Clients() {
                       </span>
                     </button>
                   )
-                })}
+                })
+                )}
               </div>
             </div>
 
@@ -1865,8 +1933,8 @@ export default function Clients() {
 
       {/* Table */}
       <div className="card overflow-x-auto">
-        {isLoading ? (
-          <div className="p-8 text-center text-gray-400">Cargando...</div>
+        {isLoading && !data ? (
+          <ClientsTableSkeleton />
         ) : clients.length === 0 && !effectiveGroupBy ? (
           <div className="p-12 text-center text-gray-400">
             <User size={40} className="mx-auto mb-2" />
@@ -1878,21 +1946,23 @@ export default function Clients() {
           </div>
         ) : effectiveGroupBy ? (
           <div className="p-3 space-y-3">
-            {total > pageSize && (
+            {total > effectiveLimit && (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                 {groupMode === 'agent' ? (
                   <>
-                    Los totales por agente son completos. Al expandir, la tabla muestra hasta {pageSize}{' '}
+                    Los totales por agente son completos. Al expandir, la tabla muestra hasta {effectiveLimit}{' '}
                     empresas del listado cargado. Filtra por agente para ver el listado completo.
                   </>
                 ) : groupMode === 'day' ? (
                   <>
-                    Los conteos en cada día pueden ser parciales. Expande un día para cargar hasta {pageSize}{' '}
-                    empresas de ese día con los filtros actuales.
+                    {useDaySummary
+                      ? 'Expande un día para cargar hasta '
+                      : 'Los conteos en cada día pueden ser parciales. Expande un día para cargar hasta '}
+                    {effectiveLimit} empresas de ese día con los filtros actuales.
                   </>
                 ) : (
                   <>
-                    Mostrando las primeras {pageSize} empresas del filtro actual. Refina los filtros para
+                    Mostrando las primeras {effectiveLimit} empresas del filtro actual. Refina los filtros para
                     ver grupos completos.
                   </>
                 )}
@@ -1935,11 +2005,17 @@ export default function Clients() {
                 const lazyDayEntry =
                   groupMode === 'day' ? lazyClientsByDayKey.get(group.key) : undefined
                 const lazyEntry = lazyDayEntry ?? lazyAgentEntry
+                const lazyClients = lazyEntry?.clients ?? []
                 const groupClients =
-                  lazyEntry && !lazyEntry.isLoading ? lazyEntry.clients : group.clients
-                const groupLoading = expanded && lazyEntry?.isLoading
+                  lazyEntry && lazyClients.length > 0 && !lazyEntry.isLoading
+                    ? lazyClients
+                    : group.clients
+                const groupRefreshing = expanded && !!lazyEntry?.isLoading && groupClients.length > 0
+                const groupLoading = expanded && !!lazyEntry?.isLoading && groupClients.length === 0
                 const headerClients =
-                  lazyEntry && !lazyEntry.isLoading ? lazyEntry.clients : group.clients
+                  lazyEntry && lazyClients.length > 0 && !lazyEntry.isLoading
+                    ? lazyClients
+                    : group.clients
                 return (
                   <div key={group.key} className="rounded-lg border border-gray-200 overflow-hidden">
                     <button
@@ -1962,6 +2038,7 @@ export default function Clients() {
                           group={group}
                           loadedClients={headerClients}
                           isPartial={dayGroupsPartial}
+                          summary={useDaySummary ? daySummaryByKey.get(group.key) : undefined}
                         />
                       ) : (
                         <>
@@ -1980,6 +2057,13 @@ export default function Clients() {
                             <span className="text-sm">Cargando empresas…</span>
                           </div>
                         ) : (
+                          <>
+                            {groupRefreshing && (
+                              <div className="flex items-center gap-2 px-4 py-2 text-xs text-gray-500 bg-gray-50 border-b border-gray-100">
+                                <Loader2 size={14} className="animate-spin" />
+                                Actualizando…
+                              </div>
+                            )}
                           <table className="w-full min-w-[1000px] text-sm">
                             <ClientsTableHead
                               showAgentColumn={showAgentColumn}
@@ -1999,6 +2083,7 @@ export default function Clients() {
                               ))}
                             </tbody>
                           </table>
+                          </>
                         )}
                       </div>
                     )}

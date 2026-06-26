@@ -7,6 +7,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { getAclaracionForDisposition, isValidDisposition } from '../lib/responseOptions'
 import {
   buildCompanyPipelineCounts,
+  buildDaySummary,
   dispositionMatchesFilter,
   FUNNEL_PIPELINE_KEYS,
   getFirstRegisteredAtByCompanyIds,
@@ -14,6 +15,7 @@ import {
   matchesFunnelFilter,
   pipelineBucketForDisposition,
   sortClientsByActivityQueue,
+  sortCompanyIdsByActivityQueue,
 } from '../lib/companyDisposition'
 import { countUnassignedCompanies, BatchBlockedError } from '../lib/assignmentOrder'
 
@@ -99,7 +101,8 @@ async function fetchCompanies(
 
 async function enrichWithLastDisposition(
   companies: CompanyRow[],
-  agentUserId?: string
+  agentUserId?: string,
+  preloadedLast?: Awaited<ReturnType<typeof getLastDispositionByCompanyIds>>
 ): Promise<
   (CompanyRow & {
     lastDisposition: string | null
@@ -115,7 +118,9 @@ async function enrichWithLastDisposition(
 
   const companyIds = companies.map((c) => c.id)
   const [lastByCompany, firstByCompany] = await Promise.all([
-    getLastDispositionByCompanyIds(companyIds, agentUserId),
+    preloadedLast
+      ? Promise.resolve(preloadedLast)
+      : getLastDispositionByCompanyIds(companyIds, agentUserId),
     getFirstRegisteredAtByCompanyIds(companyIds, agentUserId),
   ])
 
@@ -151,12 +156,6 @@ function buildRegistrationCallLogWhere(
   return where
 }
 
-function matchesPendingFilter(
-  company: CompanyRow & { lastDisposition: string | null },
-): boolean {
-  return company.lastDisposition == null
-}
-
 function emptyFunnelPipelineCounts(): Record<string, number> {
   return Object.fromEntries(FUNNEL_PIPELINE_KEYS.map((k) => [k, 0]))
 }
@@ -164,6 +163,237 @@ function emptyFunnelPipelineCounts(): Record<string, number> {
 async function getScopedCompanyIds(where: Record<string, unknown>): Promise<string[]> {
   const rows = await prisma.company.findMany({ where, select: { id: true } })
   return rows.map((r) => r.id)
+}
+
+type LightweightCompanyRow = {
+  id: string
+  ruc: string
+  globalCallLogCount: number
+}
+
+async function fetchLightweightCompanies(
+  where: Record<string, unknown>
+): Promise<LightweightCompanyRow[]> {
+  const rows = await prisma.company.findMany({
+    where,
+    select: { id: true, ruc: true, _count: { select: { callLogs: true } } },
+    orderBy: { createdAt: 'asc' },
+  })
+  return rows.map((r) => ({
+    id: r.id,
+    ruc: r.ruc,
+    globalCallLogCount: r._count.callLogs,
+  }))
+}
+
+async function fetchCompaniesByIdsInOrder(
+  ids: string[],
+  contactWhere: Record<string, unknown> | undefined,
+  agentUserId: string
+): Promise<CompanyRow[]> {
+  if (ids.length === 0) return []
+  const companies = await fetchCompanies(
+    { id: { in: ids } },
+    contactWhere,
+    agentUserId
+  )
+  const orderMap = new Map(ids.map((id, i) => [id, i]))
+  companies.sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0))
+  return companies
+}
+
+type ClientsFilterContext = {
+  where: Record<string, unknown>
+  contactWhere: Record<string, unknown> | undefined
+  callLogAgentId: string
+  dispositionAgentId: string | undefined
+  registrationCount?: number
+  effectiveDisposition?: string
+  agentScopedPending: boolean
+  agentScopedOtros: boolean
+  agentScopedFunnel: boolean
+  agentScopedDisposition: boolean
+  includeAssignmentSummary: boolean
+}
+
+async function buildClientsFilterContext(
+  req: AuthRequest,
+  query: Record<string, string>
+): Promise<ClientsFilterContext | { empty: true; take: number; page: number; registrationCount?: number }> {
+  const {
+    status,
+    disposition,
+    search,
+    batchId,
+    agentId,
+    registeredFrom,
+    registeredTo,
+  } = query
+
+  const take = Math.min(Number(query.limit) || 50, 500)
+  const page = Math.max(Number(query.page) || 1, 1)
+  const isAgent = req.user!.role === 'AGENT'
+  const callLogAgentId = scopedAgentId(req.user!.role, req.user!.id, agentId)
+  const dispositionAgentId = dispositionScopeAgentId(req.user!.role, req.user!.id, agentId)
+  const filterParam = query.filter
+  const effectiveDisposition =
+    disposition || (filterParam && filterParam !== 'PENDING' ? filterParam : undefined)
+  const agentScopedPending = status === 'PENDING' || filterParam === 'PENDING'
+  const agentScopedOtros = effectiveDisposition === 'OTROS'
+  const agentScopedFunnel = effectiveDisposition === 'FUNNEL'
+  const agentScopedDisposition =
+    !!effectiveDisposition &&
+    !agentScopedOtros &&
+    !agentScopedFunnel &&
+    isValidDisposition(effectiveDisposition)
+
+  const where: Record<string, unknown> = {}
+  const contactWhere = contactFilterForRole(req.user!.role, req.user!.id, agentId)
+
+  if (contactWhere) {
+    where.contacts = { some: contactWhere }
+  }
+
+  if (batchId) where.importBatchId = batchId
+  if (status && !agentScopedPending) where.status = status
+  if (search) {
+    where.OR = [
+      { ruc: { contains: search, mode: 'insensitive' } },
+      { razonSocial: { contains: search, mode: 'insensitive' } },
+      { contacts: { some: { nombre: { contains: search, mode: 'insensitive' } } } },
+      { contacts: { some: { telefono: { contains: search, mode: 'insensitive' } } } },
+    ]
+  }
+
+  const calledAtRange = buildCalledAtRange(registeredFrom, registeredTo)
+  let registrationCount: number | undefined
+
+  if (calledAtRange) {
+    const registrationWhere = buildRegistrationCallLogWhere(
+      calledAtRange,
+      where,
+      dispositionAgentId
+    )
+    const [matchingLogs, count] = await Promise.all([
+      prisma.callLog.findMany({
+        where: registrationWhere,
+        select: { companyId: true },
+        distinct: ['companyId'],
+      }),
+      prisma.callLog.count({ where: registrationWhere }),
+    ])
+    registrationCount = count
+    const companyIdsInRange = matchingLogs.map((l) => l.companyId)
+    if (companyIdsInRange.length === 0) {
+      return { empty: true, take, page, registrationCount: 0 }
+    }
+    where.id = { in: companyIdsInRange }
+  }
+
+  return {
+    where,
+    contactWhere,
+    callLogAgentId,
+    dispositionAgentId,
+    registrationCount,
+    effectiveDisposition,
+    agentScopedPending,
+    agentScopedOtros,
+    agentScopedFunnel,
+    agentScopedDisposition,
+    includeAssignmentSummary: !!agentId,
+  }
+}
+
+async function getActivitySortedClientsPage(
+  ctx: ClientsFilterContext,
+  skip: number,
+  take: number
+) {
+  const lightweight = await fetchLightweightCompanies(ctx.where)
+  const sortedIds = await sortCompanyIdsByActivityQueue(
+    lightweight,
+    ctx.dispositionAgentId
+  )
+  const total = sortedIds.length
+  const pageIds = sortedIds.slice(skip, skip + take)
+  const lastByCompany = await getLastDispositionByCompanyIds(pageIds, ctx.dispositionAgentId)
+  const companies = await fetchCompaniesByIdsInOrder(
+    pageIds,
+    ctx.contactWhere,
+    ctx.callLogAgentId
+  )
+  const clients = await enrichWithLastDisposition(
+    companies,
+    ctx.dispositionAgentId,
+    lastByCompany
+  )
+  return { clients, total }
+}
+
+async function getFilteredDispositionClientsPage(
+  ctx: ClientsFilterContext,
+  skip: number,
+  take: number
+) {
+  const lightweight = await fetchLightweightCompanies(ctx.where)
+  const companyIds = lightweight.map((c) => c.id)
+  const lastByCompany = await getLastDispositionByCompanyIds(
+    companyIds,
+    ctx.dispositionAgentId
+  )
+
+  const filteredIds: string[] = []
+  for (const row of lightweight) {
+    const disposition = lastByCompany.get(row.id)?.disposition ?? null
+    if (ctx.agentScopedOtros) {
+      if (pipelineBucketForDisposition(disposition) === 'OTROS') filteredIds.push(row.id)
+      continue
+    }
+    if (ctx.agentScopedFunnel) {
+      if (matchesFunnelFilter(disposition)) filteredIds.push(row.id)
+      continue
+    }
+    if (ctx.agentScopedDisposition) {
+      if (dispositionMatchesFilter(disposition, ctx.effectiveDisposition!)) {
+        filteredIds.push(row.id)
+      }
+      continue
+    }
+    if (ctx.agentScopedPending) {
+      if (disposition == null) filteredIds.push(row.id)
+      continue
+    }
+  }
+
+  const sortable = filteredIds.map((id) => {
+    const row = lightweight.find((c) => c.id === id)!
+    const last = lastByCompany.get(id)
+    return {
+      id,
+      ruc: row.ruc,
+      lastDisposition: last?.disposition ?? null,
+      lastCalledAt: last?.lastCalledAt ?? null,
+      _count: { callLogs: row.globalCallLogCount },
+    }
+  })
+  const sortedIds = sortClientsByActivityQueue(sortable).map((r) => r.id)
+  const total = sortedIds.length
+  const pageIds = sortedIds.slice(skip, skip + take)
+  const pageLastByCompany = new Map(
+    pageIds.map((id) => [id, lastByCompany.get(id)!])
+  )
+  const companies = await fetchCompaniesByIdsInOrder(
+    pageIds,
+    ctx.contactWhere,
+    ctx.callLogAgentId
+  )
+  const clients = await enrichWithLastDisposition(
+    companies,
+    ctx.dispositionAgentId,
+    pageLastByCompany
+  )
+  return { clients, total }
 }
 
 type AssignmentSummary = {
@@ -216,39 +446,71 @@ async function buildPipelineScopeData(
   }
 }
 
+// GET /api/clients/pipeline-summary — funnel counts without full client list
+router.get('/pipeline-summary', requireAuth, async (req: AuthRequest, res: Response) => {
+  const query = req.query as Record<string, string>
+  const built = await buildClientsFilterContext(req, query)
+  const take = Math.min(Number(query.limit) || 50, 500)
+  const page = Math.max(Number(query.page) || 1, 1)
+
+  if ('empty' in built) {
+    res.json({
+      pipelineCounts: emptyFunnelPipelineCounts(),
+      ...(built.registrationCount !== undefined ? { registrationCount: built.registrationCount } : {}),
+    })
+    return
+  }
+
+  const scopedIds = await getScopedCompanyIds(built.where)
+  const { pipelineCounts, assignmentSummary } = await buildPipelineScopeData(
+    scopedIds,
+    built.dispositionAgentId,
+    built.includeAssignmentSummary
+  )
+
+  res.json({
+    pipelineCounts,
+    ...(assignmentSummary ? { assignmentSummary } : {}),
+    ...(built.registrationCount !== undefined ? { registrationCount: built.registrationCount } : {}),
+    total: scopedIds.length,
+    page,
+    limit: take,
+  })
+})
+
+// GET /api/clients/day-summary — per-day counts for grouped day view headers
+router.get('/day-summary', requireAuth, async (req: AuthRequest, res: Response) => {
+  const query = req.query as Record<string, string>
+  const built = await buildClientsFilterContext(req, query)
+
+  if ('empty' in built) {
+    res.json({ days: [], total: 0 })
+    return
+  }
+
+  const scopedIds = await getScopedCompanyIds(built.where)
+  const days = await buildDaySummary(scopedIds, built.dispositionAgentId)
+  res.json({ days, total: scopedIds.length })
+})
+
 // GET /api/clients — ADMIN sees all, AGENT sees only assigned contacts
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
+  const query = req.query as Record<string, string>
   const {
     page = '1',
     limit = '50',
-    status,
-    disposition,
-    search,
-    batchId,
-    agentId,
     unassigned,
-    registeredFrom,
-    registeredTo,
     sortBy,
-  } = req.query as Record<string, string>
+    includePipeline = 'true',
+  } = query
 
   const take = Math.min(Number(limit) || 50, 500)
   const skip = (Math.max(Number(page) || 1, 1) - 1) * take
   const isAgent = req.user!.role === 'AGENT'
-  const callLogAgentId = scopedAgentId(req.user!.role, req.user!.id, agentId)
-  const dispositionAgentId = dispositionScopeAgentId(req.user!.role, req.user!.id, agentId)
-  const filterParam = (req.query as Record<string, string>).filter
-  const effectiveDisposition = disposition || (filterParam && filterParam !== 'PENDING' ? filterParam : undefined)
-  const agentScopedPending = status === 'PENDING' || filterParam === 'PENDING'
-  const agentScopedOtros = effectiveDisposition === 'OTROS'
-  const agentScopedFunnel = effectiveDisposition === 'FUNNEL'
-  const agentScopedDisposition =
-    effectiveDisposition &&
-    !agentScopedOtros &&
-    !agentScopedFunnel &&
-    isValidDisposition(effectiveDisposition)
+  const shouldIncludePipeline = includePipeline !== 'false'
 
   if (unassigned === 'true' && !isAgent) {
+    const { batchId } = query
     let sourceRowCount: number | null = null
 
     if (batchId) {
@@ -284,109 +546,52 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     return
   }
 
-  const where: Record<string, unknown> = {}
-  const contactWhere = contactFilterForRole(req.user!.role, req.user!.id, agentId)
-
-  if (contactWhere) {
-    where.contacts = { some: contactWhere }
-  }
-
-  if (batchId) where.importBatchId = batchId
-  if (status && !agentScopedPending) where.status = status
-  if (search) {
-    where.OR = [
-      { ruc: { contains: search, mode: 'insensitive' } },
-      { razonSocial: { contains: search, mode: 'insensitive' } },
-      { contacts: { some: { nombre: { contains: search, mode: 'insensitive' } } } },
-      { contacts: { some: { telefono: { contains: search, mode: 'insensitive' } } } },
-    ]
-  }
-
-  const calledAtRange = buildCalledAtRange(registeredFrom, registeredTo)
-  let registrationCount: number | undefined
-
-  if (calledAtRange) {
-    const registrationWhere = buildRegistrationCallLogWhere(
-      calledAtRange,
-      where,
-      dispositionAgentId
-    )
-    const [matchingLogs, count] = await Promise.all([
-      prisma.callLog.findMany({
-        where: registrationWhere,
-        select: { companyId: true },
-        distinct: ['companyId'],
-      }),
-      prisma.callLog.count({ where: registrationWhere }),
-    ])
-    registrationCount = count
-    const companyIdsInRange = matchingLogs.map((l) => l.companyId)
-    if (companyIdsInRange.length === 0) {
-      res.json({
-        clients: [],
-        total: 0,
-        page: Number(page),
-        limit: take,
-        registrationCount: 0,
-        pipelineCounts: emptyFunnelPipelineCounts(),
-      })
-      return
-    }
-    where.id = { in: companyIdsInRange }
-  }
-
-  const jsonExtras = registrationCount !== undefined ? { registrationCount } : {}
-  const includeAssignmentSummary = !!agentId
-
-  if (agentScopedDisposition || agentScopedPending || agentScopedOtros || agentScopedFunnel) {
-    const allCompanies = await fetchCompanies(where, contactWhere, callLogAgentId)
-    const scopedIds = allCompanies.map((c) => c.id)
-    const [{ pipelineCounts, assignmentSummary }, enriched] = await Promise.all([
-      buildPipelineScopeData(scopedIds, dispositionAgentId, includeAssignmentSummary),
-      enrichWithLastDisposition(allCompanies, dispositionAgentId),
-    ])
-    const filtered = enriched.filter((c) => {
-      if (agentScopedOtros) {
-        return pipelineBucketForDisposition(c.lastDisposition) === 'OTROS'
-      }
-      if (agentScopedFunnel) {
-        return matchesFunnelFilter(c.lastDisposition)
-      }
-      if (agentScopedDisposition) {
-        return dispositionMatchesFilter(c.lastDisposition, effectiveDisposition!)
-      }
-      return matchesPendingFilter(c)
-    })
-    const total = filtered.length
-    const clients = filtered.slice(skip, skip + take)
+  const built = await buildClientsFilterContext(req, query)
+  if ('empty' in built) {
     res.json({
-      clients,
-      total,
+      clients: [],
+      total: 0,
       page: Number(page),
       limit: take,
-      pipelineCounts,
-      ...(assignmentSummary ? { assignmentSummary } : {}),
-      ...jsonExtras,
+      registrationCount: built.registrationCount ?? 0,
+      ...(shouldIncludePipeline ? { pipelineCounts: emptyFunnelPipelineCounts() } : {}),
     })
     return
   }
 
-  if (sortBy === 'activity') {
-    const allCompanies = await fetchCompanies(where, contactWhere, callLogAgentId)
-    const scopedIds = allCompanies.map((c) => c.id)
-    const [{ pipelineCounts, assignmentSummary }, enriched] = await Promise.all([
-      buildPipelineScopeData(scopedIds, dispositionAgentId, includeAssignmentSummary),
-      enrichWithLastDisposition(allCompanies, dispositionAgentId),
-    ])
-    const sorted = sortClientsByActivityQueue(enriched)
-    const total = sorted.length
-    const clients = sorted.slice(skip, skip + take)
+  const jsonExtras =
+    built.registrationCount !== undefined ? { registrationCount: built.registrationCount } : {}
+
+  const needsDispositionFilter =
+    built.agentScopedDisposition ||
+    built.agentScopedPending ||
+    built.agentScopedOtros ||
+    built.agentScopedFunnel
+
+  if (needsDispositionFilter || sortBy === 'activity') {
+    const { clients, total } = needsDispositionFilter
+      ? await getFilteredDispositionClientsPage(built, skip, take)
+      : await getActivitySortedClientsPage(built, skip, take)
+
+    let pipelineCounts: Record<string, number> | undefined
+    let assignmentSummary: AssignmentSummary | undefined
+    if (shouldIncludePipeline) {
+      const scopedIds = await getScopedCompanyIds(built.where)
+      const pipelineData = await buildPipelineScopeData(
+        scopedIds,
+        built.dispositionAgentId,
+        built.includeAssignmentSummary
+      )
+      pipelineCounts = pipelineData.pipelineCounts
+      assignmentSummary = pipelineData.assignmentSummary
+    }
+
     res.json({
       clients,
       total,
       page: Number(page),
       limit: take,
-      pipelineCounts,
+      ...(pipelineCounts ? { pipelineCounts } : {}),
       ...(assignmentSummary ? { assignmentSummary } : {}),
       ...jsonExtras,
     })
@@ -394,14 +599,20 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 
   const [companies, total, scopedIds] = await Promise.all([
-    fetchCompanies(where, contactWhere, callLogAgentId, take, skip),
-    prisma.company.count({ where }),
-    getScopedCompanyIds(where),
+    fetchCompanies(built.where, built.contactWhere, built.callLogAgentId, take, skip),
+    prisma.company.count({ where: built.where }),
+    getScopedCompanyIds(built.where),
   ])
 
-  const [{ pipelineCounts, assignmentSummary }, clients] = await Promise.all([
-    buildPipelineScopeData(scopedIds, dispositionAgentId, includeAssignmentSummary),
-    enrichWithLastDisposition(companies, dispositionAgentId),
+  const [pipelineData, clients] = await Promise.all([
+    shouldIncludePipeline
+      ? buildPipelineScopeData(
+          scopedIds,
+          built.dispositionAgentId,
+          built.includeAssignmentSummary
+        )
+      : Promise.resolve({ pipelineCounts: undefined, assignmentSummary: undefined }),
+    enrichWithLastDisposition(companies, built.dispositionAgentId),
   ])
 
   res.json({
@@ -409,8 +620,8 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     total,
     page: Number(page),
     limit: take,
-    pipelineCounts,
-    ...(assignmentSummary ? { assignmentSummary } : {}),
+    ...(pipelineData.pipelineCounts ? { pipelineCounts: pipelineData.pipelineCounts } : {}),
+    ...(pipelineData.assignmentSummary ? { assignmentSummary: pipelineData.assignmentSummary } : {}),
     ...jsonExtras,
   })
 })

@@ -1,4 +1,5 @@
 import { prisma } from './prisma'
+import { formatYmdInTz } from './appTimezone'
 
 /** Pipeline bucket keys returned in dashboard companyPipeline. */
 export const COMPANY_PIPELINE_KEYS = [
@@ -516,6 +517,78 @@ function lastCalledAtMs(c: ActivityQueueSortable): number | null {
   if (!c.lastCalledAt) return null
   const d = c.lastCalledAt instanceof Date ? c.lastCalledAt : new Date(c.lastCalledAt)
   return d.getTime()
+}
+
+export type ActivitySortRow = ActivityQueueSortable & { id: string }
+
+/** Sort company ids by activity queue without loading full company graphs. */
+export async function sortCompanyIdsByActivityQueue(
+  rows: { id: string; ruc: string; globalCallLogCount: number }[],
+  dispositionAgentId?: string
+): Promise<string[]> {
+  if (rows.length === 0) return []
+  const companyIds = rows.map((r) => r.id)
+  const lastByCompany = await getLastDispositionByCompanyIds(companyIds, dispositionAgentId)
+  const sortable: ActivitySortRow[] = rows.map((r) => {
+    const last = lastByCompany.get(r.id)
+    return {
+      id: r.id,
+      ruc: r.ruc,
+      lastDisposition: last?.disposition ?? null,
+      lastCalledAt: last?.lastCalledAt ?? null,
+      _count: { callLogs: r.globalCallLogCount },
+    }
+  })
+  return sortClientsByActivityQueue(sortable).map((r) => r.id)
+}
+
+export type DaySummaryEntry = {
+  dayKey: string
+  count: number
+  registered: number
+  pending: number
+}
+
+/** Per-day registration counts for collapsed day-group headers. */
+export async function buildDaySummary(
+  companyIds: string[],
+  dispositionAgentId?: string
+): Promise<DaySummaryEntry[]> {
+  if (companyIds.length === 0) return []
+
+  const [firstByCompany, lastByCompany, globalCounts] = await Promise.all([
+    getFirstRegisteredAtByCompanyIds(companyIds, dispositionAgentId),
+    getLastDispositionByCompanyIds(companyIds, dispositionAgentId),
+    prisma.company.findMany({
+      where: { id: { in: companyIds } },
+      select: { id: true, _count: { select: { callLogs: true } } },
+    }),
+  ])
+  const callLogCountById = new Map(
+    globalCounts.map((c) => [c.id, c._count.callLogs])
+  )
+
+  const byDay = new Map<string, { count: number; registered: number; pending: number }>()
+
+  for (const id of companyIds) {
+    const firstAt = firstByCompany.get(id)
+    if (!firstAt) continue
+    const dayKey = formatYmdInTz(firstAt)
+    const last = lastByCompany.get(id)
+    const disposition = last?.disposition ?? null
+    const globalLogs = callLogCountById.get(id) ?? 0
+    const isPending = disposition == null && globalLogs === 0
+
+    const entry = byDay.get(dayKey) ?? { count: 0, registered: 0, pending: 0 }
+    entry.count++
+    if (isPending) entry.pending++
+    else entry.registered++
+    byDay.set(dayKey, entry)
+  }
+
+  return [...byDay.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([dayKey, stats]) => ({ dayKey, ...stats }))
 }
 
 /** Option B: registered/updated by lastCalledAt desc, pendientes at bottom (RUC asc). */
