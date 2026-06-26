@@ -15,8 +15,15 @@ import {
   fetchGlobalGapStatsSql,
   fetchTotalCallsSql,
   parseDateParam,
+  parseDateEndParam,
   parseGranularity,
 } from '../lib/callActivity'
+import {
+  addDaysYmd,
+  localDayEndUtc,
+  localDayStartUtc,
+  todayYmdInAppTz,
+} from '../lib/appTimezone'
 import { fetchDailyActivityFromSql, fetchHourlyActivity, fetchReportTrends, fetchAgentSparklines } from '../lib/reportTrends'
 import { fetchAgentCallsByPeriod, fetchCallHeatmap, fetchFunnelByPeriod } from '../lib/reportCharts'
 
@@ -1275,15 +1282,13 @@ router.get('/call-activity', requireAdmin, async (req: AuthRequest, res: Respons
     string
   >
 
-  const now = new Date()
-  const defaultFrom = new Date()
-  defaultFrom.setDate(defaultFrom.getDate() - 30)
-  defaultFrom.setHours(0, 0, 0, 0)
+  const todayYmd = todayYmdInAppTz()
+  const defaultFromYmd = addDaysYmd(todayYmd, -30)
+  const defaultFrom = localDayStartUtc(defaultFromYmd)
+  const defaultTo = localDayEndUtc(todayYmd)
 
   const fromDate = parseDateParam(from, defaultFrom)
-  fromDate.setHours(0, 0, 0, 0)
-  const toDate = parseDateParam(to, now)
-  toDate.setHours(23, 59, 59, 999)
+  const toDate = parseDateEndParam(to, defaultTo)
   const granularity = parseGranularity(granularityParam)
   const activityFilters = { from: fromDate, to: toDate, agentId, batchId }
 

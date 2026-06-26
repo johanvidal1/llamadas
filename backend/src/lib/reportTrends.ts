@@ -1,6 +1,19 @@
 import { prisma } from './prisma'
 import { Prisma } from '@prisma/client'
-import { parseDateParam, parseGranularity, type CallActivityGranularity } from './callActivity'
+import {
+  addDaysYmd,
+  appTimezoneSql,
+  localDayEndUtc,
+  localDayStartUtc,
+  parseYmdString,
+  todayYmdInAppTz,
+} from './appTimezone'
+import {
+  parseDateParam,
+  parseDateEndParam,
+  parseGranularity,
+  type CallActivityGranularity,
+} from './callActivity'
 
 export type DailyActivityRow = {
   date: string
@@ -228,15 +241,13 @@ export async function fetchReportTrends(params: {
   granularity: CallActivityGranularity
   source: 'table' | 'sql'
 }> {
-  const now = new Date()
-  const defaultFrom = new Date()
-  defaultFrom.setDate(defaultFrom.getDate() - 30)
-  defaultFrom.setHours(0, 0, 0, 0)
+  const todayYmd = todayYmdInAppTz()
+  const defaultFromYmd = addDaysYmd(todayYmd, -30)
+  const defaultFrom = localDayStartUtc(defaultFromYmd)
+  const defaultTo = localDayEndUtc(todayYmd)
 
   const fromDate = parseDateParam(params.from, defaultFrom)
-  fromDate.setHours(0, 0, 0, 0)
-  const toDate = parseDateParam(params.to, now)
-  toDate.setHours(23, 59, 59, 999)
+  const toDate = parseDateEndParam(params.to, defaultTo)
   const granularity = parseGranularity(params.granularity)
 
   const metricsCount = await prisma.dailyAgentMetrics.count({
@@ -325,10 +336,10 @@ export async function fetchHourlyActivity(
   dateStr: string,
   agentId: string
 ): Promise<HourlyActivityRow[]> {
-  const base = parseDateParam(dateStr, new Date())
-  base.setHours(0, 0, 0, 0)
-  const nextDay = new Date(base)
-  nextDay.setDate(nextDay.getDate() + 1)
+  const dayYmd = parseYmdString(dateStr) ?? todayYmdInAppTz()
+  const dayStart = localDayStartUtc(dayYmd)
+  const dayEnd = localDayEndUtc(dayYmd)
+  const tz = appTimezoneSql()
 
   const rows = await prisma.$queryRaw<
     { hour: number; calls: bigint; newRegistrations: bigint; updatedRegistrations: bigint }[]
@@ -336,14 +347,14 @@ export async function fetchHourlyActivity(
     WITH ranked AS (
       SELECT
         "calledAt",
-        EXTRACT(HOUR FROM "calledAt")::int AS hour,
+        EXTRACT(HOUR FROM ("calledAt" AT TIME ZONE ${tz}))::int AS hour,
         ROW_NUMBER() OVER (PARTITION BY "companyId" ORDER BY "calledAt", id) AS company_rank
       FROM "CallLog"
       WHERE "agentId" = ${agentId}
-        AND "calledAt" >= ${base}
-        AND "calledAt" < ${nextDay}
-        AND EXTRACT(HOUR FROM "calledAt") >= 9
-        AND EXTRACT(HOUR FROM "calledAt") <= 18
+        AND "calledAt" >= ${dayStart}
+        AND "calledAt" <= ${dayEnd}
+        AND EXTRACT(HOUR FROM ("calledAt" AT TIME ZONE ${tz})) >= 9
+        AND EXTRACT(HOUR FROM ("calledAt" AT TIME ZONE ${tz})) <= 18
     )
     SELECT
       hour,

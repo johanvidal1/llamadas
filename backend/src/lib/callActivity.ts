@@ -1,4 +1,12 @@
 import { prisma } from './prisma'
+import {
+  addDaysYmd,
+  getAppTimezone,
+  localDayEndUtc,
+  localDayStartUtc,
+  parseYmdString,
+  todayYmdInAppTz,
+} from './appTimezone'
 
 type CallLogRow = { calledAt: Date; agentId: string }
 
@@ -100,41 +108,44 @@ export function buildCallActivitySeries(
     .map(([period, count]) => ({ period, count }))
 }
 
+/** Start of app-local calendar day (yyyy-MM-dd) as UTC instant. */
 export function parseDateParam(value: string | undefined, fallback: Date): Date {
   if (!value) return fallback
-  const parsed = parseLocalDateParam(value) ?? new Date(value)
+  const ymd = parseYmdString(value)
+  if (ymd) return localDayStartUtc(ymd)
+  const parsed = new Date(value)
   return Number.isNaN(parsed.getTime()) ? fallback : parsed
 }
 
-function parseLocalDateParam(value: string): Date | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
-  if (!m) return null
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+/** End of app-local calendar day (yyyy-MM-dd) as UTC instant. */
+export function parseDateEndParam(value: string | undefined, fallback: Date): Date {
+  if (!value) return fallback
+  const ymd = parseYmdString(value)
+  if (ymd) return localDayEndUtc(ymd)
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed
 }
 
-/** Inclusive yyyy-MM-dd day bounds for CallLog.calledAt filters. */
+/** Inclusive yyyy-MM-dd day bounds for CallLog.calledAt filters (app timezone). */
 export function buildCalledAtRange(
   from?: string,
   to?: string
 ): { gte?: Date; lte?: Date } | undefined {
   if (!from && !to) return undefined
 
-  const now = new Date()
-  const defaultFrom = new Date()
-  defaultFrom.setDate(defaultFrom.getDate() - 30)
-  defaultFrom.setHours(0, 0, 0, 0)
+  const tz = getAppTimezone()
+  const todayYmd = todayYmdInAppTz()
+  const defaultFromYmd = addDaysYmd(todayYmd, -30, tz)
 
   const range: { gte?: Date; lte?: Date } = {}
 
   if (from) {
-    const fromDate = parseLocalDateParam(from) ?? defaultFrom
-    fromDate.setHours(0, 0, 0, 0)
-    range.gte = fromDate
+    range.gte = parseYmdString(from)
+      ? localDayStartUtc(from, tz)
+      : localDayStartUtc(defaultFromYmd, tz)
   }
   if (to) {
-    const toDate = parseLocalDateParam(to) ?? now
-    toDate.setHours(23, 59, 59, 999)
-    range.lte = toDate
+    range.lte = parseYmdString(to) ? localDayEndUtc(to, tz) : localDayEndUtc(todayYmd, tz)
   }
 
   return range

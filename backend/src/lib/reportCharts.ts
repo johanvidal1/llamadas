@@ -1,6 +1,16 @@
 import { prisma } from './prisma'
 import { Prisma } from '@prisma/client'
-import { parseDateParam } from './callActivity'
+import {
+  addDaysYmd,
+  appTimezoneSql,
+  daysInMonth,
+  getAppTimezone,
+  isoDowForYmd,
+  localDayEndUtc,
+  localDayStartUtc,
+  parseYmdString,
+  todayYmdInAppTz,
+} from './appTimezone'
 import { FUNNEL_PIPELINE_KEYS, pipelineBucketForDisposition } from './companyDisposition'
 import { SALES_FUNNEL_DISPOSITIONS } from './responseOptions'
 
@@ -24,55 +34,61 @@ function parseReportPeriod(value?: string): ReportPeriod {
   return 'day'
 }
 
-/** Calendar day, ISO week (Mon–Sun), calendar month, or explicit from/to range. */
+/** Calendar day, ISO week (Mon–Sun), calendar month, or explicit from/to range (app timezone). */
 export function resolvePeriodRange(
   period: ReportPeriod,
   dateStr?: string,
   fromStr?: string,
   toStr?: string
 ): { from: Date; to: Date; date: string } {
+  const tz = getAppTimezone()
+  const todayYmd = todayYmdInAppTz()
+
   if (period === 'range') {
-    const fallback = new Date()
-    const from = parseDateParam(fromStr, fallback)
-    from.setHours(0, 0, 0, 0)
-    const to = parseDateParam(toStr ?? fromStr, from)
-    to.setHours(23, 59, 59, 999)
-    if (to < from) {
-      const swap = new Date(from)
-      from.setTime(to.getTime())
-      from.setHours(0, 0, 0, 0)
-      to.setTime(swap.getTime())
-      to.setHours(23, 59, 59, 999)
+    let fromYmd = parseYmdString(fromStr) ?? todayYmd
+    let toYmd = parseYmdString(toStr ?? fromStr) ?? fromYmd
+    if (toYmd < fromYmd) {
+      const swap = fromYmd
+      fromYmd = toYmd
+      toYmd = swap
     }
-    return { from, to, date: from.toISOString().slice(0, 10) }
+    return {
+      from: localDayStartUtc(fromYmd, tz),
+      to: localDayEndUtc(toYmd, tz),
+      date: fromYmd,
+    }
   }
 
-  const base = parseDateParam(dateStr, new Date())
-  base.setHours(12, 0, 0, 0)
+  const baseYmd = parseYmdString(dateStr) ?? todayYmd
 
   if (period === 'day') {
-    const from = new Date(base)
-    from.setHours(0, 0, 0, 0)
-    const to = new Date(base)
-    to.setHours(23, 59, 59, 999)
-    return { from, to, date: from.toISOString().slice(0, 10) }
+    return {
+      from: localDayStartUtc(baseYmd, tz),
+      to: localDayEndUtc(baseYmd, tz),
+      date: baseYmd,
+    }
   }
 
   if (period === 'week') {
-    const day = base.getDay()
-    const diff = day === 0 ? -6 : 1 - day
-    const from = new Date(base)
-    from.setDate(base.getDate() + diff)
-    from.setHours(0, 0, 0, 0)
-    const to = new Date(from)
-    to.setDate(from.getDate() + 6)
-    to.setHours(23, 59, 59, 999)
-    return { from, to, date: from.toISOString().slice(0, 10) }
+    const dow = isoDowForYmd(baseYmd, tz)
+    const mondayYmd = addDaysYmd(baseYmd, -(dow - 1), tz)
+    const sundayYmd = addDaysYmd(mondayYmd, 6, tz)
+    return {
+      from: localDayStartUtc(mondayYmd, tz),
+      to: localDayEndUtc(sundayYmd, tz),
+      date: mondayYmd,
+    }
   }
 
-  const from = new Date(base.getFullYear(), base.getMonth(), 1, 0, 0, 0, 0)
-  const to = new Date(base.getFullYear(), base.getMonth() + 1, 0, 23, 59, 59, 999)
-  return { from, to, date: from.toISOString().slice(0, 10) }
+  const [y, m] = baseYmd.split('-').map(Number)
+  const monthStart = `${y}-${String(m).padStart(2, '0')}-01`
+  const lastDay = daysInMonth(y, m)
+  const monthEnd = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+  return {
+    from: localDayStartUtc(monthStart, tz),
+    to: localDayEndUtc(monthEnd, tz),
+    date: monthStart,
+  }
 }
 
 export async function fetchAgentCallsByPeriod(params: {
@@ -183,34 +199,40 @@ export async function fetchCallHeatmap(params: {
   let fromDate: Date
   let toDate: Date
 
+  let fromYmd: string
+  let toYmd: string
+
   if (params.from && params.to) {
     const range = resolvePeriodRange('range', undefined, params.from, params.to)
     fromDate = range.from
     toDate = range.to
+    fromYmd = parseYmdString(params.from) ?? range.date
+    toYmd = parseYmdString(params.to) ?? fromYmd
   } else {
     const weeks = Math.min(Math.max(Number(params.weeks) || 4, 1), 12)
-    fromDate = new Date()
-    fromDate.setDate(fromDate.getDate() - weeks * 7)
-    fromDate.setHours(0, 0, 0, 0)
-    toDate = new Date()
-    toDate.setHours(23, 59, 59, 999)
+    toYmd = todayYmdInAppTz()
+    fromYmd = addDaysYmd(toYmd, -weeks * 7, getAppTimezone())
+    fromDate = localDayStartUtc(fromYmd)
+    toDate = localDayEndUtc(toYmd)
   }
 
   const agentFilter = params.agentId
     ? Prisma.sql`AND cl."agentId" = ${params.agentId}`
     : Prisma.sql`AND cl."agentId" IN (SELECT id FROM "User" WHERE role = 'AGENT' AND active = true)`
 
+  const tz = appTimezoneSql()
+
   const rows = await prisma.$queryRaw<{ dow: number; hour: number; calls: bigint }[]>`
     SELECT
-      EXTRACT(ISODOW FROM cl."calledAt")::int AS dow,
-      EXTRACT(HOUR FROM cl."calledAt")::int AS hour,
+      EXTRACT(ISODOW FROM (cl."calledAt" AT TIME ZONE ${tz}))::int AS dow,
+      EXTRACT(HOUR FROM (cl."calledAt" AT TIME ZONE ${tz}))::int AS hour,
       COUNT(*)::bigint AS calls
     FROM "CallLog" cl
-    WHERE cl."calledAt" >= ${fromDate}
-      AND cl."calledAt" <= ${toDate}
+    WHERE (cl."calledAt" AT TIME ZONE ${tz})::date >= ${fromYmd}::date
+      AND (cl."calledAt" AT TIME ZONE ${tz})::date <= ${toYmd}::date
       ${agentFilter}
-      AND EXTRACT(HOUR FROM cl."calledAt") >= 9
-      AND EXTRACT(HOUR FROM cl."calledAt") <= 18
+      AND EXTRACT(HOUR FROM (cl."calledAt" AT TIME ZONE ${tz})) >= 9
+      AND EXTRACT(HOUR FROM (cl."calledAt" AT TIME ZONE ${tz})) <= 18
     GROUP BY dow, hour
   `
 

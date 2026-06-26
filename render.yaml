@@ -31,6 +31,8 @@ services:
         sync: false           # ej. https://crm.tudominio.com o varios orígenes separados por coma
       - key: CORS_EXTRA_ORIGINS
         sync: false           # opcional: https://llamadas-frontend.onrender.com durante migración
+      - key: APP_TIMEZONE
+        value: America/Lima
 
   # ── Frontend (React / Vite → Static Site) ───────────────────────────────────
   - type: web

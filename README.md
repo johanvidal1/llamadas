@@ -246,7 +246,7 @@ Llamadas/
 │   │   ├── middleware/         # Auth JWT, manejo de errores
 │   │   ├── routes/             # auth, users, imports, clients, etc.
 │   │   └── lib/                # Prisma client, parser Excel/CSV
-│   └── .env                    # Variables de entorno
+│   └── .env                    # Variables de entorno (incl. APP_TIMEZONE, default America/Lima)
 ├── frontend/
 │   └── src/
 │       ├── pages/              # Login, Dashboard, Imports, Clients...

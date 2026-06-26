@@ -62,7 +62,7 @@ export function CallHeatmapChart({
   if (totalCalls === 0) {
     return (
       <p className="text-sm text-gray-400 text-center py-20">
-        Sin actividad en horario laboral (9:00–18:00)
+        Sin actividad en horario laboral (9:00–18:00, hora Perú)
       </p>
     )
   }
@@ -70,7 +70,7 @@ export function CallHeatmapChart({
   return (
     <div className="relative">
       <p className="text-xs text-gray-500 mb-3">
-        {periodLabel} · horario 9:00–18:00
+        {periodLabel} · horario 9:00–18:00 (hora Perú)
       </p>
 
       <div
