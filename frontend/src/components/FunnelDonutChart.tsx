@@ -59,7 +59,7 @@ export function FunnelDonutChart({
   if (total === 0) {
     return (
       <p className="text-sm text-gray-400 text-center py-20">
-        Sin empresas en el embudo comercial
+        Sin llamadas de embudo en el periodo
       </p>
     )
   }
@@ -126,7 +126,7 @@ export function FunnelDonutChart({
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="text-center">
             <p className="text-2xl font-bold text-gray-900 leading-none">{total}</p>
-            <p className="text-[11px] text-gray-500 mt-1">en embudo</p>
+            <p className="text-[11px] text-gray-500 mt-1">llamadas</p>
           </div>
         </div>
       </div>

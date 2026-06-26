@@ -521,12 +521,13 @@ export const getReportTrends = (params?: GetReportTrendsParams) =>
 export const getReportHourly = (params: { date?: string; agentId: string }) =>
   api.get<ReportHourlyResponse>('/dashboard/reports/hourly', { params }).then((r) => r.data)
 
-export type ReportChartPeriod = 'day' | 'week' | 'month'
+export type ReportChartPeriod = 'day' | 'week' | 'month' | 'range'
 
 export type AgentCallChartRow = {
   agentId: string
   name: string
   calls: number
+  registered: number
 }
 
 export type AgentCallsChartResponse = {
@@ -544,19 +545,34 @@ export type CallHeatmapCell = {
 }
 
 export type CallHeatmapResponse = {
-  weeks: number
+  from: string
+  to: string
   cells: CallHeatmapCell[]
+}
+
+export type FunnelByPeriodResponse = {
+  from: string
+  to: string
+  stages: Record<string, number>
+  total: number
 }
 
 export const getReportAgentCalls = (params?: {
   period?: ReportChartPeriod
   date?: string
+  from?: string
+  to?: string
 }) =>
   api
     .get<AgentCallsChartResponse>('/dashboard/reports/agent-calls', { params })
     .then((r) => r.data)
 
-export const getReportCallHeatmap = (params?: { weeks?: number; agentId?: string }) =>
+export const getReportFunnelByPeriod = (params: { from: string; to: string; agentId?: string }) =>
+  api
+    .get<FunnelByPeriodResponse>('/dashboard/reports/funnel-by-period', { params })
+    .then((r) => r.data)
+
+export const getReportCallHeatmap = (params?: { from?: string; to?: string; weeks?: number; agentId?: string }) =>
   api
     .get<CallHeatmapResponse>('/dashboard/reports/call-heatmap', { params })
     .then((r) => r.data)

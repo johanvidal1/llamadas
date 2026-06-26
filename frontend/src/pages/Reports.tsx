@@ -1,17 +1,18 @@
-import { useState, Fragment } from 'react'
+import { useState, Fragment, useEffect, useRef, useMemo } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useQuery, keepPreviousData, useQueryClient } from '@tanstack/react-query'
 import {
   getReports, getUsers, getClients, getCallbacks, getAssignmentRunCompanies, getUntrackedCompanies,
-  getBatchReportBreakdown, getAgentReportRuns, getReportAgentCalls, getReportCallHeatmap,
+  getBatchReportBreakdown, getAgentReportRuns, getReportAgentCalls, getReportCallHeatmap, getReportFunnelByPeriod,
   type BatchAgentBreakdownRow,
   type ReportChartPeriod,
 } from '../api/client'
-import { format, isPast, isToday } from 'date-fns'
+import { format, isPast, isToday, addDays, addMonths, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns'
 import { es } from 'date-fns/locale'
 import {
   Users, Phone, CalendarClock, Target,
   Award, AlertCircle, ChevronUp, ChevronDown, Package, Filter, X, RefreshCw, ChevronRight,
+  ChevronLeft, Calendar,
 } from 'lucide-react'
 import { StatusBadge, DispositionBadge } from '../components/StatusBadge'
 import { StatusHelpPopover } from '../components/StatusHelpPopover'
@@ -793,6 +794,241 @@ function ReportsBatchSkeleton() {
   )
 }
 
+// ─── Chart period filter ───────────────────────────────────────────────────────
+
+type ChartFilterMode = 'day' | 'week' | 'month' | 'custom'
+
+function chartTodayLocal(): string {
+  return format(new Date(), 'yyyy-MM-dd')
+}
+
+function deriveChartRange(
+  mode: ChartFilterMode,
+  anchor: string,
+  customFrom: string,
+  customTo: string
+): { from: string; to: string; period: ReportChartPeriod; date: string } {
+  const anchorDate = new Date(anchor + 'T12:00:00')
+
+  if (mode === 'custom') {
+    const from = customFrom || chartTodayLocal()
+    const to = customTo || from
+    return { from, to, period: 'range', date: from }
+  }
+
+  if (mode === 'day') {
+    return { from: anchor, to: anchor, period: 'day', date: anchor }
+  }
+
+  if (mode === 'week') {
+    const from = format(startOfWeek(anchorDate, { locale: es }), 'yyyy-MM-dd')
+    const to = format(endOfWeek(anchorDate, { locale: es }), 'yyyy-MM-dd')
+    return { from, to, period: 'week', date: anchor }
+  }
+
+  const from = format(startOfMonth(anchorDate), 'yyyy-MM-dd')
+  const to = format(endOfMonth(anchorDate), 'yyyy-MM-dd')
+  return { from, to, period: 'month', date: anchor }
+}
+
+function formatChartPeriodLabel(mode: ChartFilterMode, from: string, to: string): string {
+  const fmtFull = (d: string) => format(new Date(d + 'T12:00:00'), 'd MMM yyyy', { locale: es })
+  const fmtShort = (d: string) => format(new Date(d + 'T12:00:00'), 'd MMM', { locale: es })
+
+  if (mode === 'day') return fmtFull(from)
+  if (mode === 'month') {
+    return format(new Date(from + 'T12:00:00'), 'MMMM yyyy', { locale: es })
+  }
+  if (from === to) return fmtFull(from)
+  if (from.slice(0, 4) === to.slice(0, 4)) {
+    return `${fmtShort(from)} – ${fmtFull(to)}`
+  }
+  return `${fmtFull(from)} – ${fmtFull(to)}`
+}
+
+function shiftChartAnchor(mode: ChartFilterMode, anchor: string, delta: -1 | 1): string {
+  const d = new Date(anchor + 'T12:00:00')
+  if (mode === 'day') return format(addDays(d, delta), 'yyyy-MM-dd')
+  if (mode === 'week') return format(addDays(d, delta * 7), 'yyyy-MM-dd')
+  if (mode === 'month') return format(addMonths(d, delta), 'yyyy-MM-dd')
+  return anchor
+}
+
+function ReportChartPeriodFilter({
+  mode,
+  anchor,
+  customFrom,
+  customTo,
+  periodLabel,
+  onModeChange,
+  onAnchorChange,
+  onCustomApply,
+}: {
+  mode: ChartFilterMode
+  anchor: string
+  customFrom: string
+  customTo: string
+  periodLabel: string
+  onModeChange: (mode: ChartFilterMode) => void
+  onAnchorChange: (anchor: string) => void
+  onCustomApply: (from: string, to: string) => void
+}) {
+  const [customOpen, setCustomOpen] = useState(false)
+  const [draftFrom, setDraftFrom] = useState(customFrom)
+  const [draftTo, setDraftTo] = useState(customTo)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!customOpen) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setCustomOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [customOpen])
+
+  useEffect(() => {
+    if (customOpen) {
+      setDraftFrom(customFrom)
+      setDraftTo(customTo)
+    }
+  }, [customOpen, customFrom, customTo])
+
+  const handleModeClick = (next: ChartFilterMode) => {
+    if (next === 'custom') {
+      onModeChange('custom')
+      setCustomOpen(true)
+      return
+    }
+    setCustomOpen(false)
+    onModeChange(next)
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-white">
+          {([
+            ['day', 'Día'],
+            ['week', 'Semana'],
+            ['month', 'Mes'],
+            ['custom', 'Personalizado'],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => handleModeClick(value)}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                mode === value
+                  ? 'bg-blue-600 text-white'
+                  : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {mode !== 'custom' ? (
+          <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-1 py-0.5">
+            <button
+              type="button"
+              onClick={() => onAnchorChange(shiftChartAnchor(mode, anchor, -1))}
+              className="p-1 rounded-md text-gray-500 hover:bg-gray-50 hover:text-gray-800 transition-colors"
+              aria-label="Periodo anterior"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={() => onAnchorChange(chartTodayLocal())}
+              className="px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 rounded-md transition-colors"
+            >
+              Hoy
+            </button>
+            <button
+              type="button"
+              onClick={() => onAnchorChange(shiftChartAnchor(mode, anchor, 1))}
+              className="p-1 rounded-md text-gray-500 hover:bg-gray-50 hover:text-gray-800 transition-colors"
+              aria-label="Periodo siguiente"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        ) : (
+          <div ref={rootRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setCustomOpen((v) => !v)}
+              aria-expanded={customOpen}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                customOpen
+                  ? 'border-blue-300 bg-blue-50 text-blue-800'
+                  : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <Calendar size={14} />
+              Elegir rango
+              <ChevronDown size={14} className={`transition-transform ${customOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {customOpen && (
+              <div className="absolute right-0 top-full z-50 mt-1.5 w-64 rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
+                <p className="text-xs font-medium text-gray-500 mb-3">Rango personalizado</p>
+                <label className="block space-y-1 mb-3">
+                  <span className="text-xs text-gray-500">Desde</span>
+                  <input
+                    type="date"
+                    value={draftFrom}
+                    onChange={(e) => setDraftFrom(e.target.value)}
+                    className="input w-full py-1.5 text-sm"
+                  />
+                </label>
+                <label className="block space-y-1 mb-3">
+                  <span className="text-xs text-gray-500">Hasta</span>
+                  <input
+                    type="date"
+                    value={draftTo}
+                    onChange={(e) => setDraftTo(e.target.value)}
+                    className="input w-full py-1.5 text-sm"
+                  />
+                </label>
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCustomOpen(false)}
+                    className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 rounded-md"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!draftFrom && !draftTo}
+                    onClick={() => {
+                      if (!draftFrom && !draftTo) return
+                      const from = draftFrom || draftTo
+                      const to = draftTo || draftFrom
+                      onCustomApply(from, to)
+                      setCustomOpen(false)
+                    }}
+                    className="px-3 py-1.5 text-xs font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    Aplicar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-100 text-xs font-medium text-gray-600">
+        <Calendar size={12} className="text-gray-400" />
+        {periodLabel}
+      </span>
+    </div>
+  )
+}
+
 // ─── Sort hook ─────────────────────────────────────────────────────────────────
 
 type AgentSortKey = 'assignedCompanies' | 'companiesWithResponse' | 'companyContactRate' | 'companiesInFunnel' | 'pendingCompanies' | 'totalCalls' | 'ventaCerrada' | 'closeRate' | 'overdueCallbacks'
@@ -823,8 +1059,20 @@ export default function Reports() {
   const [expandedRuns, setExpandedRuns] = useState<Record<string, boolean>>({})
   const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({})
   const [expandedBatchAgents, setExpandedBatchAgents] = useState<Record<string, Record<string, boolean>>>({})
-  const [chartPeriod, setChartPeriod] = useState<ReportChartPeriod>('day')
-  const chartDate = new Date().toISOString().slice(0, 10)
+  const [chartMode, setChartMode] = useState<ChartFilterMode>('day')
+  const [chartAnchor, setChartAnchor] = useState(chartTodayLocal)
+  const [chartCustomFrom, setChartCustomFrom] = useState(chartTodayLocal)
+  const [chartCustomTo, setChartCustomTo] = useState(chartTodayLocal)
+
+  const chartRange = useMemo(
+    () => deriveChartRange(chartMode, chartAnchor, chartCustomFrom, chartCustomTo),
+    [chartMode, chartAnchor, chartCustomFrom, chartCustomTo]
+  )
+
+  const chartPeriodLabel = useMemo(
+    () => formatChartPeriodLabel(chartMode, chartRange.from, chartRange.to),
+    [chartMode, chartRange.from, chartRange.to]
+  )
 
   const toggleBatchExpand = (batchId: string) => {
     setExpandedBatches((prev) => ({ ...prev, [batchId]: !prev[batchId] }))
@@ -905,8 +1153,30 @@ export default function Reports() {
     isLoading: agentCallsLoading,
     isFetching: agentCallsFetching,
   } = useQuery({
-    queryKey: ['reports-agent-calls', chartPeriod, chartDate],
-    queryFn: () => getReportAgentCalls({ period: chartPeriod, date: chartDate }),
+    queryKey: ['reports-agent-calls', chartRange.period, chartRange.date, chartRange.from, chartRange.to],
+    queryFn: () =>
+      getReportAgentCalls({
+        period: chartRange.period,
+        date: chartRange.period === 'range' ? undefined : chartRange.date,
+        from: chartRange.period === 'range' ? chartRange.from : undefined,
+        to: chartRange.period === 'range' ? chartRange.to : undefined,
+      }),
+    staleTime: 120_000,
+    placeholderData: keepPreviousData,
+  })
+
+  const {
+    data: funnelPeriodData,
+    isLoading: funnelPeriodLoading,
+    isFetching: funnelPeriodFetching,
+  } = useQuery({
+    queryKey: ['reports-funnel-by-period', filterKey, chartRange.from, chartRange.to],
+    queryFn: () =>
+      getReportFunnelByPeriod({
+        from: chartRange.from,
+        to: chartRange.to,
+        agentId: filterAgentId || undefined,
+      }),
     staleTime: 120_000,
     placeholderData: keepPreviousData,
   })
@@ -916,17 +1186,18 @@ export default function Reports() {
     isLoading: heatmapLoading,
     isFetching: heatmapFetching,
   } = useQuery({
-    queryKey: ['reports-call-heatmap', filterKey],
+    queryKey: ['reports-call-heatmap', filterKey, chartRange.from, chartRange.to],
     queryFn: () =>
       getReportCallHeatmap({
-        weeks: 4,
+        from: chartRange.from,
+        to: chartRange.to,
         agentId: filterAgentId || undefined,
       }),
     staleTime: 120_000,
     placeholderData: keepPreviousData,
   })
 
-  const isFetching = summaryFetching || agentsFetching || batchesFetching || agentCallsFetching || heatmapFetching
+  const isFetching = summaryFetching || agentsFetching || batchesFetching || agentCallsFetching || funnelPeriodFetching || heatmapFetching
   const hasAnyData = !!(summaryData || agentsData || batchesData)
 
   const handleRefresh = () => {
@@ -945,6 +1216,7 @@ export default function Reports() {
     })
     void queryClient.invalidateQueries({ queryKey: ['agent-report-runs'] })
     void queryClient.invalidateQueries({ queryKey: ['reports-agent-calls'] })
+    void queryClient.invalidateQueries({ queryKey: ['reports-funnel-by-period'] })
     void queryClient.invalidateQueries({ queryKey: ['reports-call-heatmap'] })
   }
 
@@ -993,23 +1265,6 @@ export default function Reports() {
       : <ChevronDown size={13} className="text-gray-300" />
 
   const filteredAgentName = agents.find((a) => a.id === filterAgentId)?.name
-
-  const chartPeriodLabel = (() => {
-    const today = new Date(chartDate + 'T12:00:00')
-    if (chartPeriod === 'day') {
-      return `Hoy · ${format(today, "d MMM yyyy", { locale: es })}`
-    }
-    if (chartPeriod === 'week') {
-      const day = today.getDay()
-      const diff = day === 0 ? -6 : 1 - day
-      const monday = new Date(today)
-      monday.setDate(today.getDate() + diff)
-      const sunday = new Date(monday)
-      sunday.setDate(monday.getDate() + 6)
-      return `Semana · ${format(monday, 'd MMM', { locale: es })} – ${format(sunday, 'd MMM yyyy', { locale: es })}`
-    }
-    return `Mes · ${format(today, 'MMMM yyyy', { locale: es })}`
-  })()
 
   const isUpdating = isFetching && hasAnyData
 
@@ -1265,36 +1520,42 @@ export default function Reports() {
       {/* ── Análisis visual ── */}
       <section>
         <div className="card p-5 md:p-6 space-y-5">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
             <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider">
               Análisis visual
             </h2>
-            <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-white">
-              {([
-                ['day', 'Día'],
-                ['week', 'Semana'],
-                ['month', 'Mes'],
-              ] as const).map(([period, label]) => (
-                <button
-                  key={period}
-                  type="button"
-                  onClick={() => setChartPeriod(period)}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                    chartPeriod === period
-                      ? 'bg-blue-600 text-white'
-                      : 'text-gray-600 hover:bg-gray-50'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <ReportChartPeriodFilter
+              mode={chartMode}
+              anchor={chartAnchor}
+              customFrom={chartCustomFrom}
+              customTo={chartCustomTo}
+              periodLabel={chartPeriodLabel}
+              onModeChange={(mode) => {
+                if (mode === 'custom') {
+                  const current = deriveChartRange(
+                    chartMode === 'custom' ? 'day' : chartMode,
+                    chartAnchor,
+                    chartCustomFrom,
+                    chartCustomTo
+                  )
+                  setChartCustomFrom(current.from)
+                  setChartCustomTo(current.to)
+                }
+                setChartMode(mode)
+              }}
+              onAnchorChange={setChartAnchor}
+              onCustomApply={(from, to) => {
+                setChartCustomFrom(from)
+                setChartCustomTo(to)
+                setChartMode('custom')
+              }}
+            />
           </div>
 
           <div>
             <h3 className="text-sm font-semibold text-gray-900 mb-1">Llamadas por agente</h3>
             <p className="text-xs text-gray-500 mb-3">
-              Comparativa del equipo · {chartPeriodLabel}
+              Llamadas totales y empresas registradas · {chartPeriodLabel}
             </p>
             <AgentCallsBarChart
               data={agentCallsData?.agents ?? []}
@@ -1308,14 +1569,14 @@ export default function Reports() {
             <div className="lg:pr-5 lg:border-r lg:border-gray-100">
               <h3 className="text-sm font-semibold text-gray-900 mb-1">Embudo comercial</h3>
               <p className="text-xs text-gray-500 mb-3">
-                Distribución por etapa
+                Llamadas por etapa · {chartPeriodLabel}
                 {filterAgentId && (
                   <span className="text-gray-400"> — {filteredAgentName ?? 'agente filtrado'}</span>
                 )}
               </p>
               <FunnelDonutChart
-                pipeline={companyPipeline ?? {}}
-                loading={summaryLoading && !summaryData}
+                pipeline={funnelPeriodData?.stages ?? {}}
+                loading={funnelPeriodLoading && !funnelPeriodData}
                 onStageClick={goToClientsFilter}
               />
             </div>
@@ -1329,7 +1590,7 @@ export default function Reports() {
               </p>
               <CallHeatmapChart
                 cells={heatmapData?.cells ?? []}
-                weeks={heatmapData?.weeks ?? 4}
+                periodLabel={chartPeriodLabel}
                 loading={heatmapLoading && !heatmapData}
               />
             </div>

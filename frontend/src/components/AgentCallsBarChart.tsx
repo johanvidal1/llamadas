@@ -8,15 +8,55 @@ import {
   Tooltip,
   ReferenceLine,
   Cell,
+  Legend,
 } from 'recharts'
+import type { TooltipProps } from 'recharts'
 import type { AgentCallChartRow } from '../api/client'
 
-const BAR_DEFAULT = '#93c5fd'
-const BAR_HIGHLIGHT = '#2563eb'
-const BAR_MUTED = '#dbeafe'
+const CALLS_DEFAULT = '#93c5fd'
+const CALLS_HIGHLIGHT = '#2563eb'
+const CALLS_MUTED = '#dbeafe'
+
+const REGISTERED_DEFAULT = '#10b981'
+const REGISTERED_HIGHLIGHT = '#059669'
+const REGISTERED_MUTED = '#a7f3d0'
 
 function truncateName(name: string, max = 12) {
   return name.length > max ? `${name.slice(0, max - 1)}…` : name
+}
+
+type ChartRow = AgentCallChartRow & { shortName: string }
+
+function AgentCallsTooltip({
+  active,
+  payload,
+}: TooltipProps<number, string>) {
+  if (!active || !payload?.length) return null
+  const row = payload[0]?.payload as ChartRow | undefined
+  if (!row) return null
+
+  const followUps = row.calls - row.registered
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs shadow-md">
+      <p className="font-semibold text-gray-900 mb-1.5">{row.name}</p>
+      <div className="space-y-1 text-gray-600">
+        <p>
+          <span className="inline-block w-2 h-2 rounded-sm bg-blue-300 mr-1.5 align-middle" />
+          Llamadas: <strong className="text-gray-800">{row.calls}</strong>
+        </p>
+        <p>
+          <span className="inline-block w-2 h-2 rounded-sm bg-emerald-500 mr-1.5 align-middle" />
+          Registrados (empresas): <strong className="text-gray-800">{row.registered}</strong>
+        </p>
+        {followUps > 0 && (
+          <p className="text-gray-500 pt-0.5 border-t border-gray-100">
+            Seguimientos: <strong className="text-gray-700">{followUps}</strong>
+          </p>
+        )}
+      </div>
+    </div>
+  )
 }
 
 export function AgentCallsBarChart({
@@ -49,12 +89,13 @@ export function AgentCallsBarChart({
     )
   }
 
-  const chartData = data.map((row) => ({
+  const chartData: ChartRow[] = data.map((row) => ({
     ...row,
     shortName: truncateName(row.name),
   }))
 
   const totalCalls = data.reduce((s, d) => s + d.calls, 0)
+  const totalRegistered = data.reduce((s, d) => s + d.registered, 0)
   const teamAverage =
     data.length > 0 ? Math.round((totalCalls / data.length) * 10) / 10 : 0
   const hasCalls = totalCalls > 0
@@ -68,13 +109,16 @@ export function AgentCallsBarChart({
             <span className="text-blue-600 font-medium ml-1.5">· agente resaltado</span>
           )}
         </p>
-        <div className="flex items-center gap-3 text-xs text-gray-500">
+        <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
           <span>
             <span className="inline-block w-3 h-0.5 bg-amber-500 align-middle mr-1.5" />
             Promedio equipo: <strong className="text-gray-700">{teamAverage}</strong>
           </span>
           <span>
-            Total: <strong className="text-gray-700">{totalCalls}</strong>
+            Total llamadas: <strong className="text-gray-700">{totalCalls}</strong>
+          </span>
+          <span>
+            Total registrados: <strong className="text-gray-700">{totalRegistered}</strong>
           </span>
         </div>
       </div>
@@ -108,19 +152,16 @@ export function AgentCallsBarChart({
                 tickLine={false}
                 width={36}
               />
-              <Tooltip
-                cursor={{ fill: 'rgba(59, 130, 246, 0.06)' }}
-                contentStyle={{
-                  borderRadius: 8,
-                  border: '1px solid #e5e7eb',
-                  fontSize: 12,
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
-                }}
-                formatter={(value: number) => [value, 'Llamadas']}
-                labelFormatter={(_, payload) => {
-                  const row = payload?.[0]?.payload as AgentCallChartRow | undefined
-                  return row?.name ?? ''
-                }}
+              <Tooltip cursor={{ fill: 'rgba(59, 130, 246, 0.06)' }} content={<AgentCallsTooltip />} />
+              <Legend
+                verticalAlign="top"
+                align="right"
+                iconType="square"
+                iconSize={10}
+                wrapperStyle={{ fontSize: 11, paddingBottom: 4 }}
+                formatter={(value) =>
+                  value === 'calls' ? 'Llamadas' : 'Registrados (empresas)'
+                }
               />
               <ReferenceLine
                 y={teamAverage}
@@ -134,22 +175,55 @@ export function AgentCallsBarChart({
                   fontSize: 10,
                 }}
               />
-              <Bar dataKey="calls" radius={[4, 4, 0, 0]} maxBarSize={48}>
+              <Bar
+                dataKey="calls"
+                name="calls"
+                radius={[4, 4, 0, 0]}
+                maxBarSize={48}
+                legendType="square"
+              >
                 {chartData.map((entry) => {
                   const isHighlight = highlightedAgentId === entry.agentId
                   const isDimmed =
                     highlightedAgentId && highlightedAgentId !== entry.agentId
                   return (
                     <Cell
-                      key={entry.agentId}
+                      key={`calls-${entry.agentId}`}
                       fill={
                         isHighlight
-                          ? BAR_HIGHLIGHT
+                          ? CALLS_HIGHLIGHT
                           : isDimmed
-                            ? BAR_MUTED
-                            : BAR_DEFAULT
+                            ? CALLS_MUTED
+                            : CALLS_DEFAULT
                       }
                       stroke={isHighlight ? '#1d4ed8' : undefined}
+                      strokeWidth={isHighlight ? 1 : 0}
+                    />
+                  )
+                })}
+              </Bar>
+              <Bar
+                dataKey="registered"
+                name="registered"
+                radius={[3, 3, 0, 0]}
+                maxBarSize={28}
+                legendType="square"
+              >
+                {chartData.map((entry) => {
+                  const isHighlight = highlightedAgentId === entry.agentId
+                  const isDimmed =
+                    highlightedAgentId && highlightedAgentId !== entry.agentId
+                  return (
+                    <Cell
+                      key={`registered-${entry.agentId}`}
+                      fill={
+                        isHighlight
+                          ? REGISTERED_HIGHLIGHT
+                          : isDimmed
+                            ? REGISTERED_MUTED
+                            : REGISTERED_DEFAULT
+                      }
+                      stroke={isHighlight ? '#047857' : undefined}
                       strokeWidth={isHighlight ? 1 : 0}
                     />
                   )

@@ -25,11 +25,11 @@ type TooltipState = {
 
 export function CallHeatmapChart({
   cells,
-  weeks,
+  periodLabel,
   loading,
 }: {
   cells: CallHeatmapCell[]
-  weeks: number
+  periodLabel: string
   loading?: boolean
 }) {
   const [tooltip, setTooltip] = useState<TooltipState>(null)
@@ -70,7 +70,7 @@ export function CallHeatmapChart({
   return (
     <div className="relative">
       <p className="text-xs text-gray-500 mb-3">
-        Últimas {weeks} semanas · horario 9:00–18:00
+        {periodLabel} · horario 9:00–18:00
       </p>
 
       <div
