@@ -3,8 +3,9 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useQuery, keepPreviousData, useQueryClient } from '@tanstack/react-query'
 import {
   getReports, getUsers, getClients, getCallbacks, getAssignmentRunCompanies, getUntrackedCompanies,
-  getBatchReportBreakdown, getAgentReportRuns,
+  getBatchReportBreakdown, getAgentReportRuns, getReportAgentCalls, getReportCallHeatmap,
   type BatchAgentBreakdownRow,
+  type ReportChartPeriod,
 } from '../api/client'
 import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -14,6 +15,9 @@ import {
 } from 'lucide-react'
 import { StatusBadge, DispositionBadge } from '../components/StatusBadge'
 import { StatusHelpPopover } from '../components/StatusHelpPopover'
+import { AgentCallsBarChart } from '../components/AgentCallsBarChart'
+import { FunnelDonutChart } from '../components/FunnelDonutChart'
+import { CallHeatmapChart } from '../components/CallHeatmapChart'
 import type { StatusHelpKey } from '../config/statusHelp'
 import {
   DISPOSITION_BAR_COLORS,
@@ -43,9 +47,9 @@ interface AgentPerf {
   contactRate: number; companyContactRate: number
   conversionRate: number; avgCallsPerClient: number
   pendingCallbacks: number; overdueCallbacks: number
+  sparkline?: { date: string; calls: number }[]
   assignmentRuns?: AgentAssignmentRun[]
 }
-interface DayCount { date: string; count: number }
 interface DispCount { disposition: string; count: number }
 interface BatchAssignmentRun {
   id: string
@@ -85,7 +89,6 @@ interface Funnel {
 }
 interface ReportsData {
   agentPerformance: AgentPerf[]
-  callsByDay: DayCount[]
   dispositionBreakdown: DispCount[]
   batchProgress: BatchProgress[]
   funnel: Funnel
@@ -820,6 +823,8 @@ export default function Reports() {
   const [expandedRuns, setExpandedRuns] = useState<Record<string, boolean>>({})
   const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({})
   const [expandedBatchAgents, setExpandedBatchAgents] = useState<Record<string, Record<string, boolean>>>({})
+  const [chartPeriod, setChartPeriod] = useState<ReportChartPeriod>('day')
+  const chartDate = new Date().toISOString().slice(0, 10)
 
   const toggleBatchExpand = (batchId: string) => {
     setExpandedBatches((prev) => ({ ...prev, [batchId]: !prev[batchId] }))
@@ -895,7 +900,33 @@ export default function Reports() {
     placeholderData: keepPreviousData,
   })
 
-  const isFetching = summaryFetching || agentsFetching || batchesFetching
+  const {
+    data: agentCallsData,
+    isLoading: agentCallsLoading,
+    isFetching: agentCallsFetching,
+  } = useQuery({
+    queryKey: ['reports-agent-calls', chartPeriod, chartDate],
+    queryFn: () => getReportAgentCalls({ period: chartPeriod, date: chartDate }),
+    staleTime: 120_000,
+    placeholderData: keepPreviousData,
+  })
+
+  const {
+    data: heatmapData,
+    isLoading: heatmapLoading,
+    isFetching: heatmapFetching,
+  } = useQuery({
+    queryKey: ['reports-call-heatmap', filterKey],
+    queryFn: () =>
+      getReportCallHeatmap({
+        weeks: 4,
+        agentId: filterAgentId || undefined,
+      }),
+    staleTime: 120_000,
+    placeholderData: keepPreviousData,
+  })
+
+  const isFetching = summaryFetching || agentsFetching || batchesFetching || agentCallsFetching || heatmapFetching
   const hasAnyData = !!(summaryData || agentsData || batchesData)
 
   const handleRefresh = () => {
@@ -913,6 +944,8 @@ export default function Reports() {
       queryFn: () => getReports(filterAgentId || undefined, { ...refreshOpts, sections: ['batches'] }),
     })
     void queryClient.invalidateQueries({ queryKey: ['agent-report-runs'] })
+    void queryClient.invalidateQueries({ queryKey: ['reports-agent-calls'] })
+    void queryClient.invalidateQueries({ queryKey: ['reports-call-heatmap'] })
   }
 
   const { sorted: sortedAgents, sortBy, asc, toggle } = useSortedAgents(agentsData?.agentPerformance ?? [])
@@ -960,6 +993,23 @@ export default function Reports() {
       : <ChevronDown size={13} className="text-gray-300" />
 
   const filteredAgentName = agents.find((a) => a.id === filterAgentId)?.name
+
+  const chartPeriodLabel = (() => {
+    const today = new Date(chartDate + 'T12:00:00')
+    if (chartPeriod === 'day') {
+      return `Hoy · ${format(today, "d MMM yyyy", { locale: es })}`
+    }
+    if (chartPeriod === 'week') {
+      const day = today.getDay()
+      const diff = day === 0 ? -6 : 1 - day
+      const monday = new Date(today)
+      monday.setDate(today.getDate() + diff)
+      const sunday = new Date(monday)
+      sunday.setDate(monday.getDate() + 6)
+      return `Semana · ${format(monday, 'd MMM', { locale: es })} – ${format(sunday, 'd MMM yyyy', { locale: es })}`
+    }
+    return `Mes · ${format(today, 'MMMM yyyy', { locale: es })}`
+  })()
 
   const isUpdating = isFetching && hasAnyData
 
@@ -1211,6 +1261,81 @@ export default function Reports() {
       </section>
       </>
       ) : null}
+
+      {/* ── Análisis visual ── */}
+      <section>
+        <div className="card p-5 md:p-6 space-y-5">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider">
+              Análisis visual
+            </h2>
+            <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-white">
+              {([
+                ['day', 'Día'],
+                ['week', 'Semana'],
+                ['month', 'Mes'],
+              ] as const).map(([period, label]) => (
+                <button
+                  key={period}
+                  type="button"
+                  onClick={() => setChartPeriod(period)}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    chartPeriod === period
+                      ? 'bg-blue-600 text-white'
+                      : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 mb-1">Llamadas por agente</h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Comparativa del equipo · {chartPeriodLabel}
+            </p>
+            <AgentCallsBarChart
+              data={agentCallsData?.agents ?? []}
+              loading={agentCallsLoading && !agentCallsData}
+              highlightedAgentId={filterAgentId || undefined}
+              periodLabel={chartPeriodLabel}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr] gap-5 pt-2 border-t border-gray-100">
+            <div className="lg:pr-5 lg:border-r lg:border-gray-100">
+              <h3 className="text-sm font-semibold text-gray-900 mb-1">Embudo comercial</h3>
+              <p className="text-xs text-gray-500 mb-3">
+                Distribución por etapa
+                {filterAgentId && (
+                  <span className="text-gray-400"> — {filteredAgentName ?? 'agente filtrado'}</span>
+                )}
+              </p>
+              <FunnelDonutChart
+                pipeline={companyPipeline ?? {}}
+                loading={summaryLoading && !summaryData}
+                onStageClick={goToClientsFilter}
+              />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900 mb-1">Actividad por día y hora</h3>
+              <p className="text-xs text-gray-500 mb-3">
+                Intensidad de llamadas en horario laboral
+                {filterAgentId && (
+                  <span className="text-gray-400"> — {filteredAgentName ?? 'agente filtrado'}</span>
+                )}
+              </p>
+              <CallHeatmapChart
+                cells={heatmapData?.cells ?? []}
+                weeks={heatmapData?.weeks ?? 4}
+                loading={heatmapLoading && !heatmapData}
+              />
+            </div>
+          </div>
+        </div>
+      </section>
 
       {agentsLoading && !agentsData ? (
         <ReportsAgentTableSkeleton />
