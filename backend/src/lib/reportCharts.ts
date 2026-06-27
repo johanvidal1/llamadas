@@ -160,15 +160,25 @@ export async function fetchFunnelByPeriod(params: {
   from?: string
   to?: string
   agentId?: string
-}): Promise<{ from: string; to: string; stages: Record<string, number>; total: number }> {
+}): Promise<{
+  from: string
+  to: string
+  stages: Record<string, number>
+  total: number
+  registeredStages: Record<string, number>
+  registeredTotal: number
+}> {
   const { from, to } = resolvePeriodRange('range', undefined, params.from, params.to)
 
   const agentFilter = params.agentId
     ? Prisma.sql`AND cl."agentId" = ${params.agentId}`
     : Prisma.sql`AND cl."agentId" IN (SELECT id FROM "User" WHERE role = 'AGENT' AND active = true)`
 
-  const rows = await prisma.$queryRaw<{ disposition: string; calls: bigint }[]>`
-    SELECT cl.disposition, COUNT(*)::bigint AS calls
+  const rows = await prisma.$queryRaw<{ disposition: string; calls: bigint; registered: bigint }[]>`
+    SELECT
+      cl.disposition,
+      COUNT(*)::bigint AS calls,
+      COUNT(DISTINCT cl."companyId")::bigint AS registered
     FROM "CallLog" cl
     WHERE cl."calledAt" >= ${from}
       AND cl."calledAt" <= ${to}
@@ -178,20 +188,25 @@ export async function fetchFunnelByPeriod(params: {
   `
 
   const stages = Object.fromEntries(FUNNEL_PIPELINE_KEYS.map((k) => [k, 0])) as Record<string, number>
+  const registeredStages = Object.fromEntries(FUNNEL_PIPELINE_KEYS.map((k) => [k, 0])) as Record<string, number>
   for (const row of rows) {
     const bucket = pipelineBucketForDisposition(row.disposition)
     if ((FUNNEL_PIPELINE_KEYS as readonly string[]).includes(bucket)) {
       stages[bucket] += Number(row.calls)
+      registeredStages[bucket] += Number(row.registered)
     }
   }
 
   const total = Object.values(stages).reduce((sum, n) => sum + n, 0)
+  const registeredTotal = Object.values(registeredStages).reduce((sum, n) => sum + n, 0)
 
   return {
     from: from.toISOString(),
     to: to.toISOString(),
     stages,
     total,
+    registeredStages,
+    registeredTotal,
   }
 }
 
@@ -199,15 +214,25 @@ export async function fetchZeroResponsesByPeriod(params: {
   from?: string
   to?: string
   agentId?: string
-}): Promise<{ from: string; to: string; dispositions: Record<string, number>; total: number }> {
+}): Promise<{
+  from: string
+  to: string
+  dispositions: Record<string, number>
+  total: number
+  registeredDispositions: Record<string, number>
+  registeredTotal: number
+}> {
   const { from, to } = resolvePeriodRange('range', undefined, params.from, params.to)
 
   const agentFilter = params.agentId
     ? Prisma.sql`AND cl."agentId" = ${params.agentId}`
     : Prisma.sql`AND cl."agentId" IN (SELECT id FROM "User" WHERE role = 'AGENT' AND active = true)`
 
-  const rows = await prisma.$queryRaw<{ disposition: string; calls: bigint }[]>`
-    SELECT cl.disposition, COUNT(*)::bigint AS calls
+  const rows = await prisma.$queryRaw<{ disposition: string; calls: bigint; registered: bigint }[]>`
+    SELECT
+      cl.disposition,
+      COUNT(*)::bigint AS calls,
+      COUNT(DISTINCT cl."companyId")::bigint AS registered
     FROM "CallLog" cl
     WHERE cl."calledAt" >= ${from}
       AND cl."calledAt" <= ${to}
@@ -219,19 +244,26 @@ export async function fetchZeroResponsesByPeriod(params: {
   const dispositions = Object.fromEntries(
     ZERO_PROGRESS_CALL_DISPOSITIONS.map((k) => [k, 0])
   ) as Record<string, number>
+  const registeredDispositions = Object.fromEntries(
+    ZERO_PROGRESS_CALL_DISPOSITIONS.map((k) => [k, 0])
+  ) as Record<string, number>
   for (const row of rows) {
     if ((ZERO_PROGRESS_CALL_DISPOSITIONS as readonly string[]).includes(row.disposition)) {
       dispositions[row.disposition] = Number(row.calls)
+      registeredDispositions[row.disposition] = Number(row.registered)
     }
   }
 
   const total = Object.values(dispositions).reduce((sum, n) => sum + n, 0)
+  const registeredTotal = Object.values(registeredDispositions).reduce((sum, n) => sum + n, 0)
 
   return {
     from: from.toISOString(),
     to: to.toISOString(),
     dispositions,
     total,
+    registeredDispositions,
+    registeredTotal,
   }
 }
 

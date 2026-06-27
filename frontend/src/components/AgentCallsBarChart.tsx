@@ -64,11 +64,13 @@ export function AgentCallsBarChart({
   loading,
   highlightedAgentId,
   periodLabel,
+  onAgentClick,
 }: {
   data: AgentCallChartRow[]
   loading?: boolean
   highlightedAgentId?: string
   periodLabel?: string
+  onAgentClick?: (agentId: string) => void
 }) {
   if (loading) {
     return (
@@ -99,6 +101,7 @@ export function AgentCallsBarChart({
   const teamAverage =
     data.length > 0 ? Math.round((totalCalls / data.length) * 10) / 10 : 0
   const hasCalls = totalCalls > 0
+  const clickable = !!onAgentClick
 
   return (
     <div>
@@ -107,6 +110,9 @@ export function AgentCallsBarChart({
           {periodLabel ?? 'Período actual'}
           {highlightedAgentId && (
             <span className="text-blue-600 font-medium ml-1.5">· agente resaltado</span>
+          )}
+          {clickable && hasCalls && (
+            <span className="text-gray-400 ml-1.5">· clic en barra para ver clientes</span>
           )}
         </p>
         <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
@@ -181,6 +187,11 @@ export function AgentCallsBarChart({
                 radius={[4, 4, 0, 0]}
                 maxBarSize={48}
                 legendType="square"
+                style={clickable ? { cursor: 'pointer' } : undefined}
+                onClick={(barData) => {
+                  const row = barData as ChartRow | undefined
+                  if (row?.agentId && onAgentClick) onAgentClick(row.agentId)
+                }}
               >
                 {chartData.map((entry) => {
                   const isHighlight = highlightedAgentId === entry.agentId
@@ -208,6 +219,11 @@ export function AgentCallsBarChart({
                 radius={[3, 3, 0, 0]}
                 maxBarSize={28}
                 legendType="square"
+                style={clickable ? { cursor: 'pointer' } : undefined}
+                onClick={(barData) => {
+                  const row = barData as ChartRow | undefined
+                  if (row?.agentId && onAgentClick) onAgentClick(row.agentId)
+                }}
               >
                 {chartData.map((entry) => {
                   const isHighlight = highlightedAgentId === entry.agentId

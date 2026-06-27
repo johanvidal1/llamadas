@@ -29,6 +29,7 @@ import {
 import {
   AGENT_PIPELINE_FUNNEL,
   AGENT_PIPELINE_QUEUE,
+  buildClientsUrl,
   buildPipelineClientsUrl,
   sumFunnelStages,
   sumPipelineBarSegments,
@@ -1116,8 +1117,20 @@ export default function Reports() {
   }
 
   const goToClientsFilter = (filter: string) => {
-    navigate(buildPipelineClientsUrl(filter, {
+    navigate(buildClientsUrl({
+      filter,
       agentId: filterAgentId || undefined,
+      registeredFrom: chartRange.from,
+      registeredTo: chartRange.to,
+      from: 'reports',
+    }))
+  }
+
+  const goToClientsForAgent = (agentId: string) => {
+    navigate(buildClientsUrl({
+      agentId,
+      registeredFrom: chartRange.from,
+      registeredTo: chartRange.to,
       from: 'reports',
     }))
   }
@@ -1399,6 +1412,7 @@ export default function Reports() {
               loading={agentCallsLoading && !agentCallsData}
               highlightedAgentId={filterAgentId || undefined}
               periodLabel={chartPeriodLabel}
+              onAgentClick={goToClientsForAgent}
             />
           </div>
 
@@ -1446,6 +1460,7 @@ export default function Reports() {
               {leftChartView === 'funnel' ? (
                 <FunnelDonutChart
                   pipeline={funnelPeriodData?.stages ?? {}}
+                  registeredPipeline={funnelPeriodData?.registeredStages}
                   loading={funnelPeriodLoading && !funnelPeriodData}
                   onStageClick={goToClientsFilter}
                   emptyMessage="Sin llamadas de embudo en el periodo"
@@ -1453,6 +1468,7 @@ export default function Reports() {
               ) : (
                 <FunnelDonutChart
                   pipeline={zeroPeriodData?.dispositions ?? {}}
+                  registeredPipeline={zeroPeriodData?.registeredDispositions}
                   series={ZERO_CHART_SERIES}
                   loading={zeroPeriodLoading && !zeroPeriodData}
                   onStageClick={goToClientsFilter}

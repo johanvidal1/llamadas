@@ -74,14 +74,28 @@ export function getPipelineFilterLabel(filter: string): string | undefined {
   )
 }
 
-export function buildPipelineClientsUrl(
-  filter: string,
-  opts?: { agentId?: string; from?: 'reports' | 'dashboard' }
-): string {
+export type BuildClientsUrlOpts = {
+  filter?: string
+  agentId?: string
+  registeredFrom?: string
+  registeredTo?: string
+  from?: 'reports' | 'dashboard'
+}
+
+export function buildClientsUrl(opts?: BuildClientsUrlOpts): string {
   const params = new URLSearchParams()
-  if (filter) params.set('filter', filter)
+  if (opts?.filter) params.set('filter', opts.filter)
   if (opts?.agentId) params.set('agentId', opts.agentId)
+  if (opts?.registeredFrom) params.set('registeredFrom', opts.registeredFrom)
+  if (opts?.registeredTo) params.set('registeredTo', opts.registeredTo)
   if (opts?.from) params.set('from', opts.from)
   const query = params.toString()
   return `/clients${query ? `?${query}` : ''}`
+}
+
+export function buildPipelineClientsUrl(
+  filter: string,
+  opts?: Omit<BuildClientsUrlOpts, 'filter'>
+): string {
+  return buildClientsUrl({ ...opts, filter })
 }

@@ -589,6 +589,8 @@ export type FunnelByPeriodResponse = {
   to: string
   stages: Record<string, number>
   total: number
+  registeredStages: Record<string, number>
+  registeredTotal: number
 }
 
 export type ZeroByPeriodResponse = {
@@ -596,6 +598,8 @@ export type ZeroByPeriodResponse = {
   to: string
   dispositions: Record<string, number>
   total: number
+  registeredDispositions: Record<string, number>
+  registeredTotal: number
 }
 
 export const getReportAgentCalls = (params?: {

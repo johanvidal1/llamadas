@@ -23,6 +23,7 @@ type FunnelSlice = {
   name: string
   fullLabel: string
   value: number
+  registered: number
   pct: number
   color: string
   highlight?: boolean
@@ -30,6 +31,7 @@ type FunnelSlice = {
 
 export function FunnelDonutChart({
   pipeline,
+  registeredPipeline,
   series,
   loading,
   onStageClick,
@@ -37,6 +39,7 @@ export function FunnelDonutChart({
   legendScrollThreshold = 6,
 }: {
   pipeline: Record<string, number>
+  registeredPipeline?: Record<string, number>
   series?: DonutSeriesRow[]
   loading?: boolean
   onStageClick: (stageKey: string) => void
@@ -63,6 +66,7 @@ export function FunnelDonutChart({
           name: row.name,
           fullLabel: row.fullLabel,
           value,
+          registered: registeredPipeline?.[row.key] ?? 0,
           pct: chartTotal > 0 ? Math.round((value / chartTotal) * 100) : 0,
           color: row.color,
           highlight: row.highlight,
@@ -71,9 +75,10 @@ export function FunnelDonutChart({
       .filter((s) => s.value > 0)
 
     return { slices: built, total: chartTotal }
-  }, [pipeline, legendRows])
+  }, [pipeline, registeredPipeline, legendRows])
 
   const legendScrollable = slices.length > legendScrollThreshold
+  const showRegistered = registeredPipeline != null
 
   if (loading) {
     return (
@@ -150,7 +155,14 @@ export function FunnelDonutChart({
               }}
               formatter={(value: number, _name: string, item: { payload?: FunnelSlice }) => {
                 const slice = item.payload
-                return [`${value} (${slice?.pct ?? 0}%)`, slice?.fullLabel ?? '']
+                if (!slice) return [value, '']
+                if (showRegistered) {
+                  return [
+                    `${value} llamadas (${slice.pct}%) · ${slice.registered} registrados`,
+                    slice.fullLabel,
+                  ]
+                }
+                return [`${value} (${slice.pct}%)`, slice.fullLabel]
               }}
             />
           </PieChart>
@@ -164,40 +176,57 @@ export function FunnelDonutChart({
       </div>
 
       <div
-        className={`mt-3 space-y-1.5${legendScrollable ? ' max-h-32 overflow-y-auto pr-1' : ''}`}
+        className={`mt-3${legendScrollable ? ' max-h-32 overflow-y-auto pr-1' : ''}`}
       >
-        {legendRows.map((row) => {
-          const count = pipeline[row.key] ?? 0
-          if (count === 0) return null
-          const pct = total > 0 ? Math.round((count / total) * 100) : 0
-          const highlighted = row.highlight ?? row.key === 'VOLVER_A_LLAMAR'
-          return (
-            <button
-              key={row.key}
-              type="button"
-              onClick={() => onStageClick(row.key)}
-              className={`w-full flex items-center justify-between text-xs rounded-md px-2 py-1 hover:bg-gray-50 transition-colors text-left${
-                highlighted ? ' bg-blue-50/60 ring-1 ring-blue-100' : ''
-              }`}
-            >
-              <span className="flex items-center gap-2 min-w-0">
-                <span
-                  className={`w-2.5 h-2.5 rounded-full shrink-0${highlighted ? ' ring-2 ring-blue-300 ring-offset-1' : ''}`}
-                  style={{ backgroundColor: row.color }}
-                />
-                <span className={`truncate ${highlighted ? 'font-bold text-blue-800' : 'text-gray-700'}`}>
-                  {row.name}
+        {showRegistered && (
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 items-center text-[10px] font-semibold text-gray-400 uppercase tracking-wide px-2 pb-1.5 mb-0.5 border-b border-gray-100">
+            <span>Etapa</span>
+            <span className="text-right w-14">Llamadas</span>
+            <span className="text-right w-14">Registrados</span>
+          </div>
+        )}
+        <div className="space-y-1.5">
+          {legendRows.map((row) => {
+            const count = pipeline[row.key] ?? 0
+            if (count === 0) return null
+            const registered = registeredPipeline?.[row.key] ?? 0
+            const pct = total > 0 ? Math.round((count / total) * 100) : 0
+            const highlighted = row.highlight ?? row.key === 'VOLVER_A_LLAMAR'
+            return (
+              <button
+                key={row.key}
+                type="button"
+                onClick={() => onStageClick(row.key)}
+                className={`w-full rounded-md px-2 py-1 hover:bg-gray-50 transition-colors text-left text-xs${
+                  highlighted ? ' bg-blue-50/60 ring-1 ring-blue-100' : ''
+                } ${showRegistered ? 'grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 items-center' : 'flex items-center justify-between'}`}
+              >
+                <span className="flex items-center gap-2 min-w-0">
+                  <span
+                    className={`w-2.5 h-2.5 rounded-full shrink-0${highlighted ? ' ring-2 ring-blue-300 ring-offset-1' : ''}`}
+                    style={{ backgroundColor: row.color }}
+                  />
+                  <span className={`truncate ${highlighted ? 'font-bold text-blue-800' : 'text-gray-700'}`}>
+                    {row.name}
+                  </span>
                 </span>
-              </span>
-              <span className={`shrink-0 ml-2 ${highlighted ? 'font-bold text-blue-900' : 'text-gray-900 font-semibold'}`}>
-                {count}
-                <span className={`font-normal ml-1 ${highlighted ? 'text-blue-500' : 'text-gray-400'}`}>
-                  ({pct}%)
+                <span className={`shrink-0 text-right w-14 ${highlighted ? 'font-bold text-blue-900' : 'text-gray-900 font-semibold'}`}>
+                  {count}
+                  {!showRegistered && (
+                    <span className={`font-normal ml-1 ${highlighted ? 'text-blue-500' : 'text-gray-400'}`}>
+                      ({pct}%)
+                    </span>
+                  )}
                 </span>
-              </span>
-            </button>
-          )
-        })}
+                {showRegistered && (
+                  <span className={`shrink-0 text-right w-14 ${highlighted ? 'font-bold text-emerald-800' : 'text-emerald-700 font-semibold'}`}>
+                    {registered}
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
       </div>
     </div>
   )
