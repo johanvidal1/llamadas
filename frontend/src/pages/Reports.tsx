@@ -1304,16 +1304,6 @@ export default function Reports() {
       })),
   ].filter((d) => d.count > 0) : []
   const zeroProgressTotal = zeroProgressBreakdown.reduce((s, d) => s + d.count, 0)
-  const zeroRegisteredPipeline = useMemo(() => {
-    if (!companyPipeline) return undefined
-    const result: Record<string, number> = {}
-    for (const row of ZERO_CHART_SERIES) {
-      result[row.key] = row.key === 'VOLVER_A_LLAMAR'
-        ? (companyPipeline.VOLVER_A_LLAMAR ?? 0)
-        : (companyDispositionCounts[row.key] ?? 0)
-    }
-    return result
-  }, [companyPipeline, companyDispositionCounts])
   const funnelCompanies = sumFunnelStages(companyPipeline ?? {})
   const otrosCompanies = companyPipeline?.OTROS ?? 0
   const ventaCerrada = companyPipeline?.VENTA_CERRADA ?? 0
@@ -1478,7 +1468,6 @@ export default function Reports() {
               {leftChartView === 'funnel' ? (
                 <FunnelDonutChart
                   pipeline={funnelPeriodData?.stages ?? {}}
-                  registeredPipeline={companyPipeline}
                   loading={funnelPeriodLoading && !funnelPeriodData}
                   onStageClick={goToClientsFilter}
                   emptyMessage="Sin llamadas de embudo en el periodo"
@@ -1486,7 +1475,6 @@ export default function Reports() {
               ) : (
                 <FunnelDonutChart
                   pipeline={zeroPeriodData?.dispositions ?? {}}
-                  registeredPipeline={zeroRegisteredPipeline}
                   series={ZERO_CHART_SERIES}
                   loading={zeroPeriodLoading && !zeroPeriodData}
                   onStageClick={goToClientsFilter}

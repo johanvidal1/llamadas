@@ -23,7 +23,6 @@ type FunnelSlice = {
   name: string
   fullLabel: string
   value: number
-  registered: number
   pct: number
   color: string
   highlight?: boolean
@@ -31,28 +30,18 @@ type FunnelSlice = {
 
 export function FunnelDonutChart({
   pipeline,
-  registeredPipeline,
   series,
   loading,
   onStageClick,
   emptyMessage = 'Sin llamadas en el periodo',
   legendScrollThreshold = 6,
-  callsColumnLabel = 'Llamadas',
-  callsColumnHint = 'en el periodo',
-  registeredColumnLabel = 'Registrados',
-  registeredColumnHint = 'estado actual',
 }: {
   pipeline: Record<string, number>
-  registeredPipeline?: Record<string, number>
   series?: DonutSeriesRow[]
   loading?: boolean
   onStageClick: (stageKey: string) => void
   emptyMessage?: string
   legendScrollThreshold?: number
-  callsColumnLabel?: string
-  callsColumnHint?: string
-  registeredColumnLabel?: string
-  registeredColumnHint?: string
 }) {
   const legendRows: DonutSeriesRow[] = series ?? AGENT_PIPELINE_FUNNEL.map((row) => ({
     key: row.key,
@@ -74,7 +63,6 @@ export function FunnelDonutChart({
           name: row.name,
           fullLabel: row.fullLabel,
           value,
-          registered: registeredPipeline?.[row.key] ?? 0,
           pct: chartTotal > 0 ? Math.round((value / chartTotal) * 100) : 0,
           color: row.color,
           highlight: row.highlight,
@@ -83,10 +71,9 @@ export function FunnelDonutChart({
       .filter((s) => s.value > 0)
 
     return { slices: built, total: chartTotal }
-  }, [pipeline, registeredPipeline, legendRows])
+  }, [pipeline, legendRows])
 
   const legendScrollable = slices.length > legendScrollThreshold
-  const showRegistered = registeredPipeline != null
 
   if (loading) {
     return (
@@ -164,12 +151,6 @@ export function FunnelDonutChart({
               formatter={(value: number, _name: string, item: { payload?: FunnelSlice }) => {
                 const slice = item.payload
                 if (!slice) return [value, '']
-                if (showRegistered) {
-                  return [
-                    `${value} llamadas (${slice.pct}%) · ${slice.registered} registrados`,
-                    slice.fullLabel,
-                  ]
-                }
                 return [`${value} (${slice.pct}%)`, slice.fullLabel]
               }}
             />
@@ -186,32 +167,10 @@ export function FunnelDonutChart({
       <div
         className={`mt-3${legendScrollable ? ' max-h-32 overflow-y-auto pr-1' : ''}`}
       >
-        {showRegistered && (
-          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 items-end text-[10px] font-semibold text-gray-400 uppercase tracking-wide px-2 pb-1.5 mb-0.5 border-b border-gray-100">
-            <span>Etapa</span>
-            <span className="text-right w-14 leading-tight" title={callsColumnHint}>
-              {callsColumnLabel}
-              {callsColumnHint && (
-                <span className="block normal-case font-normal text-[9px] text-gray-300 tracking-normal">
-                  {callsColumnHint}
-                </span>
-              )}
-            </span>
-            <span className="text-right w-14 leading-tight" title={registeredColumnHint}>
-              {registeredColumnLabel}
-              {registeredColumnHint && (
-                <span className="block normal-case font-normal text-[9px] text-gray-300 tracking-normal">
-                  {registeredColumnHint}
-                </span>
-              )}
-            </span>
-          </div>
-        )}
         <div className="space-y-1.5">
           {legendRows.map((row) => {
             const count = pipeline[row.key] ?? 0
             if (count === 0) return null
-            const registered = registeredPipeline?.[row.key] ?? 0
             const pct = total > 0 ? Math.round((count / total) * 100) : 0
             const highlighted = row.highlight ?? row.key === 'VOLVER_A_LLAMAR'
             return (
@@ -219,9 +178,9 @@ export function FunnelDonutChart({
                 key={row.key}
                 type="button"
                 onClick={() => onStageClick(row.key)}
-                className={`w-full rounded-md px-2 py-1 hover:bg-gray-50 transition-colors text-left text-xs${
+                className={`w-full flex items-center justify-between rounded-md px-2 py-1 hover:bg-gray-50 transition-colors text-left text-xs${
                   highlighted ? ' bg-blue-50/60 ring-1 ring-blue-100' : ''
-                } ${showRegistered ? 'grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 items-center' : 'flex items-center justify-between'}`}
+                }`}
               >
                 <span className="flex items-center gap-2 min-w-0">
                   <span
@@ -232,19 +191,12 @@ export function FunnelDonutChart({
                     {row.name}
                   </span>
                 </span>
-                <span className={`shrink-0 text-right w-14 ${highlighted ? 'font-bold text-blue-900' : 'text-gray-900 font-semibold'}`}>
+                <span className={`shrink-0 ${highlighted ? 'font-bold text-blue-900' : 'text-gray-900 font-semibold'}`}>
                   {count}
-                  {!showRegistered && (
-                    <span className={`font-normal ml-1 ${highlighted ? 'text-blue-500' : 'text-gray-400'}`}>
-                      ({pct}%)
-                    </span>
-                  )}
-                </span>
-                {showRegistered && (
-                  <span className={`shrink-0 text-right w-14 ${highlighted ? 'font-bold text-emerald-800' : 'text-emerald-700 font-semibold'}`}>
-                    {registered}
+                  <span className={`font-normal ml-1 ${highlighted ? 'text-blue-500' : 'text-gray-400'}`}>
+                    ({pct}%)
                   </span>
-                )}
+                </span>
               </button>
             )
           })}
