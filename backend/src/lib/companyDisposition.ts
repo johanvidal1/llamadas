@@ -173,6 +173,18 @@ export function buildCompanyPipelineCounts(
   return counts
 }
 
+/** Count assigned companies by last raw disposition code (excludes null / pending). */
+export function buildCompanyDispositionCounts(
+  lastByCompany: Map<string, { disposition: string | null }>
+): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const { disposition } of lastByCompany.values()) {
+    if (disposition == null) continue
+    counts[disposition] = (counts[disposition] ?? 0) + 1
+  }
+  return counts
+}
+
 export type RunMetrics = {
   callCount: number
   contactedCompanies: number

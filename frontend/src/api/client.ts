@@ -633,7 +633,12 @@ export type ReportsSection = 'summary' | 'agents' | 'batches'
 
 export type ReportsSummaryResponse = Pick<
   ReportsResponse,
-  'callsByDay' | 'dispositionBreakdown' | 'assignedCompanies' | 'companyPipeline' | 'funnel'
+  | 'callsByDay'
+  | 'dispositionBreakdown'
+  | 'assignedCompanies'
+  | 'companyPipeline'
+  | 'companyDispositionCounts'
+  | 'funnel'
 >
 
 export type ReportsAgentsResponse = Pick<ReportsResponse, 'agentPerformance'>
@@ -743,6 +748,7 @@ export type ReportsResponse = {
   batchProgress: BatchProgressRow[]
   assignedCompanies: number
   companyPipeline: Record<string, number>
+  companyDispositionCounts?: Record<string, number>
   funnel: {
     companies: {
       total: number

@@ -96,6 +96,7 @@ interface ReportsData {
   funnel: Funnel
   assignedCompanies: number
   companyPipeline: Record<string, number>
+  companyDispositionCounts?: Record<string, number>
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1273,12 +1274,11 @@ export default function Reports() {
   const { sorted: sortedAgents, sortBy, asc, toggle } = useSortedAgents(agentsData?.agentPerformance ?? [])
 
   const funnel = summaryData?.funnel
-  const dispositionBreakdown = summaryData?.dispositionBreakdown ?? []
   const batchProgress = batchesData?.batchProgress ?? []
   const companyPipeline = summaryData?.companyPipeline
+  const companyDispositionCounts = summaryData?.companyDispositionCounts ?? {}
   const assignedCompanies = summaryData?.assignedCompanies
   const companies = funnel?.companies
-  const totalDisp = dispositionBreakdown.reduce((s, d) => s + d.count, 0)
   const pipelineTotal = assignedCompanies ?? 0
   const pipelinePending = companyPipeline?.PENDING ?? 0
   const pipelineWithResponse = pipelineTotal - pipelinePending
@@ -1286,16 +1286,34 @@ export default function Reports() {
     ...ZERO_PROGRESS_OPTIONS.map((opt) => ({
       disposition: opt.code,
       label: opt.label,
-      count: dispositionBreakdown.find((d) => d.disposition === opt.code)?.count ?? 0,
+      count: opt.code === 'VOLVER_A_LLAMAR'
+        ? (companyPipeline?.VOLVER_A_LLAMAR ?? 0)
+        : (companyDispositionCounts[opt.code] ?? 0),
     })),
-    ...dispositionBreakdown
-      .filter((d) => !getResponseOption(d.disposition) && !ZERO_PROGRESS_OPTIONS.some((z) => z.code === d.disposition))
-      .map((d) => ({
-        disposition: d.disposition,
-        label: getDispositionLabel(d.disposition),
-        count: d.count,
+    ...Object.entries(companyDispositionCounts)
+      .filter(
+        ([code]) =>
+          !getResponseOption(code) &&
+          !ZERO_PROGRESS_OPTIONS.some((z) => z.code === code) &&
+          code !== 'CALLBACK'
+      )
+      .map(([disposition, count]) => ({
+        disposition,
+        label: getDispositionLabel(disposition),
+        count,
       })),
   ].filter((d) => d.count > 0) : []
+  const zeroProgressTotal = zeroProgressBreakdown.reduce((s, d) => s + d.count, 0)
+  const zeroRegisteredPipeline = useMemo(() => {
+    if (!companyPipeline) return undefined
+    const result: Record<string, number> = {}
+    for (const row of ZERO_CHART_SERIES) {
+      result[row.key] = row.key === 'VOLVER_A_LLAMAR'
+        ? (companyPipeline.VOLVER_A_LLAMAR ?? 0)
+        : (companyDispositionCounts[row.key] ?? 0)
+    }
+    return result
+  }, [companyPipeline, companyDispositionCounts])
   const funnelCompanies = sumFunnelStages(companyPipeline ?? {})
   const otrosCompanies = companyPipeline?.OTROS ?? 0
   const ventaCerrada = companyPipeline?.VENTA_CERRADA ?? 0
@@ -1460,7 +1478,7 @@ export default function Reports() {
               {leftChartView === 'funnel' ? (
                 <FunnelDonutChart
                   pipeline={funnelPeriodData?.stages ?? {}}
-                  registeredPipeline={funnelPeriodData?.registeredStages}
+                  registeredPipeline={companyPipeline}
                   loading={funnelPeriodLoading && !funnelPeriodData}
                   onStageClick={goToClientsFilter}
                   emptyMessage="Sin llamadas de embudo en el periodo"
@@ -1468,7 +1486,7 @@ export default function Reports() {
               ) : (
                 <FunnelDonutChart
                   pipeline={zeroPeriodData?.dispositions ?? {}}
-                  registeredPipeline={zeroPeriodData?.registeredDispositions}
+                  registeredPipeline={zeroRegisteredPipeline}
                   series={ZERO_CHART_SERIES}
                   loading={zeroPeriodLoading && !zeroPeriodData}
                   onStageClick={goToClientsFilter}
@@ -1661,14 +1679,14 @@ export default function Reports() {
                           <span className="font-semibold text-gray-900">
                             {d.count}{' '}
                             <span className="text-gray-400 font-normal">
-                              ({totalDisp > 0 ? Math.round(d.count / totalDisp * 100) : 0}%)
+                              ({zeroProgressTotal > 0 ? Math.round(d.count / zeroProgressTotal * 100) : 0}%)
                             </span>
                           </span>
                         </div>
                         <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                           <div
                             className={`h-full rounded-full ${DISPOSITION_BAR_COLORS[d.disposition] ?? 'bg-gray-400'}`}
-                            style={{ width: `${totalDisp > 0 ? (d.count / totalDisp) * 100 : 0}%` }}
+                            style={{ width: `${zeroProgressTotal > 0 ? (d.count / zeroProgressTotal) * 100 : 0}%` }}
                           />
                         </div>
                       </div>

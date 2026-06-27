@@ -37,6 +37,10 @@ export function FunnelDonutChart({
   onStageClick,
   emptyMessage = 'Sin llamadas en el periodo',
   legendScrollThreshold = 6,
+  callsColumnLabel = 'Llamadas',
+  callsColumnHint = 'en el periodo',
+  registeredColumnLabel = 'Registrados',
+  registeredColumnHint = 'estado actual',
 }: {
   pipeline: Record<string, number>
   registeredPipeline?: Record<string, number>
@@ -45,6 +49,10 @@ export function FunnelDonutChart({
   onStageClick: (stageKey: string) => void
   emptyMessage?: string
   legendScrollThreshold?: number
+  callsColumnLabel?: string
+  callsColumnHint?: string
+  registeredColumnLabel?: string
+  registeredColumnHint?: string
 }) {
   const legendRows: DonutSeriesRow[] = series ?? AGENT_PIPELINE_FUNNEL.map((row) => ({
     key: row.key,
@@ -179,10 +187,24 @@ export function FunnelDonutChart({
         className={`mt-3${legendScrollable ? ' max-h-32 overflow-y-auto pr-1' : ''}`}
       >
         {showRegistered && (
-          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 items-center text-[10px] font-semibold text-gray-400 uppercase tracking-wide px-2 pb-1.5 mb-0.5 border-b border-gray-100">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 items-end text-[10px] font-semibold text-gray-400 uppercase tracking-wide px-2 pb-1.5 mb-0.5 border-b border-gray-100">
             <span>Etapa</span>
-            <span className="text-right w-14">Llamadas</span>
-            <span className="text-right w-14">Registrados</span>
+            <span className="text-right w-14 leading-tight" title={callsColumnHint}>
+              {callsColumnLabel}
+              {callsColumnHint && (
+                <span className="block normal-case font-normal text-[9px] text-gray-300 tracking-normal">
+                  {callsColumnHint}
+                </span>
+              )}
+            </span>
+            <span className="text-right w-14 leading-tight" title={registeredColumnHint}>
+              {registeredColumnLabel}
+              {registeredColumnHint && (
+                <span className="block normal-case font-normal text-[9px] text-gray-300 tracking-normal">
+                  {registeredColumnHint}
+                </span>
+              )}
+            </span>
           </div>
         )}
         <div className="space-y-1.5">

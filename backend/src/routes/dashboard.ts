@@ -7,6 +7,7 @@ import {
   buildRunMetrics,
   FUNNEL_PIPELINE_KEYS,
   getLastDispositionByCompanyIds,
+  buildCompanyDispositionCounts,
   resolveRunBatchId,
 } from '../lib/companyDisposition'
 import {
@@ -589,6 +590,7 @@ async function buildReportsSummary(filterAgentId?: string) {
     filterAgentId || undefined
   )
   const companyPipeline = buildCompanyPipelineCounts(lastByCompany)
+  const companyDispositionCounts = buildCompanyDispositionCounts(lastByCompany)
   const companyMap = toStatusMap(funnelCompanyStatuses)
 
   return {
@@ -599,6 +601,7 @@ async function buildReportsSummary(filterAgentId?: string) {
     })),
     assignedCompanies,
     companyPipeline,
+    companyDispositionCounts,
     funnel: {
       companies: {
         total: totalCompanies,
