@@ -4,7 +4,11 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
 import { buildCalledAtRange } from '../lib/callActivity'
 import { requireAuth, AuthRequest } from '../middleware/auth'
-import { getAclaracionForDisposition, isValidDisposition } from '../lib/responseOptions'
+import {
+  getAclaracionForDisposition,
+  isHiddenFromAgentQueue,
+  isValidDisposition,
+} from '../lib/responseOptions'
 import {
   buildCompanyPipelineCounts,
   buildDaySummary,
@@ -214,6 +218,8 @@ type ClientsFilterContext = {
   agentScopedFunnel: boolean
   agentScopedDisposition: boolean
   includeAssignmentSummary: boolean
+  /** Agent default queue (Cola Todos): exclude archived dispositions unless explicitly filtered. */
+  agentQueueExcludeArchived: boolean
 }
 
 async function buildClientsFilterContext(
@@ -290,6 +296,14 @@ async function buildClientsFilterContext(
     where.id = { in: companyIdsInRange }
   }
 
+  const agentQueueExcludeArchived =
+    isAgent &&
+    !agentScopedPending &&
+    !agentScopedOtros &&
+    !agentScopedFunnel &&
+    !agentScopedDisposition &&
+    !status
+
   return {
     where,
     contactWhere,
@@ -302,6 +316,7 @@ async function buildClientsFilterContext(
     agentScopedFunnel,
     agentScopedDisposition,
     includeAssignmentSummary: !!agentId,
+    agentQueueExcludeArchived,
   }
 }
 
@@ -311,10 +326,20 @@ async function getActivitySortedClientsPage(
   take: number
 ) {
   const lightweight = await fetchLightweightCompanies(ctx.where)
-  const sortedIds = await sortCompanyIdsByActivityQueue(
+  let sortedIds = await sortCompanyIdsByActivityQueue(
     lightweight,
     ctx.dispositionAgentId
   )
+  if (ctx.agentQueueExcludeArchived) {
+    const lastByCompany = await getLastDispositionByCompanyIds(
+      sortedIds,
+      ctx.dispositionAgentId
+    )
+    sortedIds = sortedIds.filter((id) => {
+      const disposition = lastByCompany.get(id)?.disposition ?? null
+      return !isHiddenFromAgentQueue(disposition)
+    })
+  }
   const total = sortedIds.length
   const pageIds = sortedIds.slice(skip, skip + take)
   const lastByCompany = await getLastDispositionByCompanyIds(pageIds, ctx.dispositionAgentId)
@@ -568,7 +593,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     built.agentScopedOtros ||
     built.agentScopedFunnel
 
-  if (needsDispositionFilter || sortBy === 'activity') {
+  if (needsDispositionFilter || sortBy === 'activity' || built.agentQueueExcludeArchived) {
     const { clients, total } = needsDispositionFilter
       ? await getFilteredDispositionClientsPage(built, skip, take)
       : await getActivitySortedClientsPage(built, skip, take)

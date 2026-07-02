@@ -135,6 +135,22 @@ export function isDefinitiveClosureDisposition(code: string): boolean {
   return definitiveClosureSet.has(code)
 }
 
+/** Last dispositions hidden from the agent default work queue (Cola Todos / nav / grid Todos). */
+export const AGENT_QUEUE_HIDDEN_DISPOSITIONS = [
+  'NO_INTERESADO',
+  'NOT_INTERESTED',
+  'CLIENTE_ACTUAL',
+  'RUC_SUSPENDIDO',
+  'SIN_LLEGADA_DECISOR',
+] as const
+
+const agentQueueHiddenSet = new Set<string>(AGENT_QUEUE_HIDDEN_DISPOSITIONS)
+
+export function isHiddenFromAgentQueue(lastDisposition?: string | null): boolean {
+  if (!lastDisposition) return false
+  return agentQueueHiddenSet.has(lastDisposition)
+}
+
 export function requiresCallbackDate(code: string): boolean {
   return code === 'VOLVER_A_LLAMAR' || code === 'CALLBACK'
 }

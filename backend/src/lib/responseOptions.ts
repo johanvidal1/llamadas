@@ -144,3 +144,19 @@ export function isAgentSelectableDisposition(code: string): boolean {
   if (!opt) return true
   return opt.agentSelectable !== false
 }
+
+/** Last dispositions hidden from the agent default work queue (Cola Todos / nav / grid Todos). */
+export const AGENT_QUEUE_HIDDEN_DISPOSITIONS = [
+  'NO_INTERESADO',
+  'NOT_INTERESTED',
+  'CLIENTE_ACTUAL',
+  'RUC_SUSPENDIDO',
+  'SIN_LLEGADA_DECISOR',
+] as const
+
+const agentQueueHiddenSet = new Set<string>(AGENT_QUEUE_HIDDEN_DISPOSITIONS)
+
+export function isHiddenFromAgentQueue(lastDisposition?: string | null): boolean {
+  if (!lastDisposition) return false
+  return agentQueueHiddenSet.has(lastDisposition)
+}

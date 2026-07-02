@@ -43,6 +43,7 @@ import {
   getResponseOption,
   isDefinitiveClosureDisposition,
   requiresCallbackDate,
+  isHiddenFromAgentQueue,
 } from '../config/responseOptions'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -727,7 +728,12 @@ export default function MyLeads() {
   ).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 
   // Clients for detail view navigation — server-filtered by batch
-  const clients: ClientSummary[] = clientsData?.clients ?? []
+  const rawNavClients: ClientSummary[] = clientsData?.clients ?? []
+  const clients: ClientSummary[] = useMemo(() => {
+    if (isAdmin) return rawNavClients
+    return rawNavClients.filter((c) => !isHiddenFromAgentQueue(c.lastDisposition))
+  }, [rawNavClients, isAdmin])
+  const hiddenNavCount = isAdmin ? 0 : rawNavClients.length - clients.length
   const total = clients.length
   const currentClient = clients[currentIndex]
 
@@ -1611,6 +1617,13 @@ export default function MyLeads() {
 
   const gridClients = gridData?.clients ?? []
   const gridTotal = gridData?.total ?? 0
+  const rawListClients: ClientSummary[] = listData?.clients ?? []
+  const shouldHideArchivedInList = !isAdmin && listCola === 'ALL' && !listDrilldown
+  const listClients: ClientSummary[] = useMemo(() => {
+    if (!shouldHideArchivedInList) return rawListClients
+    return rawListClients.filter((c) => !isHiddenFromAgentQueue(c.lastDisposition))
+  }, [rawListClients, shouldHideArchivedInList])
+  const hiddenListCount = shouldHideArchivedInList ? rawListClients.length - listClients.length : 0
   const effectiveDisposition = disposition
   const selectedResponse = effectiveDisposition ? getResponseOption(effectiveDisposition) : undefined
   const agendarDisabled =
@@ -1864,6 +1877,11 @@ export default function MyLeads() {
               <>
                 <span className="text-blue-300 text-xs tabular-nums whitespace-nowrap">
                   {currentIndex + 1} / {total}
+                  {hiddenNavCount > 0 && (
+                    <span className="text-blue-400/70" title="Empresas archivadas ocultas de la cola">
+                      {' '}({hiddenNavCount} ocultas)
+                    </span>
+                  )}
                 </span>
                 <DetailRecordNav
                   variant="header"
@@ -2669,7 +2687,6 @@ export default function MyLeads() {
 
       {/* ══════════════════════ LIST VIEW ══════════════════════════ */}
       {viewMode === 'list' && (() => {
-        const listClients: ClientSummary[] = listData?.clients ?? []
         const queueIndexById = new Map(clients.map((c, i) => [c.id, i]))
         const listFiltered = listClients.filter((c) => {
           const q = listSearch.toLowerCase()
@@ -2754,6 +2771,11 @@ export default function MyLeads() {
                   )}
                   <span className="text-xs text-gray-400">
                     {listFiltered.length} empresas
+                    {hiddenListCount > 0 && (
+                      <span className="text-gray-300" title="Empresas archivadas ocultas de la cola">
+                        {' '}({hiddenListCount} archivadas ocultas)
+                      </span>
+                    )}
                   </span>
                 </div>
               </div>
