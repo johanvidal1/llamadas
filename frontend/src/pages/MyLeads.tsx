@@ -2670,11 +2670,17 @@ export default function MyLeads() {
       {/* ══════════════════════ LIST VIEW ══════════════════════════ */}
       {viewMode === 'list' && (() => {
         const listClients: ClientSummary[] = listData?.clients ?? []
+        const queueIndexById = new Map(clients.map((c, i) => [c.id, i]))
         const listFiltered = listClients.filter((c) => {
           const q = listSearch.toLowerCase()
           const matchSearch = !q || c.ruc.toLowerCase().includes(q) || (c.razonSocial ?? '').toLowerCase().includes(q) || c.contacts.some((ct) => ct.nombre.toLowerCase().includes(q) || (ct.telefono ?? '').includes(q))
           return matchSearch
         })
+        const listSorted = [...listFiltered].sort(
+          (a, b) =>
+            (queueIndexById.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+            (queueIndexById.get(b.id) ?? Number.MAX_SAFE_INTEGER)
+        )
         return (
           <div className="flex-1 overflow-y-auto p-4 lg:p-5 space-y-4">
             {/* Filters — row 1: search, cola, lote */}
@@ -2826,9 +2832,9 @@ export default function MyLeads() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {listFiltered.map((c, i) => {
-                      const realIdx = clients.findIndex((x) => x.id === c.id)
-                      const navIdx = realIdx >= 0 ? realIdx : i
+                    {listSorted.map((c) => {
+                      const realIdx = queueIndexById.get(c.id) ?? -1
+                      const navIdx = realIdx
                       const nextCb = callbackList
                         .filter((cb) => cb.company.id === c.id)
                         .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())[0]
@@ -2849,7 +2855,7 @@ export default function MyLeads() {
                           }`}
                           onClick={() => openDetailFromList(realIdx)}
                         >
-                          <td className="px-4 py-2.5 text-gray-400 text-xs">{navIdx + 1}</td>
+                          <td className="px-4 py-2.5 text-gray-400 text-xs">{realIdx >= 0 ? realIdx + 1 : '—'}</td>
                           <td className="px-4 py-2.5 font-mono text-xs text-gray-600">{c.ruc}</td>
                           <td className="px-4 py-2.5">
                             <p className="font-medium text-gray-900 text-sm">{c.razonSocial || <span className="text-gray-400 italic text-xs">Sin razón social</span>}</p>
