@@ -476,6 +476,21 @@ function dateFilterButtonLabel(from: string, to: string): string {
   return `hasta ${format(new Date(to + 'T12:00:00'), 'd MMM yy', { locale: es })}`
 }
 
+function funnelPeriodLabel(from: string, to: string): string {
+  if (!from && !to) return 'Sin filtro de actividad (estado actual)'
+  if (isTodayPreset(from, to)) {
+    const today = todayLocal()
+    return `Hoy (${format(new Date(today + 'T12:00:00'), 'd MMM yyyy', { locale: es })})`
+  }
+  if (isWeekPreset(from, to)) {
+    return `Esta semana (${formatDateChip(weekStartLocal(), todayLocal())})`
+  }
+  if (isMonthPreset(from, to)) {
+    return `Este mes (${formatDateChip(monthStartLocal(), todayLocal())})`
+  }
+  return formatDateChip(from, to)
+}
+
 function DateFilterPicker({
   registeredFrom,
   registeredTo,
@@ -816,11 +831,6 @@ function ViewModePicker({
               className={optionClass(groupMode === 'day')}
             >
               Por día
-              {!hasDateFilter && (
-                <span className="block text-[11px] font-normal text-gray-400 mt-0.5">
-                  Mejor con filtro de fecha
-                </span>
-              )}
             </button>
             {hasDateFilter && (
               <>
@@ -1266,8 +1276,16 @@ export default function Clients() {
   const initialRegisteredTo = searchParams.get('registeredTo') ?? ''
   const hasUrlDateParams = !!(initialRegisteredFrom || initialRegisteredTo)
   const useDayDefault = !hasUrlDateParams && !initialAgentId && !deepLinkFilter
-  const defaultRegisteredFrom = hasUrlDateParams ? initialRegisteredFrom : ''
-  const defaultRegisteredTo = hasUrlDateParams ? initialRegisteredTo : ''
+  const defaultRegisteredFrom = hasUrlDateParams
+    ? initialRegisteredFrom
+    : useDayDefault
+      ? todayLocal()
+      : ''
+  const defaultRegisteredTo = hasUrlDateParams
+    ? initialRegisteredTo
+    : useDayDefault
+      ? todayLocal()
+      : ''
   const defaultGroupMode: GroupMode = useDayDefault ? 'day' : ''
 
   const [search, setSearch] = useState('')
@@ -1587,7 +1605,16 @@ export default function Clients() {
     if (groupMode === 'day') {
       setExpandedGroups((prev) => {
         const validKeys = new Set(displayGroups.map((g) => g.key))
-        return new Set([...prev].filter((k) => validKeys.has(k)))
+        const filtered = new Set([...prev].filter((k) => validKeys.has(k)))
+        if (filtered.size > 0) return filtered
+        const today = todayLocal()
+        if (isTodayPreset(registeredFrom, registeredTo) && validKeys.has(today)) {
+          return new Set([today])
+        }
+        if (displayGroups.length === 1) {
+          return new Set([displayGroups[0].key])
+        }
+        return filtered
       })
       return
     }
@@ -1595,7 +1622,7 @@ export default function Clients() {
       const validKeys = new Set(displayGroups.map((g) => g.key))
       return new Set([...prev].filter((k) => validKeys.has(k)))
     })
-  }, [effectiveGroupBy, groupMode, displayGroups])
+  }, [effectiveGroupBy, groupMode, displayGroups, registeredFrom, registeredTo])
 
   const toggleGroup = (key: string) => {
     setExpandedGroups((prev) => {
@@ -1840,9 +1867,21 @@ export default function Clients() {
           <div className="flex flex-col lg:flex-row lg:items-start gap-4">
             <div className="flex-1 min-w-0">
               <div className="flex flex-wrap items-baseline justify-between gap-2 mb-2">
-                <p className="text-xs font-medium text-gray-500">Embudo comercial</p>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-gray-500">Embudo comercial</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">
+                    Empresas con última actividad en el período · estado actual del embudo
+                  </p>
+                  <p
+                    className={`text-[11px] mt-0.5 font-medium ${
+                      hasDateFilter ? 'text-gray-500' : 'text-amber-600'
+                    }`}
+                  >
+                    {funnelPeriodLabel(registeredFrom, registeredTo)}
+                  </p>
+                </div>
                 {funnelTotal != null && (
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-gray-500 shrink-0">
                     <span className="font-semibold text-gray-700">{funnelTotal}</span> en embudo
                   </p>
                 )}
