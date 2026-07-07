@@ -39,7 +39,7 @@ function AgentCallsTooltip({
   const followUps = row.calls - row.registered
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs shadow-md">
+    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-xs shadow-md pointer-events-auto min-w-[10rem]">
       <p className="font-semibold text-gray-900 mb-1.5">{row.name}</p>
       <div className="space-y-1 text-gray-600">
         <p>
@@ -169,7 +169,12 @@ export function AgentCallsBarChart({
             <span className="text-blue-600 font-medium ml-1.5">· agente resaltado</span>
           )}
           {selectable && hasCalls && (
-            <span className="text-gray-400 ml-1.5">· clic en barra o nombre para filtrar por agente</span>
+            <span className="text-gray-400 ml-1.5">
+              · clic en barra o nombre para filtrar por agente
+              {highlightedAgentId && onViewClients && (
+                <span> · enlace a Clientes debajo del gráfico</span>
+              )}
+            </span>
           )}
         </p>
         <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
@@ -224,6 +229,8 @@ export function AgentCallsBarChart({
               />
               <Tooltip
                 cursor={{ fill: 'rgba(59, 130, 246, 0.06)' }}
+                wrapperStyle={{ pointerEvents: 'auto', zIndex: 20 }}
+                offset={12}
                 content={<AgentCallsTooltip onViewClients={onViewClients} />}
               />
               <Legend

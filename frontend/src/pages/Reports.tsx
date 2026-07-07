@@ -1331,6 +1331,11 @@ export default function Reports() {
 
   const filteredAgentName = agents.find((a) => a.id === filterAgentId)?.name
 
+  const filteredAgentCallsRow = useMemo(() => {
+    if (!filterAgentId) return null
+    return agentCallsData?.agents?.find((a) => a.agentId === filterAgentId) ?? null
+  }, [filterAgentId, agentCallsData?.agents])
+
   const isUpdating = isFetching && hasAnyData
 
   return (
@@ -1421,6 +1426,9 @@ export default function Reports() {
             <h3 className="text-sm font-semibold text-gray-900 mb-1">Llamadas por agente</h3>
             <p className="text-xs text-gray-500 mb-3">
               Llamadas totales y empresas registradas · {chartPeriodLabel}
+              {filterAgentId && (
+                <span className="text-gray-400"> · enlace persistente a Clientes al filtrar por agente</span>
+              )}
             </p>
             <AgentCallsBarChart
               data={agentCallsData?.agents ?? []}
@@ -1430,6 +1438,26 @@ export default function Reports() {
               onAgentSelect={selectAgentFilter}
               onViewClients={goToClientsForAgent}
             />
+            {filterAgentId && (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5">
+                <p className="text-sm text-blue-900">
+                  <span className="font-medium">
+                    {filteredAgentCallsRow?.name ?? filteredAgentName ?? 'Agente'}
+                  </span>
+                  <span className="text-blue-700/70 mx-1.5">·</span>
+                  <span>{filteredAgentCallsRow?.calls ?? 0} llamadas</span>
+                  <span className="text-blue-700/70 mx-1.5">·</span>
+                  <span>{filteredAgentCallsRow?.registered ?? 0} registrados</span>
+                </p>
+                <button
+                  type="button"
+                  onClick={() => goToClientsForAgent(filterAgentId)}
+                  className="text-sm font-medium text-blue-700 hover:text-blue-900 hover:underline shrink-0"
+                >
+                  Ver clientes en este período →
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr] gap-5 pt-2 border-t border-gray-100">
