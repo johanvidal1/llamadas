@@ -1360,6 +1360,14 @@ export default function MyLeads() {
     [flatNavItems, companyHasAgentLog]
   )
 
+  const nextPendingTarget = useMemo(
+    () =>
+      flatNavItems.find(
+        (item) => item.clientIdx > currentIndex && !companyHasAgentLog(item.clientIdx)
+      ),
+    [flatNavItems, currentIndex, companyHasAgentLog]
+  )
+
   const goToFirstRegistered = useCallback(async () => {
     if (firstRegisteredTarget) {
       await navigateToCompany(firstRegisteredTarget.clientIdx)
@@ -1375,6 +1383,14 @@ export default function MyLeads() {
       toast('No hay registros pendientes', { icon: 'ℹ️' })
     }
   }, [firstEmptyTarget, navigateToCompany])
+
+  const goToNextPending = useCallback(async () => {
+    if (nextPendingTarget) {
+      await navigateToCompany(nextPendingTarget.clientIdx)
+    } else {
+      toast('No hay más empresas pendientes en este lote', { icon: 'ℹ️' })
+    }
+  }, [nextPendingTarget, navigateToCompany])
 
   const navigateWithSave = useCallback(
     (action: () => Promise<void>) => async () => {
@@ -1450,8 +1466,10 @@ export default function MyLeads() {
     [disposition, schedDate]
   )
 
+  type SaveAutoNext = false | true | 'sequential' | 'nextPending'
+
   const saveMutation = useMutation({
-    mutationFn: async (autoNext: boolean) => {
+    mutationFn: async (autoNext: SaveAutoNext) => {
       const emptyResult = {
         autoNext,
         callLogSaved: false,
@@ -1623,7 +1641,7 @@ export default function MyLeads() {
     onSuccess: async (result) => {
       setRespuestaError(false)
       if (result.callLogSaved) {
-        if (result.autoNext) {
+        if (result.autoNext !== false) {
           setCallNotes('')
           setSchedDate('')
           setSchedTime('09:00')
@@ -1643,7 +1661,8 @@ export default function MyLeads() {
       qc.invalidateQueries({ queryKey: ['callbacks'] })
       qc.invalidateQueries({ queryKey: ['clients'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
-      if (result.autoNext) await goNext()
+      if (result.autoNext === 'nextPending') await goToNextPending()
+      else if (result.autoNext) await goNext()
     },
     onError: (err: Error) => {
       if (err.name === 'SaveCancelled') return
@@ -1761,6 +1780,28 @@ export default function MyLeads() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [viewMode, displayContacts.length, safeContactIdx, navigateWithSave, saveActiveContactIfDirty])
+
+  useEffect(() => {
+    if (viewMode !== 'detail') return
+
+    const handleSaveKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' || !e.ctrlKey) return
+
+      if (e.shiftKey) {
+        if (saveMutation.isPending || !canSaveCallResult || !nextPendingTarget) return
+        e.preventDefault()
+        saveMutation.mutate('nextPending')
+        return
+      }
+
+      if (saveMutation.isPending || !canSaveCallResult) return
+      e.preventDefault()
+      saveMutation.mutate(false)
+    }
+
+    window.addEventListener('keydown', handleSaveKeyDown)
+    return () => window.removeEventListener('keydown', handleSaveKeyDown)
+  }, [viewMode, saveMutation, canSaveCallResult, nextPendingTarget])
 
   const exportBatchId = selectedBatchId || detail?.importBatch?.id
 
@@ -2202,6 +2243,7 @@ export default function MyLeads() {
                   <div className="sticky bottom-0 z-10 border-t border-gray-200 bg-gray-50/95 px-3 py-3 backdrop-blur-sm lg:px-4">
                     <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
                       <button onClick={() => saveMutation.mutate(false)} disabled={saveMutation.isPending || !canSaveCallResult}
+                        title="Guardar resultado (Ctrl+Enter)"
                         className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
                         <Save size={15} />
                         {saveMutation.isPending ? 'Guardando...' : latestLogSnapshot ? 'Guardar actualización' : 'Guardar resultado'}
@@ -2209,6 +2251,14 @@ export default function MyLeads() {
                       <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || isLast || !canSaveCallResult}
                         className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
                         Guardar y siguiente empresa <ChevronRight size={15} />
+                      </button>
+                      <button
+                        onClick={() => saveMutation.mutate('nextPending')}
+                        disabled={saveMutation.isPending || !canSaveCallResult || !nextPendingTarget}
+                        title="Guarda y salta a la próxima empresa sin registro en este lote (Ctrl+Shift+Enter)"
+                        className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] border-2 border-indigo-500 text-indigo-700 hover:bg-indigo-50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none"
+                      >
+                        Guardar y siguiente pendiente <ChevronRight size={15} />
                       </button>
                       <div className="flex gap-2 sm:ml-auto">
                         <DetailRecordNav
