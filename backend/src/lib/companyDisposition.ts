@@ -16,6 +16,26 @@ export const COMPANY_PIPELINE_KEYS = [
 
 export type CompanyPipelineKey = (typeof COMPANY_PIPELINE_KEYS)[number]
 
+export const MAX_NO_ANSWER_ATTEMPTS = 3
+
+export function isNoContestaDisposition(disposition: string | null | undefined): boolean {
+  return disposition === 'NO_CONTESTA' || disposition === 'NO_ANSWER'
+}
+
+export function isDepuradoNoContesta(
+  lastDisposition: string | null | undefined,
+  callLogCount: number
+): boolean {
+  return isNoContestaDisposition(lastDisposition) && callLogCount >= MAX_NO_ANSWER_ATTEMPTS
+}
+
+export function isActiveNoContesta(
+  lastDisposition: string | null | undefined,
+  callLogCount: number
+): boolean {
+  return isNoContestaDisposition(lastDisposition) && callLogCount < MAX_NO_ANSWER_ATTEMPTS
+}
+
 export function dispositionMatchesFilter(lastDisposition: string | null, filter: string): boolean {
   if (filter === 'INTERESADO') {
     return lastDisposition === 'INTERESADO' || lastDisposition === 'INTERESTED'

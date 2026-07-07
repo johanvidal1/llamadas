@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
 import {
   ArrowLeft,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -44,7 +45,9 @@ import {
   getResponseOption,
   isDefinitiveClosureDisposition,
   requiresCallbackDate,
-  isHiddenFromAgentQueue,
+  isHiddenFromAgentNav,
+  isNoContestaDisposition,
+  MAX_NO_ANSWER_ATTEMPTS,
 } from '../config/responseOptions'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -56,6 +59,7 @@ interface ClientSummary {
   status: string
   lastDisposition?: string | null
   lastAclaracion?: string | null
+  callLogCount?: number
   contacts: {
     id?: string
     nombre: string
@@ -66,6 +70,7 @@ interface ClientSummary {
     _count?: { callLogs: number }
   }[]
   importBatch?: { id: string; filename: string; createdAt: string }
+  _count?: { callLogs: number }
 }
 
 interface CallLogEntry {
@@ -518,13 +523,15 @@ const LIST_COLA_OPTIONS = [
   { value: 'FUNNEL', label: 'Embudo comercial' },
   { value: 'PENDING', label: 'Pendientes' },
   { value: 'VOLVER_A_LLAMAR', label: 'Volver a llamar' },
+  { value: 'NO_CONTESTA', label: 'No contesta' },
+  { value: 'NO_CONTESTA_DEPURADO', label: 'No contesta — depurado' },
   { value: 'OTROS', label: 'Otros' },
 ] as const
 
 type ListCola = (typeof LIST_COLA_OPTIONS)[number]['value']
 
 const COLA_ALL_AGENT_TITLE =
-  'Cola activa: pendientes, no contesta, volver a llamar, embudo y venta cerrada. Excluye no interesado, cliente actual, RUC suspendido y sin llegada al decisor.'
+  'Cola activa: pendientes, no contesta (<3 intentos), volver a llamar, embudo y venta cerrada. Excluye no contesta depurado, no interesado, cliente actual, RUC suspendido y sin llegada al decisor.'
 const COLA_ALL_ADMIN_TITLE = 'Todas las empresas asignadas.'
 
 const COLA_OPTION_TITLES: Record<
@@ -537,9 +544,18 @@ const COLA_OPTION_TITLES: Record<
   },
   PENDING: { agent: 'Sin respuesta registrada aún.' },
   VOLVER_A_LLAMAR: { agent: 'Empresas con seguimiento o callback pendiente.' },
+  NO_CONTESTA: {
+    agent: 'Empresas sin contacto con menos de 3 intentos.',
+    admin: 'Empresas sin contacto con menos de 3 intentos del agente.',
+  },
+  NO_CONTESTA_DEPURADO: {
+    agent: '3 o más intentos sin contacto; ya no aparece en la cola activa.',
+    admin: '3 o más intentos sin contacto del agente.',
+  },
   OTROS: {
     agent:
-      'Resto de respuestas 0%: no interesado, no contesta, sin llegada al decisor, RUC suspendido, cliente actual, etc.',
+      'Resto de respuestas 0%: no interesado, sin llegada al decisor, RUC suspendido, cliente actual, etc. (excluye no contesta).',
+    admin: 'Resto de respuestas 0% excluyendo no contesta.',
   },
 }
 
@@ -570,6 +586,8 @@ const VALID_LIST_FILTERS = new Set([
   'ALL',
   'PENDING',
   'VOLVER_A_LLAMAR',
+  'NO_CONTESTA',
+  'NO_CONTESTA_DEPURADO',
   'OTROS',
   'FUNNEL',
   ...SALES_FUNNEL_STAGES.map((stage) => stage.code),
@@ -581,6 +599,7 @@ const LIST_FILTER_SHORT_LABELS: Partial<Record<string, string>> = {
   DISCUSION_PROPUESTA: 'Discusión propuesta',
   PROPUESTA_PRESENTADA: 'Propuesta presentada',
   NO_CONTESTA: 'No contesta',
+  NO_CONTESTA_DEPURADO: 'No contesta — depurado',
   VOLVER_A_LLAMAR: 'Volver a llamar',
   SIN_LLEGADA_DECISOR: 'Sin llegada',
   RUC_SUSPENDIDO: 'RUC suspendido',
@@ -604,6 +623,9 @@ function parseListFiltersFromUrl(filterParam: string): { cola: ListCola; drilldo
   if (filterParam === 'FUNNEL') return { cola: 'FUNNEL', drilldown: null }
   if (filterParam === 'ALL') return { cola: 'ALL', drilldown: null }
   if (filterParam === 'PENDING' || filterParam === 'VOLVER_A_LLAMAR' || filterParam === 'OTROS') {
+    return { cola: filterParam, drilldown: null }
+  }
+  if (filterParam === 'NO_CONTESTA' || filterParam === 'NO_CONTESTA_DEPURADO') {
     return { cola: filterParam, drilldown: null }
   }
   if (VALID_LIST_FILTERS.has(filterParam)) return { cola: 'FUNNEL', drilldown: filterParam }
@@ -632,12 +654,17 @@ function getListApiParams(cola: ListCola, drilldown: string | null) {
   if (drilldown) return { disposition: drilldown }
   if (cola === 'PENDING') return { status: 'PENDING' as const }
   if (cola === 'ALL') return {}
+  if (cola === 'NO_CONTESTA') return { disposition: 'NO_CONTESTA' as const }
+  if (cola === 'NO_CONTESTA_DEPURADO') return { disposition: 'NO_CONTESTA_DEPURADO' as const }
   return { disposition: cola }
 }
 
 function listChipColorClasses(value: string): string {
   if (value === 'PENDING') return 'bg-gray-100 text-gray-700 border-gray-300'
   if (value === 'OTROS') return 'bg-slate-100 text-slate-700 border-slate-300'
+  if (value === 'NO_CONTESTA' || value === 'NO_CONTESTA_DEPURADO') {
+    return 'bg-gray-100 text-gray-700 border-gray-300'
+  }
   const disp = DISPOSITION_COLORS[value]
   return disp ? disp.split(' border-l-')[0] : 'bg-white text-gray-600 border-gray-300'
 }
@@ -861,7 +888,9 @@ export default function MyLeads() {
   const rawNavClients: ClientSummary[] = clientsData?.clients ?? []
   const clients: ClientSummary[] = useMemo(() => {
     if (isAdmin) return rawNavClients
-    return rawNavClients.filter((c) => !isHiddenFromAgentQueue(c.lastDisposition))
+    return rawNavClients.filter(
+      (c) => !isHiddenFromAgentNav(c.lastDisposition, c.callLogCount)
+    )
   }, [rawNavClients, isAdmin])
   const hiddenNavCount = isAdmin ? 0 : rawNavClients.length - clients.length
   const total = clients.length
@@ -1563,6 +1592,7 @@ export default function MyLeads() {
         planChanged: false,
         razonSocialChanged: false,
         noOp: false,
+        movedToDepuradoNoContesta: false,
       }
       if (!currentClient) return emptyResult
 
@@ -1719,6 +1749,7 @@ export default function MyLeads() {
           planChanged,
           razonSocialChanged,
           noOp: true,
+          movedToDepuradoNoContesta: false,
         }
       }
 
@@ -1729,7 +1760,20 @@ export default function MyLeads() {
         throw new Error('Selecciona una respuesta antes de guardar')
       }
 
-      noOp: false,
+      const movedToDepuradoNoContesta =
+        callLogSaved &&
+        !editingCallLogId &&
+        isNoContestaDisposition(disposition) &&
+        (currentClient.callLogCount ?? 0) + 1 >= MAX_NO_ANSWER_ATTEMPTS
+
+      return {
+        autoNext,
+        callLogSaved,
+        contactSaved,
+        planChanged,
+        razonSocialChanged,
+        noOp: false,
+        movedToDepuradoNoContesta,
       }
     },
     onSuccess: async (result) => {
@@ -1741,7 +1785,14 @@ export default function MyLeads() {
           setSchedTime('09:00')
           setEditingCallLogId(null)
         }
-        toast.success('Resultado guardado')
+        if (result.movedToDepuradoNoContesta) {
+          toast(
+            'Empresa movida a No contesta — depurado (3 o más intentos sin contacto).',
+            { icon: 'ℹ️' }
+          )
+        } else {
+          toast.success('Resultado guardado')
+        }
       } else if (result.contactSaved) {
         toast.success('Datos de contacto actualizados')
       } else if (result.planChanged) {
@@ -1778,7 +1829,9 @@ export default function MyLeads() {
   const shouldHideArchivedInList = !isAdmin && listCola === 'ALL' && !listDrilldown
   const listClients: ClientSummary[] = useMemo(() => {
     if (!shouldHideArchivedInList) return rawListClients
-    return rawListClients.filter((c) => !isHiddenFromAgentQueue(c.lastDisposition))
+    return rawListClients.filter(
+      (c) => !isHiddenFromAgentNav(c.lastDisposition, c.callLogCount)
+    )
   }, [rawListClients, shouldHideArchivedInList])
   const hiddenListCount = shouldHideArchivedInList ? rawListClients.length - listClients.length : 0
   const effectiveDisposition = disposition
@@ -3140,7 +3193,7 @@ export default function MyLeads() {
                             )}
                           </td>
                           <td className="px-4 py-2.5 text-center text-gray-500">
-                            {(c as ClientSummary & { _count?: { callLogs: number } })._count?.callLogs ?? 0}
+                            {c.callLogCount ?? c._count?.callLogs ?? 0}
                           </td>
                           <td className="px-4 py-2.5 text-right">
                             <span className="text-xs text-blue-500 hover:underline">Ver detalle →</span>

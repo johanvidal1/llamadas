@@ -1,6 +1,13 @@
 import { FilterDropdown } from './FilterDropdown'
 
-export type ListCola = 'ALL' | 'FUNNEL' | 'PENDING' | 'VOLVER_A_LLAMAR' | 'OTROS'
+export type ListCola =
+  | 'ALL'
+  | 'FUNNEL'
+  | 'PENDING'
+  | 'VOLVER_A_LLAMAR'
+  | 'NO_CONTESTA'
+  | 'NO_CONTESTA_DEPURADO'
+  | 'OTROS'
 
 export type ColaFilterDropdownProps = {
   value: ListCola

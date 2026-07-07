@@ -16,6 +16,9 @@ import {
   FUNNEL_PIPELINE_KEYS,
   getFirstRegisteredAtByCompanyIds,
   getLastDispositionByCompanyIds,
+  isActiveNoContesta,
+  isDepuradoNoContesta,
+  isNoContestaDisposition,
   matchesFunnelFilter,
   pipelineBucketForDisposition,
   sortClientsByActivityQueue,
@@ -201,6 +204,8 @@ type ClientsFilterContext = {
   agentScopedPending: boolean
   agentScopedOtros: boolean
   agentScopedFunnel: boolean
+  agentScopedNoContesta: boolean
+  agentScopedNoContestaDepurado: boolean
   agentScopedDisposition: boolean
   includeAssignmentSummary: boolean
   /** Agent default queue (Cola Todos): exclude archived dispositions unless explicitly filtered. */
@@ -232,10 +237,14 @@ async function buildClientsFilterContext(
   const agentScopedPending = status === 'PENDING' || filterParam === 'PENDING'
   const agentScopedOtros = effectiveDisposition === 'OTROS'
   const agentScopedFunnel = effectiveDisposition === 'FUNNEL'
+  const agentScopedNoContesta = effectiveDisposition === 'NO_CONTESTA'
+  const agentScopedNoContestaDepurado = effectiveDisposition === 'NO_CONTESTA_DEPURADO'
   const agentScopedDisposition =
     !!effectiveDisposition &&
     !agentScopedOtros &&
     !agentScopedFunnel &&
+    !agentScopedNoContesta &&
+    !agentScopedNoContestaDepurado &&
     isValidDisposition(effectiveDisposition)
 
   const where: Record<string, unknown> = {}
@@ -279,6 +288,8 @@ async function buildClientsFilterContext(
     !agentScopedOtros &&
     !agentScopedFunnel &&
     !agentScopedDisposition &&
+    !agentScopedNoContesta &&
+    !agentScopedNoContestaDepurado &&
     !status
 
   return {
@@ -291,6 +302,8 @@ async function buildClientsFilterContext(
     agentScopedPending,
     agentScopedOtros,
     agentScopedFunnel,
+    agentScopedNoContesta,
+    agentScopedNoContestaDepurado,
     agentScopedDisposition,
     includeAssignmentSummary: !!agentId,
     agentQueueExcludeArchived,
@@ -313,8 +326,12 @@ async function getActivitySortedClientsPage(
       ctx.dispositionAgentId
     )
     sortedIds = sortedIds.filter((id) => {
-      const disposition = lastByCompany.get(id)?.disposition ?? null
-      return !isHiddenFromAgentQueue(disposition)
+      const last = lastByCompany.get(id)
+      const disposition = last?.disposition ?? null
+      const callLogCount = last?.callLogCount ?? 0
+      if (isHiddenFromAgentQueue(disposition)) return false
+      if (isDepuradoNoContesta(disposition, callLogCount)) return false
+      return true
     })
   }
   const total = sortedIds.length
@@ -347,9 +364,24 @@ async function getFilteredDispositionClientsPage(
 
   const filteredIds: string[] = []
   for (const row of lightweight) {
-    const disposition = lastByCompany.get(row.id)?.disposition ?? null
+    const last = lastByCompany.get(row.id)
+    const disposition = last?.disposition ?? null
+    const callLogCount = last?.callLogCount ?? 0
     if (ctx.agentScopedOtros) {
-      if (pipelineBucketForDisposition(disposition) === 'OTROS') filteredIds.push(row.id)
+      if (
+        pipelineBucketForDisposition(disposition) === 'OTROS' &&
+        !isNoContestaDisposition(disposition)
+      ) {
+        filteredIds.push(row.id)
+      }
+      continue
+    }
+    if (ctx.agentScopedNoContesta) {
+      if (isActiveNoContesta(disposition, callLogCount)) filteredIds.push(row.id)
+      continue
+    }
+    if (ctx.agentScopedNoContestaDepurado) {
+      if (isDepuradoNoContesta(disposition, callLogCount)) filteredIds.push(row.id)
       continue
     }
     if (ctx.agentScopedFunnel) {
@@ -568,7 +600,9 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     built.agentScopedDisposition ||
     built.agentScopedPending ||
     built.agentScopedOtros ||
-    built.agentScopedFunnel
+    built.agentScopedFunnel ||
+    built.agentScopedNoContesta ||
+    built.agentScopedNoContestaDepurado
 
   if (needsDispositionFilter || sortBy === 'activity' || built.agentQueueExcludeArchived) {
     const { clients, total } = needsDispositionFilter

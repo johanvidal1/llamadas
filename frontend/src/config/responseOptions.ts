@@ -151,6 +151,36 @@ export function isHiddenFromAgentQueue(lastDisposition?: string | null): boolean
   return agentQueueHiddenSet.has(lastDisposition)
 }
 
+export const MAX_NO_ANSWER_ATTEMPTS = 3
+
+export function isNoContestaDisposition(disposition?: string | null): boolean {
+  return disposition === 'NO_CONTESTA' || disposition === 'NO_ANSWER'
+}
+
+export function isDepuradoNoContesta(
+  lastDisposition?: string | null,
+  callLogCount = 0
+): boolean {
+  return isNoContestaDisposition(lastDisposition) && callLogCount >= MAX_NO_ANSWER_ATTEMPTS
+}
+
+export function isActiveNoContesta(
+  lastDisposition?: string | null,
+  callLogCount = 0
+): boolean {
+  return isNoContestaDisposition(lastDisposition) && callLogCount < MAX_NO_ANSWER_ATTEMPTS
+}
+
+/** Agent detail nav + Cola Todos: archived dispositions and depurado no-contesta. */
+export function isHiddenFromAgentNav(
+  lastDisposition?: string | null,
+  callLogCount?: number
+): boolean {
+  if (isHiddenFromAgentQueue(lastDisposition)) return true
+  if (isDepuradoNoContesta(lastDisposition, callLogCount ?? 0)) return true
+  return false
+}
+
 export function requiresCallbackDate(code: string): boolean {
   return code === 'VOLVER_A_LLAMAR' || code === 'CALLBACK'
 }
