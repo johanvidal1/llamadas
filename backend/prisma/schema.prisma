@@ -31,8 +31,9 @@ model User {
   password  String
   role          String   @default("AGENT")
   isSuperAdmin  Boolean  @default(false)
-  isSystemOwner Boolean  @default(false)
-  active        Boolean  @default(true)
+  isSystemOwner    Boolean  @default(false)
+  isArchivedAgent  Boolean  @default(false)
+  active           Boolean  @default(true)
   tokenVersion  Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -46,6 +47,27 @@ model User {
   sessions    UserSession[]
   assignmentReleases AssignmentRelease[] @relation("AssignmentReleaseBy")
   dailyAgentMetrics    DailyAgentMetrics[]
+  agentResetsPerformed AgentResetLog[]     @relation("AgentResetBy")
+}
+
+model AgentResetLog {
+  id                      String   @id @default(cuid())
+  originalAgentId         String
+  originalAgentName       String
+  resetById               String
+  resetBy                 User     @relation("AgentResetBy", fields: [resetById], references: [id])
+  reason                  String?
+  callLogsReassigned      Int      @default(0)
+  callbacksReassigned     Int      @default(0)
+  pendingCallbacksDeleted Int      @default(0)
+  assignmentsDeleted      Int      @default(0)
+  runsClosed              Int      @default(0)
+  metricsDeleted          Int      @default(0)
+  createdAt               DateTime @default(now())
+
+  @@index([originalAgentId])
+  @@index([resetById])
+  @@index([createdAt])
 }
 
 model UserSession {

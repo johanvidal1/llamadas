@@ -1,3 +1,4 @@
+import { excludeArchivedAgentWhere } from './archivedAgent'
 import { prisma } from './prisma'
 
 export const MAX_AGENTS = 25
@@ -53,7 +54,7 @@ export function canManageUser(actor: UserActor, target: UserTarget): boolean {
 }
 
 export async function countAgents(): Promise<number> {
-  return prisma.user.count({ where: { role: 'AGENT' } })
+  return prisma.user.count({ where: { role: 'AGENT', ...excludeArchivedAgentWhere } })
 }
 
 export async function countRegularAdmins(excludeUserId?: string): Promise<number> {

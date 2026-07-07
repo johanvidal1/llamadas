@@ -3,6 +3,7 @@ import { z } from 'zod'
 import UAParser = require('ua-parser-js')
 import { prisma } from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { excludeArchivedAgentWhere } from '../lib/archivedAgent'
 import { isAdminUser } from '../lib/userPermissions'
 
 const router = Router()
@@ -168,7 +169,7 @@ router.get('/agents', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 
   const agents = await prisma.user.findMany({
-    where: { role: 'AGENT' },
+    where: { role: 'AGENT', ...excludeArchivedAgentWhere },
     select: {
       id: true,
       name: true,

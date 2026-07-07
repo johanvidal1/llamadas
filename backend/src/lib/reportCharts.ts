@@ -1,3 +1,4 @@
+import { excludeArchivedAgentWhere, activeAgentUserWhere } from './archivedAgent'
 import { prisma } from './prisma'
 import { Prisma } from '@prisma/client'
 import {
@@ -109,7 +110,7 @@ export async function fetchAgentCallsByPeriod(params: {
       : resolvePeriodRange(period, params.date)
 
   const agents = await prisma.user.findMany({
-    where: { role: 'AGENT', active: true },
+    where: activeAgentUserWhere,
     select: { id: true, name: true },
   })
 
@@ -119,7 +120,7 @@ export async function fetchAgentCallsByPeriod(params: {
       COUNT(*)::bigint AS calls,
       COUNT(DISTINCT cl."companyId")::bigint AS registered
     FROM "CallLog" cl
-    INNER JOIN "User" u ON u.id = cl."agentId" AND u.role = 'AGENT' AND u.active = true
+    INNER JOIN "User" u ON u.id = cl."agentId" AND u.role = 'AGENT' AND u.active = true AND u."isArchivedAgent" = false
     WHERE cl."calledAt" >= ${from}
       AND cl."calledAt" <= ${to}
     GROUP BY cl."agentId"
@@ -156,6 +157,9 @@ export async function fetchAgentCallsByPeriod(params: {
 
 const FUNNEL_CALL_DISPOSITIONS = [...SALES_FUNNEL_DISPOSITIONS, 'INTERESTED'] as const
 
+/** Global scope: active agents plus archived wildcard (preserves reassigned history in funnel). */
+const globalCallLogAgentFilter = Prisma.sql`AND cl."agentId" IN (SELECT id FROM "User" WHERE role = 'AGENT' AND (active = true OR "isArchivedAgent" = true))`
+
 export async function fetchFunnelByPeriod(params: {
   from?: string
   to?: string
@@ -172,7 +176,7 @@ export async function fetchFunnelByPeriod(params: {
 
   const agentFilter = params.agentId
     ? Prisma.sql`AND cl."agentId" = ${params.agentId}`
-    : Prisma.sql`AND cl."agentId" IN (SELECT id FROM "User" WHERE role = 'AGENT' AND active = true)`
+    : globalCallLogAgentFilter
 
   const rows = await prisma.$queryRaw<{ disposition: string; calls: bigint; registered: bigint }[]>`
     SELECT
@@ -226,7 +230,7 @@ export async function fetchZeroResponsesByPeriod(params: {
 
   const agentFilter = params.agentId
     ? Prisma.sql`AND cl."agentId" = ${params.agentId}`
-    : Prisma.sql`AND cl."agentId" IN (SELECT id FROM "User" WHERE role = 'AGENT' AND active = true)`
+    : globalCallLogAgentFilter
 
   const rows = await prisma.$queryRaw<{ disposition: string; calls: bigint; registered: bigint }[]>`
     SELECT
@@ -290,7 +294,7 @@ export async function fetchCallHeatmap(params: {
 
   const agentFilter = params.agentId
     ? Prisma.sql`AND cl."agentId" = ${params.agentId}`
-    : Prisma.sql`AND cl."agentId" IN (SELECT id FROM "User" WHERE role = 'AGENT' AND active = true)`
+    : globalCallLogAgentFilter
 
   const localCalledAt = toLocalWallClockSql('cl."calledAt"')
 

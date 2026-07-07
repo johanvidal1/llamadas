@@ -1,6 +1,5 @@
 import { Router, Response } from 'express'
 import { z } from 'zod'
-import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
 import { buildCalledAtRange } from '../lib/callActivity'
 import { requireAuth, AuthRequest } from '../middleware/auth'
@@ -13,6 +12,7 @@ import {
   buildCompanyPipelineCounts,
   buildDaySummary,
   dispositionMatchesFilter,
+  filterCompanyIdsByLastActivityRange,
   FUNNEL_PIPELINE_KEYS,
   getFirstRegisteredAtByCompanyIds,
   getLastDispositionByCompanyIds,
@@ -145,21 +145,6 @@ async function enrichWithLastDisposition(
   })
 }
 
-function buildRegistrationCallLogWhere(
-  calledAtRange: { gte?: Date; lte?: Date },
-  companyWhere: Record<string, unknown>,
-  dispositionAgentId?: string
-): Prisma.CallLogWhereInput {
-  const where: Prisma.CallLogWhereInput = {
-    calledAt: calledAtRange,
-    company: companyWhere as Prisma.CompanyWhereInput,
-    ...(dispositionAgentId
-      ? { agentId: dispositionAgentId, contact: { assignment: { agentId: dispositionAgentId } } }
-      : { contact: { assignment: { is: {} } } }),
-  }
-  return where
-}
-
 function emptyFunnelPipelineCounts(): Record<string, number> {
   return Object.fromEntries(FUNNEL_PIPELINE_KEYS.map((k) => [k, 0]))
 }
@@ -275,21 +260,13 @@ async function buildClientsFilterContext(
   let registrationCount: number | undefined
 
   if (calledAtRange) {
-    const registrationWhere = buildRegistrationCallLogWhere(
+    const scopedIds = await getScopedCompanyIds(where)
+    const companyIdsInRange = await filterCompanyIdsByLastActivityRange(
+      scopedIds,
       calledAtRange,
-      where,
       dispositionAgentId
     )
-    const [matchingLogs, count] = await Promise.all([
-      prisma.callLog.findMany({
-        where: registrationWhere,
-        select: { companyId: true },
-        distinct: ['companyId'],
-      }),
-      prisma.callLog.count({ where: registrationWhere }),
-    ])
-    registrationCount = count
-    const companyIdsInRange = matchingLogs.map((l) => l.companyId)
+    registrationCount = companyIdsInRange.length
     if (companyIdsInRange.length === 0) {
       return { empty: true, take, page, registrationCount: 0 }
     }

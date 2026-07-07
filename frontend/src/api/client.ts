@@ -333,11 +333,19 @@ export type AssignmentRun = {
   status?: 'ACTIVE' | 'PARTIALLY_RELEASED' | 'PAUSED' | 'CLOSED'
   releasedAt?: string | null
   isLegacy?: boolean
+  isBeforeLastReset?: boolean
   callCount: number
   contactedCompanies: number
   pendingCompanies: number
   firstCallAt: string | null
   lastCallAt: string | null
+}
+
+export type AssignmentRunsResponse = {
+  lastResetAt: string | null
+  runs: AssignmentRun[]
+  activeRuns: AssignmentRun[]
+  archivedRuns: AssignmentRun[]
 }
 
 export type AssignmentRunCompany = {
@@ -355,7 +363,7 @@ export type AssignmentRunCompany = {
 
 export const getAssignmentRuns = (agentId: string, batchId?: string) =>
   api
-    .get<{ runs: AssignmentRun[] }>('/assignments/runs', {
+    .get<AssignmentRunsResponse>('/assignments/runs', {
       params: { agentId, ...(batchId ? { batchId } : {}) },
     })
     .then((r) => r.data)
@@ -843,6 +851,36 @@ export const getMyBatches = () => api.get('/dashboard/my-batches').then((r) => r
 // ─── Admin ─────────────────────────────────────────────────────────────────────
 export const getResetPreview = () => api.get('/admin/reset-campaign/preview').then((r) => r.data)
 export const resetCampaign = () => api.post('/admin/reset-campaign', { confirm: 'RESETEAR' }).then((r) => r.data)
+
+export type AgentResetPreview = {
+  agent: { id: string; name: string; email: string }
+  callLogsToArchive: number
+  pendingCompaniesToRelease: number
+  workedCompaniesCount: number
+  pendingCallbacksCount: number
+  completedCallbacksCount: number
+  sharedWithOtherAgentsCount: number
+}
+
+export type AgentResetResult = {
+  message: string
+  counts: {
+    callLogsReassigned: number
+    callbacksReassigned: number
+    pendingCallbacksDeleted: number
+    assignmentsDeleted: number
+    runsClosed: number
+    metricsDeleted: number
+  }
+}
+
+export const getAgentResetPreview = (agentId: string) =>
+  api.get<AgentResetPreview>(`/admin/agents/${agentId}/reset-preview`).then((r) => r.data)
+
+export const resetAgent = (
+  agentId: string,
+  body: { confirm: 'RESETEAR'; deletePendingCallbacks: boolean; reason?: string }
+) => api.post<AgentResetResult>(`/admin/agents/${agentId}/reset`, body).then((r) => r.data)
 
 // ─── Presence ──────────────────────────────────────────────────────────────────
 export type AgentPresenceStatus = 'online' | 'recent' | 'offline'

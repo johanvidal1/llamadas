@@ -51,6 +51,20 @@ export function sumPipelineBarSegments(
     .filter((s) => s.pct > 0)
 }
 
+export type ClientsOperationalFilter = '' | 'PENDING' | 'VOLVER_A_LLAMAR' | 'OTROS' | 'FUNNEL'
+
+export const CLIENTS_FILTER_TITLES: Record<ClientsOperationalFilter, string> = {
+  '': 'Todas las empresas asignadas según filtros actuales',
+  PENDING: 'Asignadas sin respuesta registrada',
+  VOLVER_A_LLAMAR: 'Con seguimiento o callback pendiente',
+  OTROS: 'Respuestas 0% (no interesado, no contesta, cliente actual, RUC suspendido, etc.)',
+  FUNNEL: 'Empresas en avance comercial (25%–100%)',
+}
+
+export function getClientsFilterTitle(value: ClientsOperationalFilter): string {
+  return CLIENTS_FILTER_TITLES[value]
+}
+
 export const PIPELINE_FILTER_OPERATIONAL = [
   { value: '', label: 'Todos' },
   { value: 'PENDING', label: 'Pendientes' },

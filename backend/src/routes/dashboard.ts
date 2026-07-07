@@ -1,4 +1,5 @@
 import { Router, Response } from 'express'
+import { activeAgentUserWhere } from '../lib/archivedAgent'
 import { prisma } from '../lib/prisma'
 import { requireAuth, requireAdmin, AuthRequest } from '../middleware/auth'
 import {
@@ -70,13 +71,11 @@ function setCachedReports(cacheKey: string, data: unknown) {
 function buildScopedCallWhere(filterAgentId?: string) {
   const assignmentScope = filterAgentId
     ? { agentId: filterAgentId }
-    : { agent: { role: 'AGENT' as const, active: true } }
+    : { agent: activeAgentUserWhere }
   return {
     contactId: { not: null },
     contact: { assignment: assignmentScope },
-    ...(filterAgentId
-      ? { agentId: filterAgentId }
-      : { agent: { role: 'AGENT' as const, active: true } }),
+    ...(filterAgentId ? { agentId: filterAgentId } : { agent: activeAgentUserWhere }),
   }
 }
 
@@ -300,7 +299,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       prisma.contact.count(),
       prisma.contact.groupBy({ by: ['status'], _count: { status: true } }),
       prisma.company.groupBy({ by: ['status'], _count: { status: true } }),
-      prisma.user.count({ where: { role: 'AGENT', active: true } }),
+      prisma.user.count({ where: activeAgentUserWhere }),
       prisma.callLog.count(),
       prisma.callback.count({ where: { completed: false } }),
       prisma.callLog.findMany({
@@ -420,7 +419,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
 // GET /api/dashboard/agents-stats
 router.get('/agents-stats', requireAdmin, async (_req: AuthRequest, res: Response) => {
   const agents = await prisma.user.findMany({
-    where: { role: 'AGENT', active: true },
+    where: activeAgentUserWhere,
     select: { id: true, name: true, _count: { select: { assignments: true, callLogs: true, callbacks: true } } },
   })
 
@@ -498,7 +497,7 @@ async function buildBatchAgentBreakdown(batchId: string): Promise<AgentBreakdown
       },
     }),
     prisma.user.findMany({
-      where: { role: 'AGENT', active: true },
+      where: activeAgentUserWhere,
       select: { id: true, name: true },
     }),
   ])
@@ -623,7 +622,7 @@ async function buildReportsAgents(filterAgentId?: string) {
 
   const [agents, callsByAgentContact, pendingCallbacks, overdueCallbacks] = await Promise.all([
     prisma.user.findMany({
-      where: { role: 'AGENT', active: true },
+      where: activeAgentUserWhere,
       select: { id: true, name: true, _count: { select: { assignments: true, callLogs: true } } },
     }),
     prisma.callLog.groupBy({
@@ -890,7 +889,7 @@ router.get('/reports/agent/:agentId/runs', requireAdmin, async (req: AuthRequest
   }
 
   const agent = await prisma.user.findFirst({
-    where: { id: agentId, role: 'AGENT', active: true },
+    where: { id: agentId, ...activeAgentUserWhere },
     select: { id: true },
   })
   if (!agent) {
@@ -1313,7 +1312,7 @@ router.get('/call-activity', requireAdmin, async (req: AuthRequest, res: Respons
     fetchTotalCallsSql(activityFilters),
     fetchGlobalGapStatsSql(activityFilters),
     prisma.user.findMany({
-      where: { role: 'AGENT', active: true },
+      where: activeAgentUserWhere,
       select: { id: true, name: true },
     }),
   ])

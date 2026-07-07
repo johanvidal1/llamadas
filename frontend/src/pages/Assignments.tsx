@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getUsers,
@@ -87,6 +87,216 @@ function RunActivityMetrics({ run }: { run: AssignmentRun }) {
       </p>
       {dateLine && <p className="text-gray-500 mt-0.5 whitespace-nowrap">{dateLine}</p>}
       {releasedHint && <p className="text-gray-400 mt-0.5 whitespace-nowrap">{releasedHint}</p>}
+    </div>
+  )
+}
+
+function AssignmentRunCard({
+  run,
+  isOpen,
+  companies,
+  filterQuery,
+  isSearching,
+  loadingCompanies,
+  archivedByReset = false,
+  showRelease,
+  onToggle,
+  onRelease,
+  onOpenRecord,
+}: {
+  run: AssignmentRun
+  isOpen: boolean
+  companies: AssignmentRunCompany[]
+  filterQuery: string
+  isSearching: boolean
+  loadingCompanies: boolean
+  archivedByReset?: boolean
+  showRelease: boolean
+  onToggle: () => void
+  onRelease: () => void
+  onOpenRecord: (clientId: string) => void
+}) {
+  const filteredCompanies = companies.filter((c) => matchesCompanySearch(c, filterQuery))
+  const matchCount = isSearching ? filteredCompanies.length : 0
+
+  return (
+    <div
+      className={`border rounded-xl overflow-hidden ${
+        archivedByReset ? 'border-gray-200/80 opacity-80' : 'border-gray-200'
+      }`}
+    >
+      <div className={`flex items-stretch ${archivedByReset ? 'bg-gray-50/60' : 'bg-gray-50'}`}>
+        <button
+          className={`flex-1 flex items-center justify-between p-4 transition-colors text-left min-w-0 ${
+            archivedByReset ? 'hover:bg-gray-100/70' : 'hover:bg-gray-100'
+          }`}
+          onClick={onToggle}
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <History size={16} className={`shrink-0 ${archivedByReset ? 'text-gray-400' : 'text-blue-500'}`} />
+            <div className="min-w-0">
+              <p className={`text-base font-bold ${archivedByReset ? 'text-gray-700' : 'text-gray-900'}`}>
+                {run.companyCount} empresa{run.companyCount !== 1 ? 's' : ''}
+                {isSearching && matchCount > 0 && (
+                  <span className="ml-2 text-xs font-normal text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">
+                    {matchCount} de {run.companyCount} coincidencias
+                  </span>
+                )}
+                {archivedByReset && (
+                  <span className="ml-2 text-xs font-normal text-gray-600 bg-gray-200/80 px-1.5 py-0.5 rounded">
+                    Archivado por reset
+                  </span>
+                )}
+                {run.isLegacy && (
+                  <span className="ml-2 text-xs font-normal text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+                    Anterior
+                  </span>
+                )}
+                {!run.isLegacy && run.status && run.status !== 'ACTIVE' && (
+                  <span className="ml-2 text-xs font-normal text-gray-600 bg-gray-200/80 px-1.5 py-0.5 rounded">
+                    {run.status === 'PARTIALLY_RELEASED'
+                      ? 'Parcialmente liberada'
+                      : run.status === 'CLOSED'
+                        ? 'Cerrada'
+                        : run.status}
+                  </span>
+                )}
+              </p>
+              <p className="text-sm text-gray-600 mt-0.5">
+                {format(new Date(run.assignedAt), 'd MMM yyyy, HH:mm', { locale: es })}
+              </p>
+              <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-gray-200/80 text-xs text-gray-700 truncate max-w-full">
+                  {run.filename ?? 'Todas las importaciones'}
+                </span>
+                <span className="text-xs text-gray-400">Por {run.assignedBy.name}</span>
+              </div>
+            </div>
+          </div>
+          <div className="shrink-0 ml-3">
+            {isOpen ? (
+              <ChevronDown size={16} className="text-gray-400" />
+            ) : (
+              <ChevronRight size={16} className="text-gray-400" />
+            )}
+          </div>
+        </button>
+        <div className="hidden sm:flex shrink-0 flex-col justify-center px-3 border-l border-gray-200 min-w-0 max-w-[12rem]">
+          <RunActivityMetrics run={run} />
+        </div>
+        {showRelease && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onRelease()
+            }}
+            className="shrink-0 px-3 border-l border-gray-200 text-xs font-medium text-amber-800 hover:bg-amber-50 flex flex-col items-center justify-center gap-1 min-w-[5.5rem]"
+            title="Liberar empresas no trabajadas"
+          >
+            <PackageOpen size={16} />
+            Liberar pendientes
+          </button>
+        )}
+      </div>
+
+      {isOpen && (
+        <div className="border-t border-gray-100">
+          {loadingCompanies && (
+            <p className="text-center text-gray-400 py-6 text-sm">Cargando empresas...</p>
+          )}
+          {!loadingCompanies && companies.length === 0 && (
+            <p className="text-center text-gray-400 py-6 text-sm">Sin empresas en esta asignación</p>
+          )}
+          {!loadingCompanies && companies.length > 0 && (
+            <div>
+              {filteredCompanies.length === 0 ? (
+                <p className="text-center text-gray-400 py-6 text-sm">Ninguna empresa coincide</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100 bg-gray-50/80 text-left text-xs text-gray-500 uppercase tracking-wide">
+                        <th className="px-4 py-2 font-medium">RUC</th>
+                        <th className="px-4 py-2 font-medium">Razón social</th>
+                        <th className="px-4 py-2 font-medium">Última actividad</th>
+                        <th className="px-4 py-2 font-medium">Respuesta</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filteredCompanies.map((company) => {
+                        const aclaracion =
+                          company.lastAclaracion ??
+                          (company.lastDisposition
+                            ? getResponseOption(company.lastDisposition)?.aclaracion
+                            : undefined)
+                        const clickable = hasRecord(company)
+                        return (
+                          <tr
+                            key={company.id}
+                            className={clickable ? 'cursor-pointer hover:bg-blue-50' : 'hover:bg-gray-50'}
+                            title={clickable ? 'Ver registro' : undefined}
+                            onClick={
+                              clickable
+                                ? (e) => {
+                                    e.stopPropagation()
+                                    onOpenRecord(company.id)
+                                  }
+                                : undefined
+                            }
+                          >
+                            <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{company.ruc}</td>
+                            <td className="px-4 py-2 text-gray-900 truncate max-w-[200px]">
+                              {company.razonSocial || '—'}
+                            </td>
+                            <td className="px-4 py-2 text-xs text-gray-600 whitespace-nowrap">
+                              {company.lastCalledAt ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <span>
+                                    {format(new Date(company.lastCalledAt), 'dd/MM/yy HH:mm', { locale: es })}
+                                  </span>
+                                  {(company.callLogCount ?? 0) > 1 && (
+                                    <span
+                                      className="text-[9px] text-amber-600 font-semibold uppercase tracking-wide"
+                                      title={`${company.callLogCount} registros en historial · último: ${format(new Date(company.lastCalledAt), 'dd/MM/yy HH:mm', { locale: es })}`}
+                                    >
+                                      Actualizado
+                                    </span>
+                                  )}
+                                </span>
+                              ) : company.createdAt ? (
+                                <span className="text-gray-500">
+                                  {format(new Date(company.createdAt), 'dd/MM/yy HH:mm', { locale: es })}
+                                </span>
+                              ) : (
+                                <span className="text-gray-300">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2">
+                              {company.lastDisposition ? (
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <DispositionBadge disposition={company.lastDisposition} />
+                                  {aclaracion ? (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
+                                      {aclaracion}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              ) : (
+                                <span className="text-gray-300 text-xs">Pendiente</span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -204,6 +414,7 @@ export default function Assignments() {
   const [loadingRunCompanies, setLoadingRunCompanies] = useState<Record<string, boolean>>({})
   const [drawerSearch, setDrawerSearch] = useState('')
   const [debouncedDrawerSearch, setDebouncedDrawerSearch] = useState('')
+  const [showArchivedRuns, setShowArchivedRuns] = useState(false)
   const [searchPrefetching, setSearchPrefetching] = useState(false)
   const expandedBeforeSearchRef = useRef<Record<string, boolean> | null>(null)
   const loadRunCompaniesPromises = useRef<Record<string, Promise<AssignmentRunCompany[] | null>>>({})
@@ -272,6 +483,7 @@ export default function Assignments() {
     if (!drawerAgentId) {
       setDrawerSearch('')
       setDebouncedDrawerSearch('')
+      setShowArchivedRuns(false)
       setSearchPrefetching(false)
       expandedBeforeSearchRef.current = null
     }
@@ -388,14 +600,24 @@ export default function Assignments() {
     enabled: !!drawerAgentId,
   })
 
-  const drawerRuns: AssignmentRun[] = drawerRunsData?.runs ?? []
-  const drawerRunsSummary = drawerRuns.length > 0
-    ? {
-        totalCompanies: drawerRuns.reduce((sum, run) => sum + run.companyCount, 0),
-        assignmentCount: drawerRuns.length,
-        fileCount: new Set(drawerRuns.map((run) => run.importBatchId ?? 'none')).size,
-      }
-    : null
+  const activeDrawerRuns: AssignmentRun[] = drawerRunsData?.activeRuns ?? drawerRunsData?.runs ?? []
+  const archivedDrawerRuns: AssignmentRun[] = drawerRunsData?.archivedRuns ?? []
+  const lastResetAt = drawerRunsData?.lastResetAt ?? null
+  const allDrawerRuns = useMemo(
+    () =>
+      [...activeDrawerRuns, ...archivedDrawerRuns].sort(
+        (a, b) => new Date(b.assignedAt).getTime() - new Date(a.assignedAt).getTime()
+      ),
+    [activeDrawerRuns, archivedDrawerRuns]
+  )
+  const drawerRunsSummary =
+    activeDrawerRuns.length > 0 || archivedDrawerRuns.length > 0
+      ? {
+          totalCompanies: activeDrawerRuns.reduce((sum, run) => sum + run.companyCount, 0),
+          assignmentCount: activeDrawerRuns.length,
+          fileCount: new Set(activeDrawerRuns.map((run) => run.importBatchId ?? 'none')).size,
+        }
+      : null
 
   useEffect(() => {
     const query = debouncedDrawerSearch.trim()
@@ -417,7 +639,7 @@ export default function Assignments() {
 
     let cancelled = false
     const agentIdForSearch = drawerAgentId
-    const runs = drawerRuns
+    const runs = allDrawerRuns
 
     const runSearch = async () => {
       setSearchPrefetching(true)
@@ -441,7 +663,7 @@ export default function Assignments() {
     return () => {
       cancelled = true
     }
-  }, [debouncedDrawerSearch, drawerAgentId, drawerRuns, ensureRunCompaniesLoaded])
+  }, [debouncedDrawerSearch, drawerAgentId, allDrawerRuns, ensureRunCompaniesLoaded])
 
   const agents = users.filter(
     (u: { role: string; active: boolean }) => u.role === 'AGENT' && u.active
@@ -788,7 +1010,12 @@ export default function Assignments() {
               <div
                 key={a.id}
                 className="card p-5 cursor-pointer hover:shadow-md hover:border-blue-200 transition-all"
-                onClick={() => { setDrawerAgentId(a.id); setExpandedRuns({}); setDrawerSearch('') }}
+                onClick={() => {
+                  setDrawerAgentId(a.id)
+                  setExpandedRuns({})
+                  setDrawerSearch('')
+                  setShowArchivedRuns(false)
+                }}
               >
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-9 h-9 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold text-sm">
@@ -842,7 +1069,7 @@ export default function Assignments() {
         let searchResultCount = 0
         let searchRunCount = 0
         if (isSearching) {
-          for (const run of drawerRuns) {
+          for (const run of allDrawerRuns) {
             const companies = runCompanies[run.id]
             if (companies === undefined) continue
             const matchCount = companies.filter((c) => matchesCompanySearch(c, searchQuery)).length
@@ -856,12 +1083,43 @@ export default function Assignments() {
         const showSearchEmptyState =
           isSearching &&
           !searchPrefetching &&
-          drawerRuns.length > 0 &&
-          drawerRuns.every((run) => {
+          allDrawerRuns.length > 0 &&
+          allDrawerRuns.every((run) => {
             const companies = runCompanies[run.id]
             if (companies === undefined) return false
             return !companies.some((c) => matchesCompanySearch(c, searchQuery))
           })
+
+        const filterRunForSearch = (run: AssignmentRun) => {
+          if (!isSearching) return true
+          const loading = loadingRunCompanies[run.id] ?? false
+          const companies = runCompanies[run.id]
+          if (loading || companies === undefined) return true
+          return companies.some((c) => matchesCompanySearch(c, searchQuery))
+        }
+
+        const runsToShow = isSearching ? allDrawerRuns : activeDrawerRuns
+        const archivedResetLabel =
+          lastResetAt != null
+            ? format(new Date(lastResetAt), 'dd/MM/yyyy', { locale: es })
+            : null
+
+        const renderRunCard = (run: AssignmentRun, archivedByReset = false) => (
+          <AssignmentRunCard
+            key={run.id}
+            run={run}
+            isOpen={expandedRuns[run.id] ?? false}
+            companies={runCompanies[run.id] ?? []}
+            filterQuery={drawerSearch.trim()}
+            isSearching={isSearching}
+            loadingCompanies={loadingRunCompanies[run.id] ?? false}
+            archivedByReset={archivedByReset}
+            showRelease={canReleaseRun(run) && !!drawerAgentId && !archivedByReset}
+            onToggle={() => toggleRun(run, drawerAgentId!)}
+            onRelease={() => openReleaseModal(run, drawerAgentId!)}
+            onOpenRecord={(clientId) => setRecordModal({ clientId })}
+          />
+        )
 
         return (
           <>
@@ -900,7 +1158,7 @@ export default function Assignments() {
                 />
                 <div className="flex items-center gap-6 text-center">
                   <div>
-                    <p className="text-xl font-bold text-gray-900">{drawerRuns.length}</p>
+                    <p className="text-xl font-bold text-gray-900">{activeDrawerRuns.length}</p>
                     <p className="text-xs text-gray-500">Asignaciones</p>
                   </div>
                   <div>
@@ -962,11 +1220,22 @@ export default function Assignments() {
                 {loadingDrawerRuns && (
                   <p className="text-center text-gray-400 py-12">Cargando historial...</p>
                 )}
-                {!loadingDrawerRuns && drawerRuns.length === 0 && (
+                {!loadingDrawerRuns &&
+                  activeDrawerRuns.length === 0 &&
+                  archivedDrawerRuns.length === 0 && (
                   <div className="text-center text-gray-400 py-12">
                     <History size={36} className="mx-auto mb-2" />
                     <p>Este agente no tiene asignaciones registradas</p>
                     <p className="text-xs mt-1">Las asignaciones anteriores al historial no aparecen aquí</p>
+                  </div>
+                )}
+
+                {!loadingDrawerRuns &&
+                  activeDrawerRuns.length === 0 &&
+                  archivedDrawerRuns.length > 0 &&
+                  !isSearching && (
+                  <div className="text-center text-gray-400 py-6">
+                    <p className="text-sm">Sin asignaciones desde el último reset</p>
                   </div>
                 )}
 
@@ -977,199 +1246,33 @@ export default function Assignments() {
                   </div>
                 )}
 
-                {!showSearchEmptyState && drawerRuns
-                  .filter((run) => {
-                    if (!isSearching) return true
-                    const loading = loadingRunCompanies[run.id] ?? false
-                    const companies = runCompanies[run.id]
-                    if (loading || companies === undefined) return true
-                    return companies.some((c) => matchesCompanySearch(c, searchQuery))
-                  })
-                  .map((run) => {
-                  const isOpen = expandedRuns[run.id] ?? false
-                  const companies = runCompanies[run.id] ?? []
-                  const filterQuery = drawerSearch.trim()
-                  const filteredCompanies = companies.filter((c) =>
-                    matchesCompanySearch(c, filterQuery)
-                  )
-                  const matchCount = isSearching ? filteredCompanies.length : 0
-                  const loadingCompanies = loadingRunCompanies[run.id] ?? false
-                  const showRelease = canReleaseRun(run) && drawerAgentId
+                {!showSearchEmptyState &&
+                  runsToShow.filter(filterRunForSearch).map((run) =>
+                    renderRunCard(run, isSearching && (run.isBeforeLastReset ?? false))
+                  )}
 
-                  return (
-                    <div key={run.id} className="border border-gray-200 rounded-xl overflow-hidden">
-                      <div className="flex items-stretch bg-gray-50">
-                        <button
-                          className="flex-1 flex items-center justify-between p-4 hover:bg-gray-100 transition-colors text-left min-w-0"
-                          onClick={() => toggleRun(run, drawerAgentId!)}
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <History size={16} className="text-blue-500 shrink-0" />
-                            <div className="min-w-0">
-                              <p className="text-base font-bold text-gray-900">
-                                {run.companyCount} empresa{run.companyCount !== 1 ? 's' : ''}
-                                {isSearching && matchCount > 0 && (
-                                  <span className="ml-2 text-xs font-normal text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">
-                                    {matchCount} de {run.companyCount} coincidencias
-                                  </span>
-                                )}
-                                {run.isLegacy && (
-                                  <span className="ml-2 text-xs font-normal text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
-                                    Anterior
-                                  </span>
-                                )}
-                                {!run.isLegacy && run.status && run.status !== 'ACTIVE' && (
-                                  <span className="ml-2 text-xs font-normal text-gray-600 bg-gray-200/80 px-1.5 py-0.5 rounded">
-                                    {run.status === 'PARTIALLY_RELEASED'
-                                      ? 'Parcialmente liberada'
-                                      : run.status === 'CLOSED'
-                                        ? 'Cerrada'
-                                        : run.status}
-                                  </span>
-                                )}
-                              </p>
-                              <p className="text-sm text-gray-600 mt-0.5">
-                                {format(new Date(run.assignedAt), "d MMM yyyy, HH:mm", { locale: es })}
-                              </p>
-                              <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-gray-200/80 text-xs text-gray-700 truncate max-w-full">
-                                  {run.filename ?? 'Todas las importaciones'}
-                                </span>
-                                <span className="text-xs text-gray-400">
-                                  Por {run.assignedBy.name}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="shrink-0 ml-3">
-                            {isOpen ? (
-                              <ChevronDown size={16} className="text-gray-400" />
-                            ) : (
-                              <ChevronRight size={16} className="text-gray-400" />
-                            )}
-                          </div>
-                        </button>
-                        <div className="hidden sm:flex shrink-0 flex-col justify-center px-3 border-l border-gray-200 min-w-0 max-w-[12rem]">
-                          <RunActivityMetrics run={run} />
-                        </div>
-                        {showRelease && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              openReleaseModal(run, drawerAgentId!)
-                            }}
-                            className="shrink-0 px-3 border-l border-gray-200 text-xs font-medium text-amber-800 hover:bg-amber-50 flex flex-col items-center justify-center gap-1 min-w-[5.5rem]"
-                            title="Liberar empresas no trabajadas"
-                          >
-                            <PackageOpen size={16} />
-                            Liberar pendientes
-                          </button>
-                        )}
-                      </div>
-
-                      {isOpen && (
-                        <div className="border-t border-gray-100">
-                          {loadingCompanies && (
-                            <p className="text-center text-gray-400 py-6 text-sm">Cargando empresas...</p>
-                          )}
-                          {!loadingCompanies && companies.length === 0 && (
-                            <p className="text-center text-gray-400 py-6 text-sm">Sin empresas en esta asignación</p>
-                          )}
-                          {!loadingCompanies && companies.length > 0 && (
-                            <div>
-                              {filteredCompanies.length === 0 ? (
-                                <p className="text-center text-gray-400 py-6 text-sm">
-                                  Ninguna empresa coincide
-                                </p>
-                              ) : (
-                                <div className="overflow-x-auto">
-                                  <table className="w-full text-sm">
-                                    <thead>
-                                      <tr className="border-b border-gray-100 bg-gray-50/80 text-left text-xs text-gray-500 uppercase tracking-wide">
-                                        <th className="px-4 py-2 font-medium">RUC</th>
-                                        <th className="px-4 py-2 font-medium">Razón social</th>
-                                        <th className="px-4 py-2 font-medium">Última actividad</th>
-                                        <th className="px-4 py-2 font-medium">Respuesta</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-100">
-                                      {filteredCompanies.map((company) => {
-                                        const aclaracion =
-                                          company.lastAclaracion ??
-                                          (company.lastDisposition
-                                            ? getResponseOption(company.lastDisposition)?.aclaracion
-                                            : undefined)
-                                        const clickable = hasRecord(company)
-                                        return (
-                                        <tr
-                                          key={company.id}
-                                          className={clickable ? 'cursor-pointer hover:bg-blue-50' : 'hover:bg-gray-50'}
-                                          title={clickable ? 'Ver registro' : undefined}
-                                          onClick={
-                                            clickable
-                                              ? (e) => {
-                                                  e.stopPropagation()
-                                                  setRecordModal({ clientId: company.id })
-                                                }
-                                              : undefined
-                                          }
-                                        >
-                                          <td className="px-4 py-2 text-gray-600 whitespace-nowrap">
-                                            {company.ruc}
-                                          </td>
-                                          <td className="px-4 py-2 text-gray-900 truncate max-w-[200px]">
-                                            {company.razonSocial || '—'}
-                                          </td>
-                                          <td className="px-4 py-2 text-xs text-gray-600 whitespace-nowrap">
-                                            {company.lastCalledAt ? (
-                                              <span className="inline-flex items-center gap-1">
-                                                <span>{format(new Date(company.lastCalledAt), 'dd/MM/yy HH:mm', { locale: es })}</span>
-                                                {(company.callLogCount ?? 0) > 1 && (
-                                                  <span
-                                                    className="text-[9px] text-amber-600 font-semibold uppercase tracking-wide"
-                                                    title={`${company.callLogCount} registros en historial · último: ${format(new Date(company.lastCalledAt), 'dd/MM/yy HH:mm', { locale: es })}`}
-                                                  >
-                                                    Actualizado
-                                                  </span>
-                                                )}
-                                              </span>
-                                            ) : company.createdAt ? (
-                                              <span className="text-gray-500">
-                                                {format(new Date(company.createdAt), 'dd/MM/yy HH:mm', { locale: es })}
-                                              </span>
-                                            ) : (
-                                              <span className="text-gray-300">—</span>
-                                            )}
-                                          </td>
-                                          <td className="px-4 py-2">
-                                            {company.lastDisposition ? (
-                                              <div className="flex flex-wrap items-center gap-1.5">
-                                                <DispositionBadge disposition={company.lastDisposition} />
-                                                {aclaracion ? (
-                                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
-                                                    {aclaracion}
-                                                  </span>
-                                                ) : null}
-                                              </div>
-                                            ) : (
-                                              <span className="text-gray-300 text-xs">Pendiente</span>
-                                            )}
-                                          </td>
-                                        </tr>
-                                        )
-                                      })}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
+                {!showSearchEmptyState && !isSearching && archivedDrawerRuns.length > 0 && (
+                  <div className="space-y-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowArchivedRuns((prev) => !prev)}
+                      className="w-full flex items-center justify-between gap-2 px-4 py-3 rounded-xl border border-dashed border-gray-300 text-sm text-gray-600 hover:bg-gray-50 hover:border-gray-400 transition-colors"
+                    >
+                      <span>
+                        {showArchivedRuns
+                          ? 'Ocultar asignaciones anteriores al reset'
+                          : `Ver ${archivedDrawerRuns.length} asignación${archivedDrawerRuns.length !== 1 ? 'es' : ''} anterior${archivedDrawerRuns.length !== 1 ? 'es' : ''} al reset del ${archivedResetLabel ?? '—'}`}
+                      </span>
+                      {showArchivedRuns ? (
+                        <ChevronDown size={16} className="shrink-0 text-gray-400" />
+                      ) : (
+                        <ChevronRight size={16} className="shrink-0 text-gray-400" />
                       )}
-                    </div>
-                  )
-                })}
+                    </button>
+                    {showArchivedRuns &&
+                      archivedDrawerRuns.map((run) => renderRunCard(run, true))}
+                  </div>
+                )}
               </div>
             </div>
 

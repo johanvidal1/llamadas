@@ -17,6 +17,7 @@ import {
   MAX_AGENTS,
   MAX_REGULAR_ADMINS,
 } from '../lib/userPermissions'
+import { excludeArchivedAgentWhere } from '../lib/archivedAgent'
 
 const router = Router()
 
@@ -50,7 +51,10 @@ const updateUserSchema = z.object({
 router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   const actor = await loadActor(req.user!.id)
   const users = await prisma.user.findMany({
-    where: actor?.isSystemOwner ? undefined : { isSystemOwner: false },
+    where: {
+      ...(actor?.isSystemOwner ? {} : { isSystemOwner: false }),
+      ...excludeArchivedAgentWhere,
+    },
     select: {
       ...userSelect,
       _count: {
@@ -238,6 +242,7 @@ router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
       role: true,
       isSuperAdmin: true,
       isSystemOwner: true,
+      isArchivedAgent: true,
       active: true,
       _count: {
         select: { assignments: true, callLogs: true, callbacks: true, imports: true },
@@ -252,6 +257,11 @@ router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
 
   if (target.isSystemOwner) {
     res.status(403).json({ error: 'No se puede eliminar al propietario del sistema' })
+    return
+  }
+
+  if (target.isArchivedAgent) {
+    res.status(403).json({ error: 'No se puede eliminar al agente comodín del sistema' })
     return
   }
 

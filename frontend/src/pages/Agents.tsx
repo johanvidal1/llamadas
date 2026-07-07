@@ -9,6 +9,8 @@ import {
   deleteUser,
   getResetPreview,
   resetCampaign,
+  getAgentResetPreview,
+  resetAgent,
   getAgentPresence,
   revokeAgentSessions,
   type AppUser,
@@ -30,6 +32,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  RotateCcw,
 } from 'lucide-react'
 import { PresenceDetailPopover, formatTimeAgo } from '../components/PresenceDetailPopover'
 
@@ -105,6 +108,7 @@ function UserTable({
   muted = false,
   presenceByUserId,
   onRevokeSessions,
+  onResetAgent,
 }: {
   users: AppUser[]
   onEdit: (u: AppUser) => void
@@ -117,6 +121,7 @@ function UserTable({
   muted?: boolean
   presenceByUserId?: Record<string, AgentPresence>
   onRevokeSessions?: (u: AppUser) => void
+  onResetAgent?: (u: AppUser) => void
 }) {
   const [expandedPresenceId, setExpandedPresenceId] = useState<string | null>(null)
   const [presencePopover, setPresencePopover] = useState<{
@@ -301,6 +306,15 @@ function UserTable({
                       <UserCheck size={15} />
                     </button>
                   )}
+                  {onResetAgent && isAgentRole && u.active && (
+                    <button
+                      onClick={() => onResetAgent(u)}
+                      className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-orange-600"
+                      title="Resetear cola del agente (libera pendientes, archiva historial)"
+                    >
+                      <RotateCcw size={15} />
+                    </button>
+                  )}
                   <button
                     onClick={() => canDelete && onDelete(u)}
                     disabled={!canDelete}
@@ -397,12 +411,47 @@ export default function Agents() {
   const [resetConfirmText, setResetConfirmText] = useState('')
   const [showInactive, setShowInactive] = useState(false)
   const [showDangerZone, setShowDangerZone] = useState(false)
+  const [resetAgentTarget, setResetAgentTarget] = useState<AppUser | null>(null)
+  const [agentResetConfirmText, setAgentResetConfirmText] = useState('')
+  const [agentResetReason, setAgentResetReason] = useState('')
+  const [deletePendingCallbacks, setDeletePendingCallbacks] = useState(true)
   const qc = useQueryClient()
 
   const { data: resetPreview } = useQuery({
     queryKey: ['reset-preview'],
     queryFn: getResetPreview,
     enabled: showReset,
+  })
+
+  const { data: agentResetPreview, isLoading: agentResetPreviewLoading } = useQuery({
+    queryKey: ['agent-reset-preview', resetAgentTarget?.id],
+    queryFn: () => getAgentResetPreview(resetAgentTarget!.id),
+    enabled: !!resetAgentTarget,
+  })
+
+  const agentResetMutation = useMutation({
+    mutationFn: () =>
+      resetAgent(resetAgentTarget!.id, {
+        confirm: 'RESETEAR',
+        deletePendingCallbacks,
+        reason: agentResetReason.trim() || undefined,
+      }),
+    onSuccess: (data) => {
+      toast.success(data.message)
+      setResetAgentTarget(null)
+      setAgentResetConfirmText('')
+      setAgentResetReason('')
+      setDeletePendingCallbacks(true)
+      qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['agent-presence'] })
+      qc.invalidateQueries({ queryKey: ['assignments'] })
+      qc.invalidateQueries({ queryKey: ['clients'] })
+      qc.invalidateQueries({ queryKey: ['callbacks'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      toast.error(err?.response?.data?.error ?? 'Error al resetear el agente')
+    },
   })
 
   const resetMutation = useMutation({
@@ -552,6 +601,21 @@ export default function Agents() {
     }
   }
 
+  const handleResetAgent = (u: AppUser) => {
+    setResetAgentTarget(u)
+    setAgentResetConfirmText('')
+    setAgentResetReason('')
+    setDeletePendingCallbacks(true)
+  }
+
+  const closeAgentResetModal = () => {
+    if (agentResetMutation.isPending) return
+    setResetAgentTarget(null)
+    setAgentResetConfirmText('')
+    setAgentResetReason('')
+    setDeletePendingCallbacks(true)
+  }
+
   const handleDelete = (u: AppUser) => {
     if (confirm(`¿Eliminar permanentemente a ${u.name}? Esta acción no se puede deshacer.`)) {
       deleteMutation.mutate(u.id)
@@ -681,6 +745,7 @@ export default function Agents() {
             currentUserIsSystemOwner={isSystemOwner}
             presenceByUserId={presenceByUserId}
             onRevokeSessions={handleRevokeSessions}
+            onResetAgent={isAdmin ? handleResetAgent : undefined}
           />
         )}
       </div>
@@ -720,6 +785,115 @@ export default function Agents() {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── Reset agent modal ── */}
+      {resetAgentTarget && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-40" onClick={closeAgentResetModal} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center shrink-0">
+                  <RotateCcw size={20} className="text-orange-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-900">¿Resetear cola de {resetAgentTarget.name}?</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    El historial comercial pasará a <strong>Agente borrado</strong>. Las empresas
+                    pendientes vuelven al pool sin asignar. El agente queda activo pero sin cola.
+                    No se borran clientes ni llamadas.
+                  </p>
+                  <p className="text-sm text-gray-500 mt-2">
+                    El historial de asignaciones anteriores se archivará en Asignaciones.
+                  </p>
+                </div>
+              </div>
+
+              {agentResetPreviewLoading && (
+                <p className="text-sm text-gray-400 text-center py-4">Cargando vista previa...</p>
+              )}
+
+              {agentResetPreview && (
+                <div className="bg-gray-50 rounded-lg p-4 grid grid-cols-2 gap-2 text-sm">
+                  {[
+                    ['Llamadas a archivar', agentResetPreview.callLogsToArchive],
+                    ['Empresas pendientes a liberar', agentResetPreview.pendingCompaniesToRelease],
+                    ['Empresas trabajadas', agentResetPreview.workedCompaniesCount],
+                    ['Callbacks pendientes', agentResetPreview.pendingCallbacksCount],
+                    ['Callbacks completados', agentResetPreview.completedCallbacksCount],
+                    ['Compartidas con otros agentes', agentResetPreview.sharedWithOtherAgentsCount],
+                  ].map(([label, count]) => (
+                    <div key={label as string} className="flex justify-between gap-2">
+                      <span className="text-gray-500">{label as string}</span>
+                      <span className="font-semibold text-gray-800">{count as number}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {agentResetPreview && agentResetPreview.pendingCallbacksCount > 0 && (
+                <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={deletePendingCallbacks}
+                    onChange={(e) => setDeletePendingCallbacks(e.target.checked)}
+                  />
+                  <span>
+                    Eliminar {agentResetPreview.pendingCallbacksCount} callback
+                    {agentResetPreview.pendingCallbacksCount !== 1 ? 's' : ''} pendiente
+                    {agentResetPreview.pendingCallbacksCount !== 1 ? 's' : ''} de este agente
+                  </span>
+                </label>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-gray-700">Motivo (opcional)</label>
+                <textarea
+                  className="input min-h-[72px] resize-y"
+                  value={agentResetReason}
+                  onChange={(e) => setAgentResetReason(e.target.value)}
+                  placeholder="Ej. fin de campaña, reasignación de cartera..."
+                  maxLength={500}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-gray-700">
+                  Escribe <span className="font-mono font-bold text-orange-600">RESETEAR</span> para confirmar:
+                </label>
+                <input
+                  type="text"
+                  className="input font-mono"
+                  placeholder="RESETEAR"
+                  value={agentResetConfirmText}
+                  onChange={(e) => setAgentResetConfirmText(e.target.value)}
+                  autoFocus
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <button onClick={closeAgentResetModal} className="flex-1 btn-secondary" disabled={agentResetMutation.isPending}>
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => agentResetMutation.mutate()}
+                  disabled={
+                    agentResetConfirmText !== 'RESETEAR' ||
+                    agentResetMutation.isPending ||
+                    agentResetPreviewLoading ||
+                    !agentResetPreview
+                  }
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+                >
+                  <RotateCcw size={15} />
+                  {agentResetMutation.isPending ? 'Reseteando...' : 'Confirmar reset'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
       )}
 
       {/* ── Zone peligrosa (solo admin) ── */}

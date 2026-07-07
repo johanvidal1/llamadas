@@ -22,6 +22,7 @@ import {
   getRunActivityDates,
 } from '../lib/companyDisposition'
 import { getAclaracionForDisposition } from '../lib/responseOptions'
+import { getLatestResetAtByAgentIds, isAssignmentAfterReset } from '../lib/agentReset'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
 
 const router = Router()
@@ -322,6 +323,7 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
     status: string
     releasedAt: string | null
     isLegacy: boolean
+    isBeforeLastReset: boolean
     callCount: number
     contactedCompanies: number
     pendingCompanies: number
@@ -329,15 +331,17 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
     lastCallAt: string | null
   }
 
+  type RunListItemBase = Omit<RunListItem, 'isBeforeLastReset'>
+
   async function enrichRunActivity(
     base: Omit<
-      RunListItem,
+      RunListItemBase,
       'callCount' | 'contactedCompanies' | 'pendingCompanies' | 'firstCallAt' | 'lastCallAt'
     >,
     metrics: { callCount: number; contactedCompanies: number },
     companyIds: string[],
     companyCount: number
-  ): Promise<RunListItem> {
+  ): Promise<RunListItemBase> {
     const activity = await getRunActivityDates(companyIds, agentId)
     return {
       ...base,
@@ -349,7 +353,7 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
     }
   }
 
-  const mappedRuns: RunListItem[] = await Promise.all(
+  const mappedRuns: RunListItemBase[] = await Promise.all(
     runs.map(async (run) => {
       const [metrics, companyIds] = await Promise.all([
         buildRunMetrics(run.id, agentId, run.companyCount),
@@ -377,7 +381,7 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
     })
   )
 
-  const legacyRuns: RunListItem[] = []
+  const legacyRuns: RunListItemBase[] = []
   if (batchId) {
     const legacy = await buildLegacyBucketMetrics(agentId, batchId)
     if (legacy.companyCount > 0) {
@@ -469,7 +473,24 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
     (a, b) => new Date(b.assignedAt).getTime() - new Date(a.assignedAt).getTime()
   )
 
-  res.json({ runs: allRuns })
+  const resetAtByAgent = await getLatestResetAtByAgentIds([agentId])
+  const lastResetAt = resetAtByAgent.get(agentId) ?? null
+
+  const tagBeforeReset = (run: RunListItemBase): RunListItem => ({
+    ...run,
+    isBeforeLastReset: !isAssignmentAfterReset(new Date(run.assignedAt), lastResetAt ?? undefined),
+  })
+
+  const taggedRuns = allRuns.map(tagBeforeReset)
+  const activeRuns = taggedRuns.filter((run) => !run.isBeforeLastReset)
+  const archivedRuns = taggedRuns.filter((run) => run.isBeforeLastReset)
+
+  res.json({
+    lastResetAt: lastResetAt?.toISOString() ?? null,
+    runs: activeRuns,
+    activeRuns,
+    archivedRuns,
+  })
 })
 
 // GET /api/assignments/untracked-companies

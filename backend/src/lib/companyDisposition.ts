@@ -1,5 +1,6 @@
 import { prisma } from './prisma'
 import { formatYmdInTz } from './appTimezone'
+import { getLatestResetAtByAgentIds, isAssignmentAfterReset } from './agentReset'
 
 /** Pipeline bucket keys returned in dashboard companyPipeline. */
 export const COMPANY_PIPELINE_KEYS = [
@@ -44,7 +45,7 @@ export function matchesFunnelFilter(lastDisposition: string | null): boolean {
   return (FUNNEL_PIPELINE_KEYS as readonly string[]).includes(bucket)
 }
 
-/** Last disposition per company (scoped to assigned contacts; optional agent filter). */
+/** Last disposition per company (all logs when global; agent+assignment scoped when agentUserId set). */
 export async function getLastDispositionByCompanyIds(
   companyIds: string[],
   agentUserId?: string
@@ -81,7 +82,7 @@ export async function getLastDispositionByCompanyIds(
       companyId: { in: companyIds },
       ...(agentUserId
         ? { agentId: agentUserId, contact: { assignment: { agentId: agentUserId } } }
-        : { contact: { assignment: { is: {} } } }),
+        : {}),
     },
     select: {
       companyId: true,
@@ -146,7 +147,7 @@ export async function getFirstRegisteredAtByCompanyIds(
       companyId: { in: companyIds },
       ...(agentUserId
         ? { agentId: agentUserId, contact: { assignment: { agentId: agentUserId } } }
-        : { contact: { assignment: { is: {} } } }),
+        : {}),
     },
     _min: { calledAt: true },
   })
@@ -420,11 +421,9 @@ export async function getPendingCompaniesByAgentId(
 export async function getAgentAssignmentRunStatsByAgentId(): Promise<
   Map<string, AgentAssignmentRunStats>
 > {
-  const [runStats, legacyAssignments] = await Promise.all([
-    prisma.assignmentRun.groupBy({
-      by: ['agentId'],
-      _count: { _all: true },
-      _max: { createdAt: true },
+  const [allRuns, legacyAssignments, resetAtByAgent] = await Promise.all([
+    prisma.assignmentRun.findMany({
+      select: { agentId: true, createdAt: true },
     }),
     prisma.assignment.findMany({
       where: { assignmentRunId: null },
@@ -434,15 +433,22 @@ export async function getAgentAssignmentRunStatsByAgentId(): Promise<
         contact: { select: { company: { select: { importBatchId: true } } } },
       },
     }),
+    getLatestResetAtByAgentIds(),
   ])
 
   const statsByAgent = new Map<string, AgentAssignmentRunStats>()
 
-  for (const row of runStats) {
-    statsByAgent.set(row.agentId, {
-      assignmentRunCount: row._count._all,
-      lastAssignmentAt: row._max.createdAt,
-    })
+  for (const run of allRuns) {
+    if (!isAssignmentAfterReset(run.createdAt, resetAtByAgent.get(run.agentId))) continue
+    const existing = statsByAgent.get(run.agentId) ?? {
+      assignmentRunCount: 0,
+      lastAssignmentAt: null,
+    }
+    existing.assignmentRunCount += 1
+    if (!existing.lastAssignmentAt || run.createdAt > existing.lastAssignmentAt) {
+      existing.lastAssignmentAt = run.createdAt
+    }
+    statsByAgent.set(run.agentId, existing)
   }
 
   const legacyBucketsByAgent = new Map<string, Map<string, Date>>()
@@ -460,13 +466,17 @@ export async function getAgentAssignmentRunStatsByAgentId(): Promise<
   }
 
   for (const [agentId, buckets] of legacyBucketsByAgent) {
-    const legacyCount = buckets.size
+    const resetAt = resetAtByAgent.get(agentId)
+    let legacyCount = 0
     let maxBucketEarliest: Date | null = null
     for (const earliest of buckets.values()) {
+      if (!isAssignmentAfterReset(earliest, resetAt)) continue
+      legacyCount += 1
       if (!maxBucketEarliest || earliest > maxBucketEarliest) {
         maxBucketEarliest = earliest
       }
     }
+    if (legacyCount === 0) continue
 
     const existing = statsByAgent.get(agentId) ?? {
       assignmentRunCount: 0,
@@ -561,35 +571,46 @@ export type DaySummaryEntry = {
   pending: number
 }
 
-/** Per-day registration counts for collapsed day-group headers. */
+/** Companies whose scoped last activity falls within the date range. */
+export async function filterCompanyIdsByLastActivityRange(
+  companyIds: string[],
+  calledAtRange: { gte?: Date; lte?: Date },
+  dispositionAgentId?: string
+): Promise<string[]> {
+  if (companyIds.length === 0) return []
+
+  const lastByCompany = await getLastDispositionByCompanyIds(companyIds, dispositionAgentId)
+  const result: string[] = []
+
+  for (const id of companyIds) {
+    const lastAt = lastByCompany.get(id)?.lastCalledAt
+    if (!lastAt) continue
+    if (calledAtRange.gte && lastAt < calledAtRange.gte) continue
+    if (calledAtRange.lte && lastAt > calledAtRange.lte) continue
+    result.push(id)
+  }
+
+  return result
+}
+
+/** Per-day counts for collapsed day-group headers (bucketed by last activity). */
 export async function buildDaySummary(
   companyIds: string[],
   dispositionAgentId?: string
 ): Promise<DaySummaryEntry[]> {
   if (companyIds.length === 0) return []
 
-  const [firstByCompany, lastByCompany, globalCounts] = await Promise.all([
-    getFirstRegisteredAtByCompanyIds(companyIds, dispositionAgentId),
-    getLastDispositionByCompanyIds(companyIds, dispositionAgentId),
-    prisma.company.findMany({
-      where: { id: { in: companyIds } },
-      select: { id: true, _count: { select: { callLogs: true } } },
-    }),
-  ])
-  const callLogCountById = new Map(
-    globalCounts.map((c) => [c.id, c._count.callLogs])
-  )
-
+  const lastByCompany = await getLastDispositionByCompanyIds(companyIds, dispositionAgentId)
   const byDay = new Map<string, { count: number; registered: number; pending: number }>()
 
   for (const id of companyIds) {
-    const firstAt = firstByCompany.get(id)
-    if (!firstAt) continue
-    const dayKey = formatYmdInTz(firstAt)
     const last = lastByCompany.get(id)
-    const disposition = last?.disposition ?? null
-    const globalLogs = callLogCountById.get(id) ?? 0
-    const isPending = disposition == null && globalLogs === 0
+    const lastAt = last?.lastCalledAt
+    if (!lastAt) continue
+
+    const dayKey = formatYmdInTz(lastAt)
+    const disposition = last.disposition ?? null
+    const isPending = disposition == null
 
     const entry = byDay.get(dayKey) ?? { count: 0, registered: 0, pending: 0 }
     entry.count++

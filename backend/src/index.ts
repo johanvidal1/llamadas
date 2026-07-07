@@ -3,6 +3,7 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 
+import { ensureArchivedAgent } from './lib/archivedAgent'
 import authRouter from './routes/auth'
 import usersRouter from './routes/users'
 import importsRouter from './routes/imports'
@@ -92,6 +93,9 @@ app.use(errorHandler)
 
 app.listen(PORT, () => {
   console.log(`🚀 API corriendo en http://localhost:${PORT}`)
+  void ensureArchivedAgent().catch((err) => {
+    console.error('No se pudo asegurar el agente comodín:', err)
+  })
 })
 
 export default app

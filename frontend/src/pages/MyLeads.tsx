@@ -30,6 +30,7 @@ import { dedupeMobileLinesByNumber } from '../lib/mobileLine'
 import CallModal from '../components/CallModal'
 import CompleteCallbackModal, { type CompleteConfirm } from '../components/CompleteCallbackModal'
 import DispositionSelector from '../components/DispositionSelector'
+import { ColaFilterDropdown } from '../components/ColaFilterDropdown'
 import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { StatusBadge, DISPOSITION_CONFIG, getDispositionBorderColor, DispositionBadge } from '../components/StatusBadge'
@@ -425,7 +426,7 @@ const GRID_STATUS_FILTERS = [
   { value: 'INTERESTED', label: 'Interesados' },
   { value: 'NOT_INTERESTED', label: 'No interesados' },
   { value: 'DO_NOT_CALL', label: 'No llamar' },
-]
+] as const
 
 const LIST_COLA_OPTIONS = [
   { value: 'ALL', label: 'Todos' },
@@ -436,6 +437,49 @@ const LIST_COLA_OPTIONS = [
 ] as const
 
 type ListCola = (typeof LIST_COLA_OPTIONS)[number]['value']
+
+const COLA_ALL_AGENT_TITLE =
+  'Cola activa: pendientes, no contesta, volver a llamar, embudo y venta cerrada. Excluye no interesado, cliente actual, RUC suspendido y sin llegada al decisor.'
+const COLA_ALL_ADMIN_TITLE = 'Todas las empresas asignadas.'
+
+const COLA_OPTION_TITLES: Record<
+  ListCola,
+  { agent: string; admin?: string }
+> = {
+  ALL: { agent: COLA_ALL_AGENT_TITLE, admin: COLA_ALL_ADMIN_TITLE },
+  FUNNEL: {
+    agent: 'Empresas en avance comercial (25% a 100%). Usa los chips para filtrar por etapa.',
+  },
+  PENDING: { agent: 'Sin respuesta registrada aún.' },
+  VOLVER_A_LLAMAR: { agent: 'Empresas con seguimiento o callback pendiente.' },
+  OTROS: {
+    agent:
+      'Resto de respuestas 0%: no interesado, no contesta, sin llegada al decisor, RUC suspendido, cliente actual, etc.',
+  },
+}
+
+function getColaOptionTitle(value: ListCola, isAdmin: boolean): string {
+  const entry = COLA_OPTION_TITLES[value]
+  if (isAdmin && entry.admin) return entry.admin
+  return entry.agent
+}
+
+const GRID_STATUS_FILTER_TITLES: Record<
+  (typeof GRID_STATUS_FILTERS)[number]['value'],
+  string
+> = {
+  '': COLA_ALL_AGENT_TITLE,
+  PENDING: 'Sin respuesta registrada aún.',
+  IN_PROGRESS: 'Empresas con actividad en curso (llamadas o seguimiento activo).',
+  INTERESTED: 'Empresas con interés comercial registrado.',
+  NOT_INTERESTED: 'Empresas marcadas como no interesadas.',
+  DO_NOT_CALL: 'Empresas en las que no se debe volver a llamar.',
+}
+
+function getGridStatusFilterTitle(value: (typeof GRID_STATUS_FILTERS)[number]['value'], isAdmin: boolean): string {
+  if (value === '') return isAdmin ? COLA_ALL_ADMIN_TITLE : COLA_ALL_AGENT_TITLE
+  return GRID_STATUS_FILTER_TITLES[value]
+}
 
 const VALID_LIST_FILTERS = new Set([
   'ALL',
@@ -1875,7 +1919,10 @@ export default function MyLeads() {
           <div className="flex items-center justify-end gap-2 min-w-[12rem] shrink-0">
             {viewMode === 'detail' ? (
               <>
-                <span className="text-blue-300 text-xs tabular-nums whitespace-nowrap">
+                <span
+                  className="text-blue-300 text-xs tabular-nums whitespace-nowrap"
+                  title={isAdmin ? COLA_ALL_ADMIN_TITLE : COLA_ALL_AGENT_TITLE}
+                >
                   {currentIndex + 1} / {total}
                   {hiddenNavCount > 0 && (
                     <span className="text-blue-400/70" title="Empresas archivadas ocultas de la cola">
@@ -2539,6 +2586,7 @@ export default function MyLeads() {
               {GRID_STATUS_FILTERS.map((f) => (
                 <button
                   key={f.value}
+                  title={getGridStatusFilterTitle(f.value, isAdmin)}
                   onClick={() => { setGridStatus(f.value); setGridPage(1) }}
                   className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                     gridStatus === f.value
@@ -2717,18 +2765,14 @@ export default function MyLeads() {
                   <label htmlFor="list-queue-filter" className="text-xs text-gray-500 font-medium">
                     Cola
                   </label>
-                  <select
+                  <ColaFilterDropdown
                     id="list-queue-filter"
                     value={listCola}
-                    onChange={(e) => applyListFilters(e.target.value as ListCola, null)}
-                    className="input text-sm h-9 py-1.5 w-full"
-                  >
-                    {LIST_COLA_OPTIONS.map((f) => (
-                      <option key={f.value} value={f.value}>
-                        {f.label}
-                      </option>
-                    ))}
-                  </select>
+                    isAdmin={isAdmin}
+                    options={LIST_COLA_OPTIONS}
+                    getDescription={getColaOptionTitle}
+                    onChange={(cola) => applyListFilters(cola, null)}
+                  />
                 </div>
                 {batches.length > 0 && (
                   <div className="flex flex-col gap-1 shrink-0 w-full sm:w-auto sm:min-w-[160px]">
@@ -2769,7 +2813,10 @@ export default function MyLeads() {
                       </button>
                     </span>
                   )}
-                  <span className="text-xs text-gray-400">
+                  <span
+                    className="text-xs text-gray-400"
+                    title={getColaOptionTitle(listCola, isAdmin)}
+                  >
                     {listFiltered.length} empresas
                     {hiddenListCount > 0 && (
                       <span className="text-gray-300" title="Empresas archivadas ocultas de la cola">
@@ -2786,7 +2833,7 @@ export default function MyLeads() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    title="Todos"
+                    title={getColaOptionTitle('ALL', isAdmin)}
                     onClick={() => applyListFilters('ALL', null)}
                     className={`flex flex-col items-center gap-0.5 px-3 py-1.5 min-w-[5.5rem] text-center rounded-lg text-xs font-medium transition-colors border shrink-0 ${
                       listCola === 'ALL' && !listDrilldown
@@ -2804,7 +2851,7 @@ export default function MyLeads() {
                       <button
                         key={f.value}
                         type="button"
-                        title={f.fullLabel}
+                        title={`${f.fullLabel} — Etapa ${f.aclaracion} del embudo comercial.`}
                         onClick={() =>
                           applyListFilters('FUNNEL', isActive ? null : f.value)
                         }

@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import bcrypt from 'bcryptjs'
 import { prisma } from './lib/prisma'
+import { ensureArchivedAgent } from './lib/archivedAgent'
 
 async function seedDefaultAdmin() {
   console.log('🌱 Creando usuario administrador...')
@@ -86,6 +87,8 @@ async function seedSystemOwner() {
 async function main() {
   await seedDefaultAdmin()
   await seedSystemOwner()
+  await ensureArchivedAgent()
+  console.log('✅ Agente comodín (Agente borrado) verificado')
 }
 
 main()

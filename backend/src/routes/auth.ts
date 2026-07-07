@@ -17,7 +17,7 @@ router.post('/login', async (req: Request, res: Response) => {
   const { email, password } = loginSchema.parse(req.body)
 
   const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } })
-  if (!user || !user.active) {
+  if (!user || !user.active || user.isArchivedAgent) {
     res.status(401).json({ error: 'Credenciales incorrectas' })
     return
   }

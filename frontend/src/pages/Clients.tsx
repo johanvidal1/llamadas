@@ -7,9 +7,12 @@ import {
   AGENT_PIPELINE_FUNNEL,
   PIPELINE_FILTER_OPERATIONAL,
   VALID_PIPELINE_FILTERS,
+  getClientsFilterTitle,
   getPipelineFilterLabel,
   sumFunnelStages,
+  type ClientsOperationalFilter,
 } from '../config/companyPipeline'
+import { FilterDropdown } from '../components/FilterDropdown'
 import { getResponseOption } from '../config/responseOptions'
 import ClientRecordModal from '../components/ClientRecordModal'
 import { Search, Phone, User, CalendarClock, ArrowLeft, Eye, Calendar, X, ChevronDown, ChevronRight, SlidersHorizontal, Loader2, LayoutList } from 'lucide-react'
@@ -417,7 +420,7 @@ function generateCalendarDays(from: string, to: string): string[] {
 function bucketClientsByDay(clients: ClientListItem[]): Map<string, ClientListItem[]> {
   const byDay = new Map<string, ClientListItem[]>()
   for (const client of clients) {
-    const ms = firstRegisteredAtMs(client)
+    const ms = lastCalledAtMs(client)
     if (ms === null) continue
     const dayKey = format(new Date(ms), 'yyyy-MM-dd')
     const list = byDay.get(dayKey) ?? []
@@ -1409,7 +1412,6 @@ export default function Clients() {
     ? (daySummaryData?.total ?? data?.total ?? 0)
     : (data?.total ?? 0)
   const showFlatPagination = !effectiveGroupBy && total > pageSize
-  const registrationCount = data?.registrationCount ?? pipelineData?.registrationCount
   const pipelineCounts = pipelineData?.pipelineCounts
   const assignmentSummary = pipelineData?.assignmentSummary ?? data?.assignmentSummary
   const funnelTotal = pipelineCounts ? sumFunnelStages(pipelineCounts) : null
@@ -1647,7 +1649,7 @@ export default function Clients() {
   if (hasDateFilter) {
     activeFilterChips.push({
       key: 'dates',
-      label: `Registro: ${formatDateChip(registeredFrom, registeredTo)}`,
+      label: `Actividad: ${formatDateChip(registeredFrom, registeredTo)}`,
       onClear: clearDateFilter,
     })
   }
@@ -1658,15 +1660,12 @@ export default function Clients() {
         <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-bold text-gray-900">Clientes</h1>
           <p className="text-gray-500 text-sm mt-1">
-            {hasDateFilter && registrationCount != null ? (
+            {hasDateFilter ? (
               <>
                 <span className="font-semibold text-gray-700">{total}</span>
                 {' empresa'}
                 {total === 1 ? '' : 's'}
-                {' · '}
-                <span className="font-semibold text-gray-700">{registrationCount}</span>
-                {' registro'}
-                {registrationCount === 1 ? '' : 's'}
+                {' con última actividad en el período'}
                 {hasActiveFilters && ' · filtrados'}
               </>
             ) : selectedBatch ? (
@@ -1795,17 +1794,21 @@ export default function Clients() {
               </select>
             )}
 
-            <select
-              className="input w-auto min-w-[170px] py-2"
-              value={PIPELINE_FILTER_OPERATIONAL.some((f) => f.value === pipelineFilter) ? pipelineFilter : ''}
-              onChange={(e) => { setPipelineFilter(e.target.value); setPage(1) }}
-            >
-              {PIPELINE_FILTER_OPERATIONAL.map((f) => (
-                <option key={f.value || 'all'} value={f.value}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
+            <div className="w-auto min-w-[170px]">
+              <FilterDropdown<ClientsOperationalFilter>
+                value={
+                  PIPELINE_FILTER_OPERATIONAL.some((f) => f.value === pipelineFilter)
+                    ? (pipelineFilter as ClientsOperationalFilter)
+                    : ''
+                }
+                onChange={(v) => {
+                  setPipelineFilter(v)
+                  setPage(1)
+                }}
+                options={PIPELINE_FILTER_OPERATIONAL}
+                getDescription={getClientsFilterTitle}
+              />
+            </div>
 
             <ViewModePicker
               groupMode={groupMode}
@@ -1855,7 +1858,7 @@ export default function Clients() {
                     <button
                       key={f.key}
                       type="button"
-                      title={f.fullLabel}
+                      title={`${f.label} (${f.aclaracion})`}
                       onClick={() => { setPipelineFilter(isActive ? '' : f.key); setPage(1) }}
                       className={`flex flex-col items-center gap-0.5 px-3 py-1.5 min-w-[5.5rem] text-center rounded-lg text-xs font-medium transition-colors border shrink-0 ${
                         isActive

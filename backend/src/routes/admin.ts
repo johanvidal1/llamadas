@@ -1,8 +1,20 @@
 import { Router, Response } from 'express'
+import { z } from 'zod'
 import { prisma } from '../lib/prisma'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
+import {
+  AgentResetBlockedError,
+  buildAgentResetPreview,
+  executeAgentReset,
+} from '../lib/agentReset'
 
 const router = Router()
+
+const resetAgentSchema = z.object({
+  confirm: z.literal('RESETEAR'),
+  deletePendingCallbacks: z.boolean().default(true),
+  reason: z.string().max(500).optional(),
+})
 
 // POST /api/admin/reset-campaign
 // Deletes ALL campaign data (clients, imports, calls, callbacks, assignments)
@@ -52,6 +64,45 @@ router.get('/reset-campaign/preview', requireAdmin, async (_req: AuthRequest, re
   ])
 
   res.json({ callbacks, callLogs, assignments, companies: clients, importBatches: batches, users })
+})
+
+// GET /api/admin/agents/:id/reset-preview
+router.get('/agents/:id/reset-preview', requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const preview = await buildAgentResetPreview(req.params.id)
+    res.json(preview)
+  } catch (err) {
+    if (err instanceof AgentResetBlockedError) {
+      res.status(400).json({ error: err.message })
+      return
+    }
+    throw err
+  }
+})
+
+// POST /api/admin/agents/:id/reset
+router.post('/agents/:id/reset', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const parsed = resetAgentSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'Confirmación inválida. Envía { "confirm": "RESETEAR", "deletePendingCallbacks": true }.',
+    })
+    return
+  }
+
+  try {
+    const result = await executeAgentReset(req.params.id, req.user!.id, {
+      deletePendingCallbacks: parsed.data.deletePendingCallbacks,
+      reason: parsed.data.reason,
+    })
+    res.json(result)
+  } catch (err) {
+    if (err instanceof AgentResetBlockedError) {
+      res.status(400).json({ error: err.message })
+      return
+    }
+    throw err
+  }
 })
 
 export default router
