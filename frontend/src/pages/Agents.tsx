@@ -56,6 +56,15 @@ function hasHistory(u: AppUser) {
 
 const MAX_AGENTS = 25
 const MAX_REGULAR_ADMINS = 1
+const SHOW_TOTAL_CALLS_KEY = 'agents-show-total-calls'
+
+function readShowTotalCallsColumn(): boolean {
+  try {
+    return localStorage.getItem(SHOW_TOTAL_CALLS_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
 
 function roleLabel(u: AppUser, currentUserIsSystemOwner = false) {
   if (u.isSystemOwner && currentUserIsSystemOwner) return 'Owner'
@@ -109,6 +118,8 @@ function UserTable({
   presenceByUserId,
   onRevokeSessions,
   onResetAgent,
+  showTotalCallsColumn,
+  onToggleShowTotalCallsColumn,
 }: {
   users: AppUser[]
   onEdit: (u: AppUser) => void
@@ -122,6 +133,8 @@ function UserTable({
   presenceByUserId?: Record<string, AgentPresence>
   onRevokeSessions?: (u: AppUser) => void
   onResetAgent?: (u: AppUser) => void
+  showTotalCallsColumn: boolean
+  onToggleShowTotalCallsColumn: () => void
 }) {
   const [expandedPresenceId, setExpandedPresenceId] = useState<string | null>(null)
   const [presencePopover, setPresencePopover] = useState<{
@@ -140,6 +153,8 @@ function UserTable({
     ? presenceByUserId?.[presencePopover.userId]
     : undefined
 
+  const columnCount = showTotalCallsColumn ? 9 : 8
+
   return (
     <>
     <table className="w-full min-w-[800px] text-sm">
@@ -149,7 +164,22 @@ function UserTable({
           <th className="text-left px-4 py-3 font-medium text-gray-600">Rol</th>
           <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
           <th className="text-center px-4 py-3 font-medium text-gray-600">Asignados</th>
-          <th className="text-center px-4 py-3 font-medium text-gray-600">Llamadas</th>
+          <th className="text-center px-4 py-3 font-medium text-gray-600">
+            <div className="inline-flex items-center justify-center gap-1.5">
+              <span title="Llamadas registradas hoy (zona horaria del sistema)">Llamadas (hoy)</span>
+              <button
+                type="button"
+                onClick={onToggleShowTotalCallsColumn}
+                title="Mostrar u ocultar llamadas históricas"
+                className="text-xs font-normal text-gray-500 hover:text-gray-800 hover:bg-gray-200/80 rounded px-1 py-0.5 transition-colors"
+              >
+                {showTotalCallsColumn ? '▼' : '▶'} Total
+              </button>
+            </div>
+          </th>
+          {showTotalCallsColumn && (
+            <th className="text-center px-4 py-3 font-medium text-gray-600">Llamadas (total)</th>
+          )}
           <th className="text-center px-4 py-3 font-medium text-gray-600">Callbacks</th>
           <th className="text-center px-4 py-3 font-medium text-gray-600">Importaciones</th>
           <th className="text-right px-4 py-3 font-medium text-gray-600">Acciones</th>
@@ -254,7 +284,10 @@ function UserTable({
                   )}
                 </td>
                 <td className="px-4 py-3 text-center">{u._count.assignments}</td>
-              <td className="px-4 py-3 text-center">{u._count.callLogs}</td>
+              <td className="px-4 py-3 text-center">{u.callsToday ?? 0}</td>
+              {showTotalCallsColumn && (
+                <td className="px-4 py-3 text-center">{u._count.callLogs}</td>
+              )}
               <td className="px-4 py-3 text-center">{u._count.callbacks}</td>
               <td className="px-4 py-3 text-center">{u._count.imports}</td>
               <td className="px-4 py-3 text-right">
@@ -332,7 +365,7 @@ function UserTable({
             </tr>
             {expandedPresenceId === u.id && presence && presence.sessions.length > 0 && (
               <tr key={`${u.id}-sessions`} className="bg-gray-50/80">
-                <td colSpan={8} className="px-4 py-3">
+                <td colSpan={columnCount} className="px-4 py-3">
                   <div className="space-y-2">
                     {presence.sessions.map((session, idx) => (
                       <div
@@ -415,7 +448,20 @@ export default function Agents() {
   const [agentResetConfirmText, setAgentResetConfirmText] = useState('')
   const [agentResetReason, setAgentResetReason] = useState('')
   const [deletePendingCallbacks, setDeletePendingCallbacks] = useState(true)
+  const [showTotalCallsColumn, setShowTotalCallsColumn] = useState(readShowTotalCallsColumn)
   const qc = useQueryClient()
+
+  const toggleShowTotalCallsColumn = () => {
+    setShowTotalCallsColumn((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(SHOW_TOTAL_CALLS_KEY, String(next))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }
 
   const { data: resetPreview } = useQuery({
     queryKey: ['reset-preview'],
@@ -746,6 +792,8 @@ export default function Agents() {
             presenceByUserId={presenceByUserId}
             onRevokeSessions={handleRevokeSessions}
             onResetAgent={isAdmin ? handleResetAgent : undefined}
+            showTotalCallsColumn={showTotalCallsColumn}
+            onToggleShowTotalCallsColumn={toggleShowTotalCallsColumn}
           />
         )}
       </div>
@@ -781,6 +829,8 @@ export default function Agents() {
                 presenceByUserId={presenceByUserId}
                 onRevokeSessions={handleRevokeSessions}
                 muted
+                showTotalCallsColumn={showTotalCallsColumn}
+                onToggleShowTotalCallsColumn={toggleShowTotalCallsColumn}
               />
             </div>
           )}

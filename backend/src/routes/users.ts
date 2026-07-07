@@ -18,6 +18,7 @@ import {
   MAX_REGULAR_ADMINS,
 } from '../lib/userPermissions'
 import { excludeArchivedAgentWhere } from '../lib/archivedAgent'
+import { todayYmdInAppTz, localDayStartUtc, localDayEndUtc } from '../lib/appTimezone'
 
 const router = Router()
 
@@ -78,10 +79,29 @@ router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     companiesByAgent.get(a.agentId)!.add(a.contact.companyId)
   }
 
-  const [assignmentRunStatsByAgent, pendingByAgent] = await Promise.all([
+  const agentIds = users.map((u) => u.id)
+  const todayYmd = todayYmdInAppTz()
+  const todayStart = localDayStartUtc(todayYmd)
+  const todayEnd = localDayEndUtc(todayYmd)
+
+  const [assignmentRunStatsByAgent, pendingByAgent, callsTodayRows] = await Promise.all([
     getAgentAssignmentRunStatsByAgentId(),
     getPendingCompaniesByAgentId(companiesByAgent),
+    agentIds.length > 0
+      ? prisma.callLog.groupBy({
+          by: ['agentId'],
+          where: {
+            agentId: { in: agentIds },
+            calledAt: { gte: todayStart, lte: todayEnd },
+          },
+          _count: { _all: true },
+        })
+      : Promise.resolve([]),
   ])
+
+  const callsTodayByAgent = new Map(
+    callsTodayRows.map((row) => [row.agentId, row._count._all]),
+  )
 
   const enriched = users.map((u) => {
     const runStats = assignmentRunStatsByAgent.get(u.id)
@@ -91,6 +111,7 @@ router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
       pendingCompanies: pendingByAgent.get(u.id) ?? 0,
       assignmentRunCount: runStats?.assignmentRunCount ?? 0,
       lastAssignmentAt: runStats?.lastAssignmentAt?.toISOString() ?? null,
+      callsToday: callsTodayByAgent.get(u.id) ?? 0,
     }
   })
 

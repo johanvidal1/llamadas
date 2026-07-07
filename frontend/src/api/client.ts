@@ -96,6 +96,7 @@ export type AppUser = {
   pendingCompanies?: number
   assignmentRunCount?: number
   lastAssignmentAt?: string | null
+  callsToday?: number
   _count: {
     assignments: number
     callLogs: number
