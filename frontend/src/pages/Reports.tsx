@@ -1136,6 +1136,13 @@ export default function Reports() {
     }))
   }
 
+  const selectAgentFilter = (agentId: string) => {
+    setFilterAgentId((prev) => (prev === agentId ? '' : agentId))
+    setExpandedBatches({})
+    setExpandedBatchAgents({})
+    setExpandedRuns({})
+  }
+
   const drill = (agentId: string, agentName: string, metric: MetricKey) =>
     setDrillDown({ agentId, agentName, metric })
 
@@ -1420,7 +1427,8 @@ export default function Reports() {
               loading={agentCallsLoading && !agentCallsData}
               highlightedAgentId={filterAgentId || undefined}
               periodLabel={chartPeriodLabel}
-              onAgentClick={goToClientsForAgent}
+              onAgentSelect={selectAgentFilter}
+              onViewClients={goToClientsForAgent}
             />
           </div>
 

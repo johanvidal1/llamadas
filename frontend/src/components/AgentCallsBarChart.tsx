@@ -30,7 +30,8 @@ type ChartRow = AgentCallChartRow & { shortName: string }
 function AgentCallsTooltip({
   active,
   payload,
-}: TooltipProps<number, string>) {
+  onViewClients,
+}: TooltipProps<number, string> & { onViewClients?: (agentId: string) => void }) {
   if (!active || !payload?.length) return null
   const row = payload[0]?.payload as ChartRow | undefined
   if (!row) return null
@@ -55,7 +56,61 @@ function AgentCallsTooltip({
           </p>
         )}
       </div>
+      {onViewClients && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onViewClients(row.agentId)
+          }}
+          className="mt-2 text-blue-600 hover:underline font-medium"
+        >
+          Ver clientes →
+        </button>
+      )}
     </div>
+  )
+}
+
+function AgentAxisTick({
+  x,
+  y,
+  payload,
+  textAnchor,
+  chartData,
+  highlightedAgentId,
+  onAgentSelect,
+}: {
+  x: number
+  y: number
+  payload?: { value: string }
+  textAnchor?: 'end' | 'start' | 'middle' | 'inherit'
+  chartData: ChartRow[]
+  highlightedAgentId?: string
+  onAgentSelect?: (agentId: string) => void
+}) {
+  const row = chartData.find((r) => r.shortName === payload?.value)
+  if (!row) return null
+
+  const isHighlight = highlightedAgentId === row.agentId
+  const selectable = !!onAgentSelect
+
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text
+        x={0}
+        y={0}
+        dy={16}
+        textAnchor={textAnchor ?? 'middle'}
+        fill={isHighlight ? '#2563eb' : '#6b7280'}
+        fontSize={11}
+        fontWeight={isHighlight ? 600 : 400}
+        style={selectable ? { cursor: 'pointer' } : undefined}
+        onClick={() => onAgentSelect?.(row.agentId)}
+      >
+        {payload?.value}
+      </text>
+    </g>
   )
 }
 
@@ -64,13 +119,15 @@ export function AgentCallsBarChart({
   loading,
   highlightedAgentId,
   periodLabel,
-  onAgentClick,
+  onAgentSelect,
+  onViewClients,
 }: {
   data: AgentCallChartRow[]
   loading?: boolean
   highlightedAgentId?: string
   periodLabel?: string
-  onAgentClick?: (agentId: string) => void
+  onAgentSelect?: (agentId: string) => void
+  onViewClients?: (agentId: string) => void
 }) {
   if (loading) {
     return (
@@ -101,7 +158,7 @@ export function AgentCallsBarChart({
   const teamAverage =
     data.length > 0 ? Math.round((totalCalls / data.length) * 10) / 10 : 0
   const hasCalls = totalCalls > 0
-  const clickable = !!onAgentClick
+  const selectable = !!onAgentSelect
 
   return (
     <div>
@@ -111,8 +168,8 @@ export function AgentCallsBarChart({
           {highlightedAgentId && (
             <span className="text-blue-600 font-medium ml-1.5">· agente resaltado</span>
           )}
-          {clickable && hasCalls && (
-            <span className="text-gray-400 ml-1.5">· clic en barra para ver clientes</span>
+          {selectable && hasCalls && (
+            <span className="text-gray-400 ml-1.5">· clic en barra o nombre para filtrar por agente</span>
           )}
         </p>
         <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
@@ -143,13 +200,20 @@ export function AgentCallsBarChart({
               <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
               <XAxis
                 dataKey="shortName"
-                tick={{ fontSize: 11, fill: '#6b7280' }}
                 axisLine={false}
                 tickLine={false}
                 interval={0}
                 angle={chartData.length > 6 ? -35 : 0}
                 textAnchor={chartData.length > 6 ? 'end' : 'middle'}
                 height={chartData.length > 6 ? 56 : 32}
+                tick={(props) => (
+                  <AgentAxisTick
+                    {...props}
+                    chartData={chartData}
+                    highlightedAgentId={highlightedAgentId}
+                    onAgentSelect={onAgentSelect}
+                  />
+                )}
               />
               <YAxis
                 allowDecimals={false}
@@ -158,7 +222,10 @@ export function AgentCallsBarChart({
                 tickLine={false}
                 width={36}
               />
-              <Tooltip cursor={{ fill: 'rgba(59, 130, 246, 0.06)' }} content={<AgentCallsTooltip />} />
+              <Tooltip
+                cursor={{ fill: 'rgba(59, 130, 246, 0.06)' }}
+                content={<AgentCallsTooltip onViewClients={onViewClients} />}
+              />
               <Legend
                 verticalAlign="top"
                 align="right"
@@ -187,10 +254,10 @@ export function AgentCallsBarChart({
                 radius={[4, 4, 0, 0]}
                 maxBarSize={48}
                 legendType="square"
-                style={clickable ? { cursor: 'pointer' } : undefined}
+                style={selectable ? { cursor: 'pointer' } : undefined}
                 onClick={(barData) => {
                   const row = barData as ChartRow | undefined
-                  if (row?.agentId && onAgentClick) onAgentClick(row.agentId)
+                  if (row?.agentId && onAgentSelect) onAgentSelect(row.agentId)
                 }}
               >
                 {chartData.map((entry) => {
@@ -219,10 +286,10 @@ export function AgentCallsBarChart({
                 radius={[3, 3, 0, 0]}
                 maxBarSize={28}
                 legendType="square"
-                style={clickable ? { cursor: 'pointer' } : undefined}
+                style={selectable ? { cursor: 'pointer' } : undefined}
                 onClick={(barData) => {
                   const row = barData as ChartRow | undefined
-                  if (row?.agentId && onAgentClick) onAgentClick(row.agentId)
+                  if (row?.agentId && onAgentSelect) onAgentSelect(row.agentId)
                 }}
               >
                 {chartData.map((entry) => {
