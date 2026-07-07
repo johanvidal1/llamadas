@@ -462,17 +462,11 @@ function buildDayDisplayGroups(
 function viewModeButtonLabel(mode: GroupMode): string {
   switch (mode) {
     case 'agent':
-      return 'Vista: Por agente'
+      return 'Agrupar lista: Por agente'
     case 'status':
-      return 'Vista: Por pendientes / registradas'
-    case 'day':
-      return 'Vista: Por día'
-    case 'week':
-      return 'Vista: Por semana'
-    case 'month':
-      return 'Vista: Por mes'
+      return 'Agrupar lista: Por pendientes / registradas'
     default:
-      return 'Vista: Sin agrupar'
+      return 'Agrupar lista: Sin agrupar'
   }
 }
 
@@ -491,7 +485,7 @@ function dateFilterButtonLabel(
   intent: DatePreset | 'custom' | null = null
 ): string {
   const preset = resolveDatePresetDisplay(from, to, intent)
-  if (preset === null) return 'Por fecha'
+  if (preset === null) return 'Período'
   if (preset === 'today') return 'Hoy'
   if (preset === 'week') return 'Esta semana'
   if (preset === 'month') return formatMonthGroupLabel(from || monthStartLocal())
@@ -625,6 +619,7 @@ function DateFilterPicker({
         <div className="absolute right-0 top-full z-50 mt-1.5 w-64 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
           {!customOpen ? (
             <div className="space-y-0.5">
+              <p className="px-3 pt-1 pb-2 text-xs font-medium text-gray-500">Período de actividad</p>
               <button
                 type="button"
                 onClick={() => applyPreset(todayLocal(), todayLocal(), 'day', 'today')}
@@ -638,7 +633,7 @@ function DateFilterPicker({
               </button>
               <button
                 type="button"
-                onClick={() => applyPreset(weekStartLocal(), todayLocal(), 'week', 'week')}
+                onClick={() => applyPreset(weekStartLocal(), todayLocal(), 'day', 'week')}
                 title={
                   weekSameAsToday
                     ? 'Hoy es el inicio de la semana; mismo rango que Hoy'
@@ -654,7 +649,7 @@ function DateFilterPicker({
               </button>
               <button
                 type="button"
-                onClick={() => applyPreset(monthStartLocal(), todayLocal(), 'month', 'month')}
+                onClick={() => applyPreset(monthStartLocal(), todayLocal(), 'day', 'month')}
                 className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
                   datePresetIntent === 'month'
                     ? 'bg-emerald-50 text-emerald-800 font-medium'
@@ -805,17 +800,15 @@ function DayGroupHeader({
 function ViewModePicker({
   groupMode,
   agentId,
-  hasDateFilter,
   onChange,
 }: {
   groupMode: GroupMode
   agentId: string
-  hasDateFilter: boolean
   onChange: (mode: GroupMode) => void
 }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
-  const isGrouped = groupMode !== ''
+  const isGrouped = groupMode === 'agent' || groupMode === 'status'
 
   useEffect(() => {
     if (!open) return
@@ -881,31 +874,6 @@ function ViewModePicker({
               >
                 Por pendientes / registradas
               </button>
-            )}
-            <button
-              type="button"
-              onClick={() => selectMode('day')}
-              className={optionClass(groupMode === 'day')}
-            >
-              Por día
-            </button>
-            {hasDateFilter && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => selectMode('week')}
-                  className={optionClass(groupMode === 'week')}
-                >
-                  Por semana
-                </button>
-                <button
-                  type="button"
-                  onClick={() => selectMode('month')}
-                  className={optionClass(groupMode === 'month')}
-                >
-                  Por mes
-                </button>
-              </>
             )}
           </div>
         </div>
@@ -1450,6 +1418,7 @@ export default function Clients() {
     setRegisteredFrom('')
     setRegisteredTo('')
     setDatePresetIntent(null)
+    setGroupMode('')
     setExpandedGroups(new Set())
     setPage(1)
   }
@@ -1915,7 +1884,6 @@ export default function Clients() {
             <ViewModePicker
               groupMode={groupMode}
               agentId={agentId}
-              hasDateFilter={hasDateFilter}
               onChange={(mode) => {
                 setGroupMode(mode)
                 setExpandedGroups(new Set())
