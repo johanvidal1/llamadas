@@ -49,6 +49,11 @@ function matchesCompanySearch(c: AssignmentRunCompany, q: string) {
   )
 }
 
+function canReleaseRun(run: AssignmentRun) {
+  if (run.isLegacy) return true
+  return !run.status || run.status === 'ACTIVE'
+}
+
 function formatRunActivityDates(firstCallAt: string | null, lastCallAt: string | null): string | null {
   if (!lastCallAt) return null
   const last = new Date(lastCallAt)
@@ -99,6 +104,7 @@ function AssignmentRunCard({
   isSearching,
   loadingCompanies,
   archivedByReset = false,
+  concluded = false,
   showRelease,
   onToggle,
   onRelease,
@@ -111,6 +117,7 @@ function AssignmentRunCard({
   isSearching: boolean
   loadingCompanies: boolean
   archivedByReset?: boolean
+  concluded?: boolean
   showRelease: boolean
   onToggle: () => void
   onRelease: () => void
@@ -118,86 +125,96 @@ function AssignmentRunCard({
 }) {
   const filteredCompanies = companies.filter((c) => matchesCompanySearch(c, filterQuery))
   const matchCount = isSearching ? filteredCompanies.length : 0
+  const dimmed = archivedByReset || concluded
 
   return (
     <div
       className={`border rounded-xl overflow-hidden ${
-        archivedByReset ? 'border-gray-200/80 opacity-80' : 'border-gray-200'
+        dimmed ? 'border-gray-200/80 opacity-80' : 'border-gray-200'
       }`}
     >
-      <div className={`flex items-stretch ${archivedByReset ? 'bg-gray-50/60' : 'bg-gray-50'}`}>
-        <button
-          className={`flex-1 flex items-center justify-between p-4 transition-colors text-left min-w-0 ${
-            archivedByReset ? 'hover:bg-gray-100/70' : 'hover:bg-gray-100'
-          }`}
-          onClick={onToggle}
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <History size={16} className={`shrink-0 ${archivedByReset ? 'text-gray-400' : 'text-blue-500'}`} />
-            <div className="min-w-0">
-              <p className={`text-base font-bold ${archivedByReset ? 'text-gray-700' : 'text-gray-900'}`}>
-                {run.companyCount} empresa{run.companyCount !== 1 ? 's' : ''}
-                {isSearching && matchCount > 0 && (
-                  <span className="ml-2 text-xs font-normal text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">
-                    {matchCount} de {run.companyCount} coincidencias
+      <div className={dimmed ? 'bg-gray-50/60' : 'bg-gray-50'}>
+        <div className="flex items-stretch">
+          <button
+            className={`flex-1 flex items-center justify-between p-4 pb-2 transition-colors text-left min-w-0 ${
+              dimmed ? 'hover:bg-gray-100/70' : 'hover:bg-gray-100'
+            }`}
+            onClick={onToggle}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <History size={16} className={`shrink-0 ${dimmed ? 'text-gray-400' : 'text-blue-500'}`} />
+              <div className="min-w-0">
+                <p className={`text-base font-bold ${dimmed ? 'text-gray-700' : 'text-gray-900'}`}>
+                  {run.companyCount} empresa{run.companyCount !== 1 ? 's' : ''}
+                  {isSearching && matchCount > 0 && (
+                    <span className="ml-2 text-xs font-normal text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">
+                      {matchCount} de {run.companyCount} coincidencias
+                    </span>
+                  )}
+                  {archivedByReset && (
+                    <span className="ml-2 text-xs font-normal text-gray-600 bg-gray-200/80 px-1.5 py-0.5 rounded">
+                      Archivado por reset
+                    </span>
+                  )}
+                  {run.isLegacy && (
+                    <span className="ml-2 text-xs font-normal text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+                      Anterior
+                    </span>
+                  )}
+                  {!run.isLegacy && run.status && run.status !== 'ACTIVE' && (
+                    <span className="ml-2 text-xs font-normal text-gray-600 bg-gray-200/80 px-1.5 py-0.5 rounded">
+                      {run.status === 'PARTIALLY_RELEASED'
+                        ? 'Parcialmente liberada'
+                        : run.status === 'CLOSED'
+                          ? 'Cerrada'
+                          : run.status}
+                    </span>
+                  )}
+                </p>
+                <p className="text-sm text-gray-600 mt-0.5">
+                  {format(new Date(run.assignedAt), 'd MMM yyyy, HH:mm', { locale: es })}
+                </p>
+                <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-gray-200/80 text-xs text-gray-700 truncate max-w-full">
+                    {run.filename ?? 'Todas las importaciones'}
                   </span>
-                )}
-                {archivedByReset && (
-                  <span className="ml-2 text-xs font-normal text-gray-600 bg-gray-200/80 px-1.5 py-0.5 rounded">
-                    Archivado por reset
-                  </span>
-                )}
-                {run.isLegacy && (
-                  <span className="ml-2 text-xs font-normal text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
-                    Anterior
-                  </span>
-                )}
-                {!run.isLegacy && run.status && run.status !== 'ACTIVE' && (
-                  <span className="ml-2 text-xs font-normal text-gray-600 bg-gray-200/80 px-1.5 py-0.5 rounded">
-                    {run.status === 'PARTIALLY_RELEASED'
-                      ? 'Parcialmente liberada'
-                      : run.status === 'CLOSED'
-                        ? 'Cerrada'
-                        : run.status}
-                  </span>
-                )}
-              </p>
-              <p className="text-sm text-gray-600 mt-0.5">
-                {format(new Date(run.assignedAt), 'd MMM yyyy, HH:mm', { locale: es })}
-              </p>
-              <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-gray-200/80 text-xs text-gray-700 truncate max-w-full">
-                  {run.filename ?? 'Todas las importaciones'}
-                </span>
-                <span className="text-xs text-gray-400">Por {run.assignedBy.name}</span>
+                  <span className="text-xs text-gray-400">Por {run.assignedBy.name}</span>
+                </div>
               </div>
             </div>
-          </div>
-          <div className="shrink-0 ml-3">
-            {isOpen ? (
-              <ChevronDown size={16} className="text-gray-400" />
-            ) : (
-              <ChevronRight size={16} className="text-gray-400" />
-            )}
-          </div>
-        </button>
-        <div className="hidden sm:flex shrink-0 flex-col justify-center px-3 border-l border-gray-200 min-w-0 max-w-[12rem]">
-          <RunActivityMetrics run={run} />
-        </div>
-        {showRelease && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              onRelease()
-            }}
-            className="shrink-0 px-3 border-l border-gray-200 text-xs font-medium text-amber-800 hover:bg-amber-50 flex flex-col items-center justify-center gap-1 min-w-[5.5rem]"
-            title="Liberar empresas no trabajadas"
-          >
-            <PackageOpen size={16} />
-            Liberar pendientes
+            <div className="shrink-0 ml-3">
+              {isOpen ? (
+                <ChevronDown size={16} className="text-gray-400" />
+              ) : (
+                <ChevronRight size={16} className="text-gray-400" />
+              )}
+            </div>
           </button>
-        )}
+          <div className="hidden sm:flex shrink-0 flex-col justify-center px-3 border-l border-gray-200 min-w-0 max-w-[12rem]">
+            <RunActivityMetrics run={run} />
+          </div>
+          {showRelease && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onRelease()
+              }}
+              className="shrink-0 px-3 border-l border-gray-200 text-xs font-medium text-amber-800 hover:bg-amber-50 flex flex-col items-center justify-center gap-1 min-w-[5.5rem]"
+              title="Liberar empresas no trabajadas"
+            >
+              <PackageOpen size={16} />
+              Liberar pendientes
+            </button>
+          )}
+        </div>
+        <div className="px-4 pb-3">
+          <AgentCompaniesSummary
+            assignedCompanies={run.companyCount}
+            pendingCompanies={run.pendingCompanies}
+            barOnly
+          />
+        </div>
       </div>
 
       {isOpen && (
@@ -322,10 +339,12 @@ function AgentCompaniesSummary({
   assignedCompanies = 0,
   pendingCompanies = 0,
   compact = false,
+  barOnly = false,
 }: {
   assignedCompanies?: number
   pendingCompanies?: number
   compact?: boolean
+  barOnly?: boolean
 }) {
   const assigned = assignedCompanies ?? 0
   const pending = pendingCompanies ?? 0
@@ -333,25 +352,10 @@ function AgentCompaniesSummary({
   const registeredPct = assigned > 0 ? (registered / assigned) * 100 : 0
   const pendingPct = assigned > 0 ? (pending / assigned) * 100 : 0
 
-  if (assigned === 0) {
-    return (
-      <div className={compact ? '' : 'mb-4'}>
-        {compact ? (
-          <p className="text-xs text-gray-400">Sin empresas asignadas</p>
-        ) : (
-          <>
-            <p className="text-2xl font-bold text-gray-400">0</p>
-            <p className="text-xs text-gray-500">Empresas asignadas</p>
-            <p className="text-xs text-gray-400 mt-1">Sin empresas asignadas</p>
-          </>
-        )}
-      </div>
-    )
-  }
-
+  const barHeight = compact || barOnly ? 'h-1' : 'h-1.5'
   const bar = (
     <div
-      className={`${compact ? 'h-1' : 'h-1.5'} bg-gray-100 rounded-full overflow-hidden flex w-full`}
+      className={`${barHeight} bg-gray-100 rounded-full overflow-hidden flex w-full`}
       title={COMPANIES_BAR_TOOLTIP}
     >
       <div
@@ -365,6 +369,40 @@ function AgentCompaniesSummary({
     </div>
   )
 
+  const labels = (
+    <div className="flex justify-between text-xs">
+      <span className="text-emerald-700">{registered} registradas</span>
+      <span className="text-amber-700">{pending} pendientes</span>
+    </div>
+  )
+
+  if (assigned === 0) {
+    return (
+      <div className={compact || barOnly ? '' : 'mb-4'}>
+        {barOnly ? (
+          <p className="text-xs text-gray-400">Sin empresas en esta asignación</p>
+        ) : compact ? (
+          <p className="text-xs text-gray-400">Sin empresas asignadas</p>
+        ) : (
+          <>
+            <p className="text-2xl font-bold text-gray-400">0</p>
+            <p className="text-xs text-gray-500">Empresas asignadas</p>
+            <p className="text-xs text-gray-400 mt-1">Sin empresas asignadas</p>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  if (barOnly) {
+    return (
+      <div className="space-y-1">
+        {bar}
+        {labels}
+      </div>
+    )
+  }
+
   if (compact) {
     return (
       <div className="space-y-1.5">
@@ -375,10 +413,7 @@ function AgentCompaniesSummary({
           </p>
         </div>
         {bar}
-        <div className="flex justify-between text-xs">
-          <span className="text-emerald-700">{registered} registradas</span>
-          <span className="text-amber-700">{pending} pendientes</span>
-        </div>
+        {labels}
       </div>
     )
   }
@@ -388,10 +423,7 @@ function AgentCompaniesSummary({
       <p className="text-2xl font-bold text-gray-900">{assigned}</p>
       <p className="text-xs text-gray-500 mb-2">Empresas asignadas</p>
       {bar}
-      <div className="flex justify-between mt-1.5 text-xs">
-        <span className="text-emerald-700">{registered} registradas</span>
-        <span className="text-amber-700">{pending} pendientes</span>
-      </div>
+      <div className="mt-1.5">{labels}</div>
     </div>
   )
 }
@@ -415,6 +447,7 @@ export default function Assignments() {
   const [drawerSearch, setDrawerSearch] = useState('')
   const [debouncedDrawerSearch, setDebouncedDrawerSearch] = useState('')
   const [showArchivedRuns, setShowArchivedRuns] = useState(false)
+  const [showConcludedRuns, setShowConcludedRuns] = useState(false)
   const [searchPrefetching, setSearchPrefetching] = useState(false)
   const expandedBeforeSearchRef = useRef<Record<string, boolean> | null>(null)
   const loadRunCompaniesPromises = useRef<Record<string, Promise<AssignmentRunCompany[] | null>>>({})
@@ -484,6 +517,7 @@ export default function Assignments() {
       setDrawerSearch('')
       setDebouncedDrawerSearch('')
       setShowArchivedRuns(false)
+      setShowConcludedRuns(false)
       setSearchPrefetching(false)
       expandedBeforeSearchRef.current = null
     }
@@ -561,11 +595,6 @@ export default function Assignments() {
     }
   }
 
-  const canReleaseRun = (run: AssignmentRun) => {
-    if (run.isLegacy) return true
-    return !run.status || run.status === 'ACTIVE'
-  }
-
   const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: getUsers })
   const { data: imports = [] } = useQuery({ queryKey: ['imports'], queryFn: getImports })
 
@@ -603,6 +632,15 @@ export default function Assignments() {
   const activeDrawerRuns: AssignmentRun[] = drawerRunsData?.activeRuns ?? drawerRunsData?.runs ?? []
   const archivedDrawerRuns: AssignmentRun[] = drawerRunsData?.archivedRuns ?? []
   const lastResetAt = drawerRunsData?.lastResetAt ?? null
+  const { operationalDrawerRuns, concludedDrawerRuns } = useMemo(() => {
+    const operational: AssignmentRun[] = []
+    const concluded: AssignmentRun[] = []
+    for (const run of activeDrawerRuns) {
+      if (canReleaseRun(run)) operational.push(run)
+      else concluded.push(run)
+    }
+    return { operationalDrawerRuns: operational, concludedDrawerRuns: concluded }
+  }, [activeDrawerRuns])
   const allDrawerRuns = useMemo(
     () =>
       [...activeDrawerRuns, ...archivedDrawerRuns].sort(
@@ -611,11 +649,11 @@ export default function Assignments() {
     [activeDrawerRuns, archivedDrawerRuns]
   )
   const drawerRunsSummary =
-    activeDrawerRuns.length > 0 || archivedDrawerRuns.length > 0
+    operationalDrawerRuns.length > 0 || concludedDrawerRuns.length > 0 || archivedDrawerRuns.length > 0
       ? {
-          totalCompanies: activeDrawerRuns.reduce((sum, run) => sum + run.companyCount, 0),
-          assignmentCount: activeDrawerRuns.length,
-          fileCount: new Set(activeDrawerRuns.map((run) => run.importBatchId ?? 'none')).size,
+          totalCompanies: operationalDrawerRuns.reduce((sum, run) => sum + run.companyCount, 0),
+          assignmentCount: operationalDrawerRuns.length,
+          fileCount: new Set(operationalDrawerRuns.map((run) => run.importBatchId ?? 'none')).size,
         }
       : null
 
@@ -1015,6 +1053,7 @@ export default function Assignments() {
                   setExpandedRuns({})
                   setDrawerSearch('')
                   setShowArchivedRuns(false)
+                  setShowConcludedRuns(false)
                 }}
               >
                 <div className="flex items-center gap-3 mb-3">
@@ -1098,13 +1137,16 @@ export default function Assignments() {
           return companies.some((c) => matchesCompanySearch(c, searchQuery))
         }
 
-        const runsToShow = isSearching ? allDrawerRuns : activeDrawerRuns
+        const runsToShow = isSearching ? allDrawerRuns : operationalDrawerRuns
         const archivedResetLabel =
           lastResetAt != null
             ? format(new Date(lastResetAt), 'dd/MM/yyyy', { locale: es })
             : null
 
-        const renderRunCard = (run: AssignmentRun, archivedByReset = false) => (
+        const renderRunCard = (
+          run: AssignmentRun,
+          { archivedByReset = false, concluded = false }: { archivedByReset?: boolean; concluded?: boolean } = {}
+        ) => (
           <AssignmentRunCard
             key={run.id}
             run={run}
@@ -1114,7 +1156,8 @@ export default function Assignments() {
             isSearching={isSearching}
             loadingCompanies={loadingRunCompanies[run.id] ?? false}
             archivedByReset={archivedByReset}
-            showRelease={canReleaseRun(run) && !!drawerAgentId && !archivedByReset}
+            concluded={concluded}
+            showRelease={canReleaseRun(run) && !!drawerAgentId && !archivedByReset && !concluded}
             onToggle={() => toggleRun(run, drawerAgentId!)}
             onRelease={() => openReleaseModal(run, drawerAgentId!)}
             onOpenRecord={(clientId) => setRecordModal({ clientId })}
@@ -1158,8 +1201,8 @@ export default function Assignments() {
                 />
                 <div className="flex items-center gap-6 text-center">
                   <div>
-                    <p className="text-xl font-bold text-gray-900">{activeDrawerRuns.length}</p>
-                    <p className="text-xs text-gray-500">Asignaciones</p>
+                    <p className="text-xl font-bold text-gray-900">{operationalDrawerRuns.length}</p>
+                    <p className="text-xs text-gray-500">En curso</p>
                   </div>
                   <div>
                     <p className="text-xl font-bold text-gray-900">{agent?._count.callLogs ?? 0}</p>
@@ -1220,9 +1263,7 @@ export default function Assignments() {
                 {loadingDrawerRuns && (
                   <p className="text-center text-gray-400 py-12">Cargando historial...</p>
                 )}
-                {!loadingDrawerRuns &&
-                  activeDrawerRuns.length === 0 &&
-                  archivedDrawerRuns.length === 0 && (
+                {!loadingDrawerRuns && allDrawerRuns.length === 0 && (
                   <div className="text-center text-gray-400 py-12">
                     <History size={36} className="mx-auto mb-2" />
                     <p>Este agente no tiene asignaciones registradas</p>
@@ -1231,11 +1272,21 @@ export default function Assignments() {
                 )}
 
                 {!loadingDrawerRuns &&
-                  activeDrawerRuns.length === 0 &&
+                  operationalDrawerRuns.length === 0 &&
+                  concludedDrawerRuns.length === 0 &&
                   archivedDrawerRuns.length > 0 &&
                   !isSearching && (
                   <div className="text-center text-gray-400 py-6">
                     <p className="text-sm">Sin asignaciones desde el último reset</p>
+                  </div>
+                )}
+
+                {!loadingDrawerRuns &&
+                  operationalDrawerRuns.length === 0 &&
+                  concludedDrawerRuns.length > 0 &&
+                  !isSearching && (
+                  <div className="text-center text-gray-400 py-6">
+                    <p className="text-sm">Sin asignaciones en curso</p>
                   </div>
                 )}
 
@@ -1248,8 +1299,33 @@ export default function Assignments() {
 
                 {!showSearchEmptyState &&
                   runsToShow.filter(filterRunForSearch).map((run) =>
-                    renderRunCard(run, isSearching && (run.isBeforeLastReset ?? false))
+                    renderRunCard(run, {
+                      archivedByReset: isSearching && (run.isBeforeLastReset ?? false),
+                    })
                   )}
+
+                {!showSearchEmptyState && !isSearching && concludedDrawerRuns.length > 0 && (
+                  <div className="space-y-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowConcludedRuns((prev) => !prev)}
+                      className="w-full flex items-center justify-between gap-2 px-4 py-3 rounded-xl border border-dashed border-gray-300 text-sm text-gray-600 hover:bg-gray-50 hover:border-gray-400 transition-colors"
+                    >
+                      <span>
+                        {showConcludedRuns
+                          ? 'Ocultar concluidas o liberadas'
+                          : `Concluidas o liberadas (${concludedDrawerRuns.length})`}
+                      </span>
+                      {showConcludedRuns ? (
+                        <ChevronDown size={16} className="shrink-0 text-gray-400" />
+                      ) : (
+                        <ChevronRight size={16} className="shrink-0 text-gray-400" />
+                      )}
+                    </button>
+                    {showConcludedRuns &&
+                      concludedDrawerRuns.map((run) => renderRunCard(run, { concluded: true }))}
+                  </div>
+                )}
 
                 {!showSearchEmptyState && !isSearching && archivedDrawerRuns.length > 0 && (
                   <div className="space-y-3">
@@ -1270,7 +1346,7 @@ export default function Assignments() {
                       )}
                     </button>
                     {showArchivedRuns &&
-                      archivedDrawerRuns.map((run) => renderRunCard(run, true))}
+                      archivedDrawerRuns.map((run) => renderRunCard(run, { archivedByReset: true }))}
                   </div>
                 )}
               </div>
