@@ -53,6 +53,16 @@ function isMonthPreset(from: string, to: string): boolean {
   return from === monthStartLocal() && to === todayLocal()
 }
 
+type DatePreset = 'today' | 'week' | 'month' | 'custom'
+
+function activeDatePreset(from: string, to: string): DatePreset | null {
+  if (!from && !to) return null
+  if (isTodayPreset(from, to)) return 'today'
+  if (isWeekPreset(from, to)) return 'week'
+  if (isMonthPreset(from, to)) return 'month'
+  return 'custom'
+}
+
 type GroupMode = '' | 'agent' | 'status' | 'day' | 'week' | 'month'
 type DateGroupMode = '' | 'day' | 'week' | 'month'
 
@@ -466,27 +476,64 @@ function viewModeButtonLabel(mode: GroupMode): string {
   }
 }
 
-function dateFilterButtonLabel(from: string, to: string): string {
-  if (!from && !to) return 'Por fecha'
-  if (isTodayPreset(from, to)) return 'Hoy'
-  if (isWeekPreset(from, to)) return 'Esta semana'
-  if (isMonthPreset(from, to)) return formatMonthGroupLabel(from)
+function resolveDatePresetDisplay(
+  from: string,
+  to: string,
+  intent: DatePreset | 'custom' | null
+): DatePreset | 'custom' | null {
+  if (intent !== null) return intent
+  return activeDatePreset(from, to)
+}
+
+function dateFilterButtonLabel(
+  from: string,
+  to: string,
+  intent: DatePreset | 'custom' | null = null
+): string {
+  const preset = resolveDatePresetDisplay(from, to, intent)
+  if (preset === null) return 'Por fecha'
+  if (preset === 'today') return 'Hoy'
+  if (preset === 'week') return 'Esta semana'
+  if (preset === 'month') return formatMonthGroupLabel(from || monthStartLocal())
   if (from && to) return formatDateChip(from, to)
   if (from) return `desde ${format(new Date(from + 'T12:00:00'), 'd MMM yy', { locale: es })}`
   return `hasta ${format(new Date(to + 'T12:00:00'), 'd MMM yy', { locale: es })}`
 }
 
-function funnelPeriodLabel(from: string, to: string): string {
-  if (!from && !to) return 'Sin filtro de actividad (estado actual)'
-  if (isTodayPreset(from, to)) {
-    const today = todayLocal()
-    return `Hoy (${format(new Date(today + 'T12:00:00'), 'd MMM yyyy', { locale: es })})`
+function funnelPeriodLabel(
+  from: string,
+  to: string,
+  intent: DatePreset | 'custom' | null = null
+): string {
+  const preset = resolveDatePresetDisplay(from, to, intent)
+  if (preset === null) return 'Sin filtro de actividad (estado actual)'
+  if (preset === 'today') {
+    const day = from || todayLocal()
+    return `Hoy (${format(new Date(day + 'T12:00:00'), 'd MMM yyyy', { locale: es })})`
   }
-  if (isWeekPreset(from, to)) {
-    return `Esta semana (${formatDateChip(weekStartLocal(), todayLocal())})`
+  if (preset === 'week') {
+    const weekFrom = from || weekStartLocal()
+    const weekTo = to || todayLocal()
+    return `Esta semana (${formatDateChip(weekFrom, weekTo)})`
   }
-  if (isMonthPreset(from, to)) {
-    return `Este mes (${formatDateChip(monthStartLocal(), todayLocal())})`
+  if (preset === 'month') {
+    const monthFrom = from || monthStartLocal()
+    const monthTo = to || todayLocal()
+    return `Este mes (${formatDateChip(monthFrom, monthTo)})`
+  }
+  return formatDateChip(from, to)
+}
+
+function activityFilterChipLabel(
+  from: string,
+  to: string,
+  intent: DatePreset | 'custom' | null = null
+): string {
+  const preset = resolveDatePresetDisplay(from, to, intent)
+  if (preset === 'today') return 'Hoy'
+  if (preset === 'week') return `Esta semana (${formatDateChip(from || weekStartLocal(), to || todayLocal())})`
+  if (preset === 'month') {
+    return `Este mes (${formatDateChip(from || monthStartLocal(), to || todayLocal())})`
   }
   return formatDateChip(from, to)
 }
@@ -495,13 +542,15 @@ function DateFilterPicker({
   registeredFrom,
   registeredTo,
   groupMode,
+  datePresetIntent,
   onApply,
   onClear,
 }: {
   registeredFrom: string
   registeredTo: string
   groupMode: GroupMode
-  onApply: (from: string, to: string, mode: GroupMode) => void
+  datePresetIntent: DatePreset | 'custom' | null
+  onApply: (from: string, to: string, mode: GroupMode, intent: DatePreset | 'custom') => void
   onClear: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -514,7 +563,8 @@ function DateFilterPicker({
   const rootRef = useRef<HTMLDivElement>(null)
 
   const hasDateFilter = !!(registeredFrom || registeredTo)
-  const buttonLabel = dateFilterButtonLabel(registeredFrom, registeredTo)
+  const buttonLabel = dateFilterButtonLabel(registeredFrom, registeredTo, datePresetIntent)
+  const weekSameAsToday = weekStartLocal() === todayLocal()
 
   useEffect(() => {
     if (!open) return
@@ -529,8 +579,13 @@ function DateFilterPicker({
     if (!open) setCustomOpen(false)
   }, [open])
 
-  const applyPreset = (from: string, to: string, mode: GroupMode) => {
-    onApply(from, to, mode)
+  const applyPreset = (
+    from: string,
+    to: string,
+    mode: GroupMode,
+    intent: DatePreset
+  ) => {
+    onApply(from, to, mode, intent)
     setOpen(false)
   }
 
@@ -545,7 +600,7 @@ function DateFilterPicker({
 
   const applyCustom = () => {
     if (!draftFrom && !draftTo) return
-    onApply(draftFrom, draftTo, draftGroupMode)
+    onApply(draftFrom, draftTo, draftGroupMode, 'custom')
     setOpen(false)
   }
 
@@ -572,9 +627,9 @@ function DateFilterPicker({
             <div className="space-y-0.5">
               <button
                 type="button"
-                onClick={() => applyPreset(todayLocal(), todayLocal(), 'day')}
+                onClick={() => applyPreset(todayLocal(), todayLocal(), 'day', 'today')}
                 className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                  isTodayPreset(registeredFrom, registeredTo) && groupMode === 'day'
+                  datePresetIntent === 'today'
                     ? 'bg-emerald-50 text-emerald-800 font-medium'
                     : 'text-gray-700 hover:bg-gray-50'
                 }`}
@@ -583,9 +638,14 @@ function DateFilterPicker({
               </button>
               <button
                 type="button"
-                onClick={() => applyPreset(weekStartLocal(), todayLocal(), 'day')}
+                onClick={() => applyPreset(weekStartLocal(), todayLocal(), 'week', 'week')}
+                title={
+                  weekSameAsToday
+                    ? 'Hoy es el inicio de la semana; mismo rango que Hoy'
+                    : undefined
+                }
                 className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                  isWeekPreset(registeredFrom, registeredTo) && groupMode === 'day'
+                  datePresetIntent === 'week'
                     ? 'bg-emerald-50 text-emerald-800 font-medium'
                     : 'text-gray-700 hover:bg-gray-50'
                 }`}
@@ -594,9 +654,9 @@ function DateFilterPicker({
               </button>
               <button
                 type="button"
-                onClick={() => applyPreset(monthStartLocal(), todayLocal(), 'day')}
+                onClick={() => applyPreset(monthStartLocal(), todayLocal(), 'month', 'month')}
                 className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                  isMonthPreset(registeredFrom, registeredTo) && groupMode === 'day'
+                  datePresetIntent === 'month'
                     ? 'bg-emerald-50 text-emerald-800 font-medium'
                     : 'text-gray-700 hover:bg-gray-50'
                 }`}
@@ -607,10 +667,7 @@ function DateFilterPicker({
                 type="button"
                 onClick={openCustom}
                 className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                  hasDateFilter &&
-                  !isTodayPreset(registeredFrom, registeredTo) &&
-                  !isWeekPreset(registeredFrom, registeredTo) &&
-                  !isMonthPreset(registeredFrom, registeredTo)
+                  datePresetIntent === 'custom'
                     ? 'bg-emerald-50 text-emerald-800 font-medium'
                     : 'text-gray-700 hover:bg-gray-50'
                 }`}
@@ -1287,6 +1344,11 @@ export default function Clients() {
       ? todayLocal()
       : ''
   const defaultGroupMode: GroupMode = useDayDefault ? 'day' : ''
+  const defaultDatePresetIntent: DatePreset | 'custom' | null = hasUrlDateParams
+    ? activeDatePreset(defaultRegisteredFrom, defaultRegisteredTo)
+    : useDayDefault
+      ? 'today'
+      : null
 
   const [search, setSearch] = useState('')
   const [pipelineFilter, setPipelineFilter] = useState(deepLinkFilter)
@@ -1298,6 +1360,9 @@ export default function Clients() {
   const [pageSize, setPageSize] = useState(readStoredPageSize)
   const [visibleColumns, setVisibleColumns] = useState(readStoredColumnVisibility)
   const [groupMode, setGroupMode] = useState<GroupMode>(defaultGroupMode)
+  const [datePresetIntent, setDatePresetIntent] = useState<DatePreset | 'custom' | null>(
+    defaultDatePresetIntent
+  )
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [recordModal, setRecordModal] = useState<{
     clientId: string
@@ -1367,10 +1432,16 @@ export default function Clients() {
     ...pipelineFilterToParams(pipelineFilter),
   }
 
-  const applyDateFilter = (from: string, to: string, mode: GroupMode) => {
+  const applyDateFilter = (
+    from: string,
+    to: string,
+    mode: GroupMode,
+    intent: DatePreset | 'custom'
+  ) => {
     setRegisteredFrom(from)
     setRegisteredTo(to)
     setGroupMode(mode)
+    setDatePresetIntent(intent)
     setExpandedGroups(new Set())
     setPage(1)
   }
@@ -1378,6 +1449,7 @@ export default function Clients() {
   const clearDateFilter = () => {
     setRegisteredFrom('')
     setRegisteredTo('')
+    setDatePresetIntent(null)
     setExpandedGroups(new Set())
     setPage(1)
   }
@@ -1608,7 +1680,10 @@ export default function Clients() {
         const filtered = new Set([...prev].filter((k) => validKeys.has(k)))
         if (filtered.size > 0) return filtered
         const today = todayLocal()
-        if (isTodayPreset(registeredFrom, registeredTo) && validKeys.has(today)) {
+        const shouldExpandToday =
+          datePresetIntent === 'today' ||
+          (datePresetIntent === null && isTodayPreset(registeredFrom, registeredTo))
+        if (shouldExpandToday && validKeys.has(today)) {
           return new Set([today])
         }
         if (displayGroups.length === 1) {
@@ -1622,7 +1697,7 @@ export default function Clients() {
       const validKeys = new Set(displayGroups.map((g) => g.key))
       return new Set([...prev].filter((k) => validKeys.has(k)))
     })
-  }, [effectiveGroupBy, groupMode, displayGroups, registeredFrom, registeredTo])
+  }, [effectiveGroupBy, groupMode, displayGroups, registeredFrom, registeredTo, datePresetIntent])
 
   const toggleGroup = (key: string) => {
     setExpandedGroups((prev) => {
@@ -1676,7 +1751,7 @@ export default function Clients() {
   if (hasDateFilter) {
     activeFilterChips.push({
       key: 'dates',
-      label: `Actividad: ${formatDateChip(registeredFrom, registeredTo)}`,
+      label: `Actividad: ${activityFilterChipLabel(registeredFrom, registeredTo, datePresetIntent)}`,
       onClear: clearDateFilter,
     })
   }
@@ -1852,6 +1927,7 @@ export default function Clients() {
               registeredFrom={registeredFrom}
               registeredTo={registeredTo}
               groupMode={groupMode}
+              datePresetIntent={datePresetIntent}
               onApply={applyDateFilter}
               onClear={clearDateFilter}
             />
@@ -1877,7 +1953,7 @@ export default function Clients() {
                       hasDateFilter ? 'text-gray-500' : 'text-amber-600'
                     }`}
                   >
-                    {funnelPeriodLabel(registeredFrom, registeredTo)}
+                    {funnelPeriodLabel(registeredFrom, registeredTo, datePresetIntent)}
                   </p>
                 </div>
                 {funnelTotal != null && (
