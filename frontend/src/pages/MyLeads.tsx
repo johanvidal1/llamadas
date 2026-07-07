@@ -149,6 +149,91 @@ function callLogWasEdited(log: Pick<CallLogEntry, 'calledAt' | 'updatedAt'>): bo
   return new Date(log.updatedAt).getTime() > new Date(log.calledAt).getTime()
 }
 
+function filterCallLogsByHistorialScope(
+  logs: CallLogEntry[],
+  scope: 'contact' | 'company',
+  activeContactId: string | undefined,
+  displayContactsCount: number,
+): CallLogEntry[] {
+  return logs.filter((log) => {
+    if (scope === 'company' || displayContactsCount <= 1) return true
+    return !log.contact || log.contact.id === activeContactId
+  })
+}
+
+function sortCallLogsNewestFirst(logs: CallLogEntry[]): CallLogEntry[] {
+  return [...logs].sort((a, b) => callLogDisplayTime(b).getTime() - callLogDisplayTime(a).getTime())
+}
+
+function HistorialCallLogCard({
+  log,
+  linkedCb,
+  muted = false,
+}: {
+  log: CallLogEntry
+  linkedCb?: { scheduledAt: string; notes?: string; completed: boolean }
+  muted?: boolean
+}) {
+  const cfg = DISPOSITION_CONFIG[log.disposition] ?? {
+    label: getDispositionLabel(log.disposition),
+    classes: 'bg-gray-100 text-gray-600',
+  }
+  return (
+    <div
+      className={`rounded-lg border border-l-4 p-2.5 shadow-sm ${
+        muted
+          ? 'bg-gray-50/80 border-gray-200/80 opacity-85'
+          : 'bg-white border-gray-200'
+      } ${getDispositionBorderColor(log.disposition)}`}
+    >
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <span className={`badge text-[10px] ${cfg.classes}`}>{cfg.label}</span>
+        <div className="flex items-center gap-1 shrink-0">
+          {callLogWasEdited(log) && (
+            <span className="text-[9px] text-amber-600 font-semibold uppercase tracking-wide">
+              Editado
+            </span>
+          )}
+          <span className="text-[10px] text-gray-400 font-mono">
+            {format(callLogDisplayTime(log), 'dd/MM/yy HH:mm')}
+          </span>
+        </div>
+      </div>
+      {log.contact && (
+        <p className={`text-[10px] mb-1 font-medium ${muted ? 'text-blue-500/80' : 'text-blue-600'}`}>
+          {log.contact.nombre}{log.contact.tipoContacto ? ` · ${log.contact.tipoContacto}` : ''}
+        </p>
+      )}
+      {log.aclaracion && (
+        <p className={`text-[11px] italic mb-1 ${muted ? 'text-gray-400' : 'text-gray-500'}`}>{log.aclaracion}</p>
+      )}
+      {log.notes && (
+        <p className={`text-xs leading-snug mb-1 rounded px-2 py-1 ${muted ? 'text-gray-500 bg-gray-100/80' : 'text-gray-700 bg-gray-50'}`}>
+          {log.notes}
+        </p>
+      )}
+      {linkedCb && (
+        <div className="mt-1 pt-1 border-t border-dashed border-blue-200 space-y-0.5">
+          <div className={`flex items-center gap-1 text-[10px] ${muted ? 'text-blue-500/80' : 'text-blue-600'}`}>
+            <CalendarClock size={9} />
+            <span className="font-semibold">Agendado:</span>
+            <span className="font-mono">{format(new Date(linkedCb.scheduledAt), 'dd/MM/yy HH:mm')}</span>
+            {linkedCb.completed && <span className="ml-1 text-green-600 font-semibold">✓</span>}
+          </div>
+          {linkedCb.notes && (
+            <p className={`text-[10px] italic pl-3 leading-snug whitespace-pre-wrap ${muted ? 'text-blue-400' : 'text-blue-500'}`}>
+              {linkedCb.notes}
+            </p>
+          )}
+        </div>
+      )}
+      <p className={`text-[10px] mt-1.5 pt-1 border-t border-gray-100 ${muted ? 'text-gray-400' : 'text-gray-400'}`}>
+        — {log.agent.name}
+      </p>
+    </div>
+  )
+}
+
 class SaveCancelled extends Error {
   constructor() {
     super('Save cancelled')
@@ -639,6 +724,7 @@ export default function MyLeads() {
   const [cbTab, setCbTab] = useState<'own' | 'team'>('own')
   const [completeConfirm, setCompleteConfirm] = useState<CompleteConfirm | null>(null)
   const [historialScope, setHistorialScope] = useState<'contact' | 'company'>('contact')
+  const [showPreviousHistorial, setShowPreviousHistorial] = useState(false)
   const [mobilePanelTab, setMobilePanelTab] = useState<'agendados' | 'historial'>('agendados')
 
   // ── Agendados / Historial vertical split (persisted)
@@ -1626,7 +1712,14 @@ export default function MyLeads() {
         !callLogSaved && !contactSaved && !planChanged && !razonSocialChanged
 
       if (callLogUnchanged && nothingSaved) {
-        return { autoNext, callLogSaved, contactSaved, planChanged, razonSocialChanged, noOp: true }
+        return {
+          autoNext,
+          callLogSaved,
+          contactSaved,
+          planChanged,
+          razonSocialChanged,
+          noOp: true,
+        }
       }
 
       if (autoNext && !callLogSaved) {
@@ -1636,7 +1729,8 @@ export default function MyLeads() {
         throw new Error('Selecciona una respuesta antes de guardar')
       }
 
-      return { autoNext, callLogSaved, contactSaved, planChanged, razonSocialChanged, noOp: false }
+      noOp: false,
+      }
     },
     onSuccess: async (result) => {
       setRespuestaError(false)
@@ -1730,6 +1824,39 @@ export default function MyLeads() {
       ? Math.min(activeContactIdx, displayContacts.length - 1)
       : 0
   const activeContact = displayContacts[safeContactIdx]
+
+  const historialSplit = useMemo(() => {
+    const allLogs = detail?.callLogs ?? []
+    const scopeFilter = (logs: CallLogEntry[]) =>
+      filterCallLogsByHistorialScope(logs, historialScope, activeContact?.id, displayContacts.length)
+
+    if (isAdmin) {
+      const primaryLogs = sortCallLogsNewestFirst(scopeFilter(allLogs))
+      return {
+        primaryLogs,
+        archivedLogs: [] as CallLogEntry[],
+        primaryCount: primaryLogs.length,
+        archivedCount: 0,
+        hasAnyLogs: allLogs.length > 0,
+      }
+    }
+
+    const ownLogs = allLogs.filter((log) => log.agentId === user?.id)
+    const otherLogs = allLogs.filter((log) => log.agentId !== user?.id)
+    const primaryLogs = sortCallLogsNewestFirst(scopeFilter(ownLogs))
+    const archivedLogs = sortCallLogsNewestFirst(scopeFilter(otherLogs))
+    return {
+      primaryLogs,
+      archivedLogs,
+      primaryCount: primaryLogs.length,
+      archivedCount: archivedLogs.length,
+      hasAnyLogs: allLogs.length > 0,
+    }
+  }, [detail?.callLogs, historialScope, activeContact?.id, displayContacts.length, isAdmin, user?.id])
+
+  useEffect(() => {
+    setShowPreviousHistorial(false)
+  }, [detail?.id])
 
   useEffect(() => {
     contactTabRefs.current[safeContactIdx]?.scrollIntoView({
@@ -2352,7 +2479,7 @@ export default function MyLeads() {
               >
                 <History size={14} />
                 Historial
-                <span className="text-[10px] text-gray-400">({detail?.callLogs.length ?? 0})</span>
+                <span className="text-[10px] text-gray-400">({historialSplit.primaryCount})</span>
               </button>
             </div>
 
@@ -2504,10 +2631,10 @@ export default function MyLeads() {
                       >Empresa</button>
                     </div>
                   )}
-                  <span className="text-xs text-gray-400">{detail?.callLogs.length ?? 0}</span>
+                  <span className="text-xs text-gray-400">{historialSplit.primaryCount}</span>
                 </div>
               </div>
-              {!detail || detail.callLogs.length === 0 ? (
+              {!detail || !historialSplit.hasAnyLogs ? (
                 <div className="flex-1 flex items-center justify-center text-gray-400">
                   <div className="text-center">
                     <AlertCircle size={22} className="mx-auto mb-2 opacity-30" />
@@ -2516,74 +2643,66 @@ export default function MyLeads() {
                 </div>
               ) : (
                 <div className="flex-1 overflow-y-auto [scrollbar-gutter:stable] p-3 space-y-2 bg-gray-50">
-                  {(() => {
-                    const activeContactId = activeContact?.id
-                    const logs = [...detail.callLogs]
-                      .filter((log) => {
-                        if (historialScope === 'company' || (displayContacts.length <= 1)) return true
-                        // Show logs for this contact, or logs with no contact assigned
-                        return !log.contact || log.contact.id === activeContactId
-                      })
-                      .sort((a, b) => callLogDisplayTime(b).getTime() - callLogDisplayTime(a).getTime())
-                    if (logs.length === 0) return (
+                  {historialSplit.primaryCount === 0 ? (
+                    historialScope === 'contact' && displayContacts.length > 1 ? (
                       <div className="flex items-center justify-center py-8 text-gray-400">
                         <div className="text-center">
                           <AlertCircle size={20} className="mx-auto mb-2 opacity-30" />
-                          <p className="text-xs">Sin llamadas para este contacto</p>
+                          <p className="text-xs">
+                            {isAdmin ? 'Sin llamadas para este contacto' : 'Sin llamadas propias para este contacto'}
+                          </p>
                           <button onClick={() => setHistorialScope('company')} className="mt-1.5 text-[11px] text-blue-500 hover:underline">Ver toda la empresa</button>
                         </div>
                       </div>
-                    )
-                    return logs.map((log) => {
-                      const cfg = DISPOSITION_CONFIG[log.disposition] ?? { label: getDispositionLabel(log.disposition), classes: 'bg-gray-100 text-gray-600' }
-                      const linkedCb = detail.callbacks?.find((c) => c.callLogId === log.id)
-                      return (
-                        <div
-                          key={log.id}
-                          className={`bg-white rounded-lg border border-gray-200 border-l-4 ${getDispositionBorderColor(log.disposition)} p-2.5 shadow-sm`}
-                        >
-                          <div className="flex items-center justify-between gap-2 mb-1.5">
-                            <span className={`badge text-[10px] ${cfg.classes}`}>{cfg.label}</span>
-                            <div className="flex items-center gap-1 shrink-0">
-                              {callLogWasEdited(log) && (
-                                <span className="text-[9px] text-amber-600 font-semibold uppercase tracking-wide">
-                                  Editado
-                                </span>
-                              )}
-                              <span className="text-[10px] text-gray-400 font-mono">
-                                {format(callLogDisplayTime(log), 'dd/MM/yy HH:mm')}
-                              </span>
-                            </div>
-                          </div>
-                          {log.contact && (
-                            <p className="text-[10px] text-blue-600 mb-1 font-medium">{log.contact.nombre}{log.contact.tipoContacto ? ` · ${log.contact.tipoContacto}` : ''}</p>
-                          )}
-                          {log.aclaracion && (
-                            <p className="text-[11px] text-gray-500 italic mb-1">{log.aclaracion}</p>
-                          )}
-                          {log.notes && (
-                            <p className="text-xs text-gray-700 leading-snug mb-1 bg-gray-50 rounded px-2 py-1">{log.notes}</p>
-                          )}
-                          {linkedCb && (
-                            <div className="mt-1 pt-1 border-t border-dashed border-blue-200 space-y-0.5">
-                              <div className="flex items-center gap-1 text-[10px] text-blue-600">
-                                <CalendarClock size={9} />
-                                <span className="font-semibold">Agendado:</span>
-                                <span className="font-mono">{format(new Date(linkedCb.scheduledAt), 'dd/MM/yy HH:mm')}</span>
-                                {linkedCb.completed && <span className="ml-1 text-green-600 font-semibold">✓</span>}
-                              </div>
-                              {linkedCb.notes && (
-                                <p className="text-[10px] text-blue-500 italic pl-3 leading-snug whitespace-pre-wrap">{linkedCb.notes}</p>
-                              )}
-                            </div>
-                          )}
-                          <p className="text-[10px] text-gray-400 mt-1.5 pt-1 border-t border-gray-100">
-                            — {log.agent.name}
+                    ) : (
+                      <div className="flex items-center justify-center py-8 text-gray-400">
+                        <div className="text-center">
+                          <AlertCircle size={20} className="mx-auto mb-2 opacity-30" />
+                          <p className="text-xs">
+                            {isAdmin ? 'Sin llamadas registradas' : 'Sin llamadas propias registradas'}
                           </p>
                         </div>
-                      )
-                    })
-                  })()}
+                      </div>
+                    )
+                  ) : (
+                    historialSplit.primaryLogs.map((log) => (
+                      <HistorialCallLogCard
+                        key={log.id}
+                        log={log}
+                        linkedCb={detail.callbacks?.find((c) => c.callLogId === log.id)}
+                      />
+                    ))
+                  )}
+
+                  {!isAdmin && historialSplit.archivedCount > 0 && (
+                    <div className="space-y-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowPreviousHistorial((prev) => !prev)}
+                        className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border border-dashed border-gray-300 text-xs text-gray-600 hover:bg-gray-100/80 hover:border-gray-400 transition-colors"
+                      >
+                        <span>
+                          {showPreviousHistorial
+                            ? 'Ocultar historial anterior'
+                            : `Historial anterior (${historialSplit.archivedCount})`}
+                        </span>
+                        {showPreviousHistorial ? (
+                          <ChevronDown size={14} className="shrink-0 text-gray-400" />
+                        ) : (
+                          <ChevronRight size={14} className="shrink-0 text-gray-400" />
+                        )}
+                      </button>
+                      {showPreviousHistorial &&
+                        historialSplit.archivedLogs.map((log) => (
+                          <HistorialCallLogCard
+                            key={log.id}
+                            log={log}
+                            linkedCb={detail.callbacks?.find((c) => c.callLogId === log.id)}
+                            muted
+                          />
+                        ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
