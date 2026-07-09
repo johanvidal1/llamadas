@@ -1,5 +1,5 @@
 import { useState, Fragment, useEffect, useRef, useMemo } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { useQuery, keepPreviousData, useQueryClient } from '@tanstack/react-query'
 import {
   getReports, getUsers, getClients, getCallbacks, getAssignmentRunCompanies, getUntrackedCompanies,
@@ -34,6 +34,12 @@ import {
   sumFunnelStages,
   sumPipelineBarSegments,
 } from '../config/companyPipeline'
+import {
+  type ChartFilterMode,
+  chartTodayLocal,
+  parseReportsSearchParams,
+  syncReportsSearchParams,
+} from '../config/reportsNavigation'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -798,8 +804,6 @@ function ReportsBatchSkeleton() {
 
 // ─── Chart period filter ───────────────────────────────────────────────────────
 
-type ChartFilterMode = 'day' | 'week' | 'month' | 'custom'
-
 const ZERO_CHART_COLORS: Record<string, string> = {
   NO_CONTESTA: '#9ca3af',
   VOLVER_A_LLAMAR: '#3b82f6',
@@ -818,10 +822,6 @@ const ZERO_CHART_SERIES: DonutSeriesRow[] = ZERO_PROGRESS_OPTIONS.filter(
   color: ZERO_CHART_COLORS[o.code] ?? '#6b7280',
   highlight: o.code === 'VOLVER_A_LLAMAR',
 }))
-
-function chartTodayLocal(): string {
-  return format(new Date(), 'yyyy-MM-dd')
-}
 
 function deriveChartRange(
   mode: ChartFilterMode,
@@ -1072,19 +1072,48 @@ function useSortedAgents(agents: AgentPerf[]) {
 
 export default function Reports() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
-  const [filterAgentId, setFilterAgentId] = useState('')
+  const [filterAgentId, setFilterAgentId] = useState(() => {
+    const initial = parseReportsSearchParams(searchParams)
+    return initial.filterAgentId
+  })
   const [drillDown, setDrillDown] = useState<DrillDown | null>(null)
   const [showStatusDetail, setShowStatusDetail] = useState(false)
   const [expandedBatches, setExpandedBatches] = useState<Record<string, boolean>>({})
   const [expandedRuns, setExpandedRuns] = useState<Record<string, boolean>>({})
   const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({})
   const [expandedBatchAgents, setExpandedBatchAgents] = useState<Record<string, Record<string, boolean>>>({})
-  const [chartMode, setChartMode] = useState<ChartFilterMode>('day')
-  const [chartAnchor, setChartAnchor] = useState(chartTodayLocal)
-  const [chartCustomFrom, setChartCustomFrom] = useState(chartTodayLocal)
-  const [chartCustomTo, setChartCustomTo] = useState(chartTodayLocal)
+  const [chartMode, setChartMode] = useState<ChartFilterMode>(() => {
+    const initial = parseReportsSearchParams(searchParams)
+    return initial.chartMode
+  })
+  const [chartAnchor, setChartAnchor] = useState(() => {
+    const initial = parseReportsSearchParams(searchParams)
+    return initial.chartAnchor
+  })
+  const [chartCustomFrom, setChartCustomFrom] = useState(() => {
+    const initial = parseReportsSearchParams(searchParams)
+    return initial.chartCustomFrom
+  })
+  const [chartCustomTo, setChartCustomTo] = useState(() => {
+    const initial = parseReportsSearchParams(searchParams)
+    return initial.chartCustomTo
+  })
   const [leftChartView, setLeftChartView] = useState<'funnel' | 'zero'>('funnel')
+
+  useEffect(() => {
+    const next = syncReportsSearchParams(searchParams, {
+      filterAgentId,
+      chartMode,
+      chartAnchor,
+      chartCustomFrom,
+      chartCustomTo,
+    })
+    if (next) {
+      setSearchParams(next, { replace: true })
+    }
+  }, [filterAgentId, chartMode, chartAnchor, chartCustomFrom, chartCustomTo, searchParams, setSearchParams])
 
   const chartRange = useMemo(
     () => deriveChartRange(chartMode, chartAnchor, chartCustomFrom, chartCustomTo),

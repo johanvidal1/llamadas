@@ -12,6 +12,7 @@ import {
   sumFunnelStages,
   type ClientsOperationalFilter,
 } from '../config/companyPipeline'
+import { buildReportsUrlFromClientsContext } from '../config/reportsNavigation'
 import { FilterDropdown } from '../components/FilterDropdown'
 import { getResponseOption } from '../config/responseOptions'
 import ClientRecordModal from '../components/ClientRecordModal'
@@ -1829,7 +1830,15 @@ export default function Clients() {
         {returnToReports && (
           <button
             type="button"
-            onClick={() => navigate('/reports')}
+            onClick={() =>
+              navigate(
+                buildReportsUrlFromClientsContext({
+                  agentId: agentId || undefined,
+                  registeredFrom: registeredFrom || undefined,
+                  registeredTo: registeredTo || undefined,
+                })
+              )
+            }
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors shrink-0"
           >
             <ArrowLeft size={15} />

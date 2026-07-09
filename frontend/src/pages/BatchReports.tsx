@@ -17,6 +17,7 @@ import {
   type BatchAssignmentRunMetrics,
 } from '../api/client'
 import { CallActivityChart, formatGapMinutes, SMALL_SAMPLE_THRESHOLD } from '../components/CallActivityChart'
+import { buildReportsUrl } from '../config/reportsNavigation'
 
 type AgentOption = { id: string; name: string }
 type BatchProgressRow = ApiBatchProgressRow
@@ -256,7 +257,7 @@ export default function BatchReports() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <Link
-            to={filterAgentId ? `/reports?agentId=${filterAgentId}` : '/reports'}
+            to={buildReportsUrl({ agentId: filterAgentId || undefined })}
             className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline mb-2"
           >
             <ArrowLeft size={14} />
