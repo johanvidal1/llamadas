@@ -1299,6 +1299,7 @@ export default function Clients() {
   const deepLinkFilter = VALID_PIPELINE_FILTERS.has(initialFilter) ? initialFilter : ''
   const initialRegisteredFrom = searchParams.get('registeredFrom') ?? ''
   const initialRegisteredTo = searchParams.get('registeredTo') ?? ''
+  const initialDispositionInPeriod = searchParams.get('dispositionInPeriod') ?? ''
   const hasUrlDateParams = !!(initialRegisteredFrom || initialRegisteredTo)
   const useDayDefault = !hasUrlDateParams && !initialAgentId && !deepLinkFilter
   const defaultRegisteredFrom = hasUrlDateParams
@@ -1324,6 +1325,9 @@ export default function Clients() {
   const [batchId, setBatchId] = useState('')
   const [registeredFrom, setRegisteredFrom] = useState(defaultRegisteredFrom)
   const [registeredTo, setRegisteredTo] = useState(defaultRegisteredTo)
+  const [dispositionInPeriod, setDispositionInPeriod] = useState(
+    VALID_PIPELINE_FILTERS.has(initialDispositionInPeriod) ? initialDispositionInPeriod : ''
+  )
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(readStoredPageSize)
   const [visibleColumns, setVisibleColumns] = useState(readStoredColumnVisibility)
@@ -1397,6 +1401,7 @@ export default function Clients() {
     batchId: batchId || undefined,
     registeredFrom: registeredFrom || undefined,
     registeredTo: registeredTo || undefined,
+    dispositionInPeriod: dispositionInPeriod || undefined,
     ...pipelineFilterToParams(pipelineFilter),
   }
 
@@ -1429,6 +1434,7 @@ export default function Clients() {
       {
         search,
         pipelineFilter,
+        dispositionInPeriod,
         agentId,
         batchId,
         registeredFrom,
@@ -1477,7 +1483,7 @@ export default function Clients() {
   const hasDateFilter = !!(registeredFrom || registeredTo)
   const selectedBatch = batchId ? batches.find((b) => b.id === batchId) : null
   const selectedAgent = agentId ? agents.find((a) => a.id === agentId) : null
-  const hasActiveFilters = !!(search || pipelineFilter || agentId || batchId || hasDateFilter)
+  const hasActiveFilters = !!(search || pipelineFilter || dispositionInPeriod || agentId || batchId || hasDateFilter)
   const showAgentColumn = !agentId
   const showBatchColumn = !batchId
   const displayGroups = useMemo((): DisplayGroup[] => {
@@ -1530,7 +1536,7 @@ export default function Clients() {
         'clients',
         'agent-group',
         id,
-        { search, batchId, registeredFrom, registeredTo, effectiveLimit, pipelineFilter },
+        { search, batchId, registeredFrom, registeredTo, effectiveLimit, pipelineFilter, dispositionInPeriod },
       ],
       queryFn: () =>
         getClients({
@@ -1551,7 +1557,7 @@ export default function Clients() {
         'clients',
         'day-group',
         dayKey,
-        { search, agentId, batchId, effectiveLimit, pipelineFilter },
+        { search, agentId, batchId, effectiveLimit, pipelineFilter, dispositionInPeriod },
       ],
       queryFn: () =>
         getClients({
@@ -1711,10 +1717,26 @@ export default function Clients() {
     const pipelineLabel = getPipelineFilterLabel(pipelineFilter) ?? pipelineFilter
     activeFilterChips.push({
       key: 'pipeline',
-      label: isFunnelChipFilter(pipelineFilter)
-        ? `Embudo: ${pipelineLabel}`
-        : `Estado: ${pipelineLabel}`,
-      onClear: () => { setPipelineFilter(''); setPage(1) },
+      label: dispositionInPeriod
+        ? `Respuesta en período: ${pipelineLabel}`
+        : isFunnelChipFilter(pipelineFilter)
+          ? `Embudo: ${pipelineLabel}`
+          : `Estado: ${pipelineLabel}`,
+      onClear: () => {
+        setPipelineFilter('')
+        setDispositionInPeriod('')
+        setPage(1)
+      },
+    })
+  } else if (dispositionInPeriod) {
+    const periodLabel = getPipelineFilterLabel(dispositionInPeriod) ?? dispositionInPeriod
+    activeFilterChips.push({
+      key: 'dispositionInPeriod',
+      label: `Respuesta en período: ${periodLabel}`,
+      onClear: () => {
+        setDispositionInPeriod('')
+        setPage(1)
+      },
     })
   }
   if (hasDateFilter) {
@@ -1736,7 +1758,9 @@ export default function Clients() {
                 <span className="font-semibold text-gray-700">{total}</span>
                 {' empresa'}
                 {total === 1 ? '' : 's'}
-                {' con última actividad en el período'}
+                {dispositionInPeriod
+                  ? ' con esa respuesta en el período'
+                  : ' con última actividad en el período'}
                 {hasActiveFilters && ' · filtrados'}
               </>
             ) : selectedBatch ? (
@@ -1874,6 +1898,7 @@ export default function Clients() {
                 }
                 onChange={(v) => {
                   setPipelineFilter(v)
+                  setDispositionInPeriod('')
                   setPage(1)
                 }}
                 options={PIPELINE_FILTER_OPERATIONAL}
@@ -1942,7 +1967,11 @@ export default function Clients() {
                       key={f.key}
                       type="button"
                       title={`${f.label} (${f.aclaracion})`}
-                      onClick={() => { setPipelineFilter(isActive ? '' : f.key); setPage(1) }}
+                      onClick={() => {
+                        setPipelineFilter(isActive ? '' : f.key)
+                        setDispositionInPeriod('')
+                        setPage(1)
+                      }}
                       className={`flex flex-col items-center gap-0.5 px-3 py-1.5 min-w-[5.5rem] text-center rounded-lg text-xs font-medium transition-colors border shrink-0 ${
                         isActive
                           ? 'bg-emerald-50 border-emerald-300 text-emerald-800 ring-2 ring-offset-1 ring-emerald-400'

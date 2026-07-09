@@ -12,6 +12,7 @@ import {
   buildCompanyPipelineCounts,
   buildDaySummary,
   dispositionMatchesFilter,
+  filterCompanyIdsByDispositionInPeriod,
   filterCompanyIdsByLastActivityRange,
   FUNNEL_PIPELINE_KEYS,
   getFirstRegisteredAtByCompanyIds,
@@ -210,6 +211,8 @@ type ClientsFilterContext = {
   includeAssignmentSummary: boolean
   /** Agent default queue (Cola Todos): exclude archived dispositions unless explicitly filtered. */
   agentQueueExcludeArchived: boolean
+  /** Drill-down from Reports period charts: filter by CallLog disposition in range. */
+  dispositionInPeriodActive: boolean
 }
 
 async function buildClientsFilterContext(
@@ -224,6 +227,7 @@ async function buildClientsFilterContext(
     agentId,
     registeredFrom,
     registeredTo,
+    dispositionInPeriod,
   } = query
 
   const take = Math.min(Number(query.limit) || 50, 500)
@@ -231,15 +235,21 @@ async function buildClientsFilterContext(
   const isAgent = req.user!.role === 'AGENT'
   const callLogAgentId = scopedAgentId(req.user!.role, req.user!.id, agentId)
   const dispositionAgentId = dispositionScopeAgentId(req.user!.role, req.user!.id, agentId)
+  const callLogPeriodAgentId = isAgent ? req.user!.id : agentId || undefined
   const filterParam = query.filter
   const effectiveDisposition =
     disposition || (filterParam && filterParam !== 'PENDING' ? filterParam : undefined)
+  const calledAtRange = buildCalledAtRange(registeredFrom, registeredTo)
+  const dispositionInPeriodKey =
+    dispositionInPeriod && isValidDisposition(dispositionInPeriod) ? dispositionInPeriod : undefined
+  const dispositionInPeriodActive = !!(dispositionInPeriodKey && calledAtRange)
   const agentScopedPending = status === 'PENDING' || filterParam === 'PENDING'
   const agentScopedOtros = effectiveDisposition === 'OTROS'
   const agentScopedFunnel = effectiveDisposition === 'FUNNEL'
   const agentScopedNoContesta = effectiveDisposition === 'NO_CONTESTA'
   const agentScopedNoContestaDepurado = effectiveDisposition === 'NO_CONTESTA_DEPURADO'
   const agentScopedDisposition =
+    !dispositionInPeriodActive &&
     !!effectiveDisposition &&
     !agentScopedOtros &&
     !agentScopedFunnel &&
@@ -265,10 +275,22 @@ async function buildClientsFilterContext(
     ]
   }
 
-  const calledAtRange = buildCalledAtRange(registeredFrom, registeredTo)
   let registrationCount: number | undefined
 
-  if (calledAtRange) {
+  if (dispositionInPeriodActive) {
+    const scopedIds = await getScopedCompanyIds(where)
+    const companyIdsInPeriod = await filterCompanyIdsByDispositionInPeriod(
+      scopedIds,
+      dispositionInPeriodKey!,
+      calledAtRange!,
+      callLogPeriodAgentId
+    )
+    registrationCount = companyIdsInPeriod.length
+    if (companyIdsInPeriod.length === 0) {
+      return { empty: true, take, page, registrationCount: 0 }
+    }
+    where.id = { in: companyIdsInPeriod }
+  } else if (calledAtRange) {
     const scopedIds = await getScopedCompanyIds(where)
     const companyIdsInRange = await filterCompanyIdsByLastActivityRange(
       scopedIds,
@@ -307,6 +329,7 @@ async function buildClientsFilterContext(
     agentScopedDisposition,
     includeAssignmentSummary: !!agentId,
     agentQueueExcludeArchived,
+    dispositionInPeriodActive,
   }
 }
 

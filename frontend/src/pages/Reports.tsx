@@ -1127,6 +1127,17 @@ export default function Reports() {
     }))
   }
 
+  const goToChartClientsFilter = (filter: string) => {
+    navigate(buildClientsUrl({
+      filter,
+      dispositionInPeriod: filter,
+      agentId: filterAgentId || undefined,
+      registeredFrom: chartRange.from,
+      registeredTo: chartRange.to,
+      from: 'reports',
+    }))
+  }
+
   const goToClientsForAgent = (agentId: string) => {
     navigate(buildClientsUrl({
       agentId,
@@ -1505,7 +1516,7 @@ export default function Reports() {
                 <FunnelDonutChart
                   pipeline={funnelPeriodData?.stages ?? {}}
                   loading={funnelPeriodLoading && !funnelPeriodData}
-                  onStageClick={goToClientsFilter}
+                  onStageClick={goToChartClientsFilter}
                   emptyMessage="Sin llamadas de embudo en el periodo"
                 />
               ) : (
@@ -1513,7 +1524,7 @@ export default function Reports() {
                   pipeline={zeroPeriodData?.dispositions ?? {}}
                   series={ZERO_CHART_SERIES}
                   loading={zeroPeriodLoading && !zeroPeriodData}
-                  onStageClick={goToClientsFilter}
+                  onStageClick={goToChartClientsFilter}
                   emptyMessage="Sin llamadas con respuesta 0% en el periodo"
                   legendScrollThreshold={4}
                 />

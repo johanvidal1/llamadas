@@ -182,6 +182,7 @@ export type GetClientsParams = {
   unassigned?: boolean
   registeredFrom?: string
   registeredTo?: string
+  dispositionInPeriod?: string
   sortBy?: string
   includePipeline?: boolean
 }
