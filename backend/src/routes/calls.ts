@@ -5,7 +5,12 @@ import { prisma } from '../lib/prisma'
 import { buildCalledAtRange } from '../lib/callActivity'
 import { incrementDailyMetricsForNewCall } from '../lib/dailyAgentMetrics'
 import { requireAuth, AuthRequest } from '../middleware/auth'
-import { recomputeContactStatus, statusForDisposition } from '../lib/contactStatus'
+import {
+  recomputeCompanyStatus,
+  recomputeContactStatus,
+  statusForDisposition,
+} from '../lib/contactStatus'
+import { isSuperAdminOrOwner } from '../lib/userPermissions'
 import {
   ALL_DISPOSITION_CODES,
   getAclaracionForDisposition,
@@ -66,6 +71,33 @@ const updateCallSchema = z.object({
   callbackNotes: z.string().optional().nullable(),
   cancelPendingCallbacks: z.boolean().optional(),
 })
+
+function normalizeCallNotes(notes: string | null | undefined): string {
+  return (notes ?? '').trim()
+}
+
+async function isDuplicateCallLog(
+  agentId: string,
+  companyId: string,
+  contactId: string | null,
+  disposition: string,
+  notes: string | null | undefined
+): Promise<boolean> {
+  const latest = await prisma.callLog.findFirst({
+    where: {
+      agentId,
+      companyId,
+      contactId,
+    },
+    orderBy: [{ calledAt: 'desc' }, { updatedAt: 'desc' }],
+    select: { disposition: true, notes: true },
+  })
+  if (!latest) return false
+  return (
+    latest.disposition === disposition &&
+    normalizeCallNotes(latest.notes) === normalizeCallNotes(notes)
+  )
+}
 
 async function cancelPendingCallbacksForCompanyAgent(
   companyId: string,
@@ -208,6 +240,23 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     if (companyContacts.length === 1) {
       contactId = companyContacts[0].id
     }
+  }
+
+  if (
+    await isDuplicateCallLog(
+      req.user!.id,
+      data.clientId,
+      contactId,
+      data.disposition,
+      data.notes
+    )
+  ) {
+    res.status(409).json({
+      error: 'duplicate_call_log',
+      message:
+        'No se grabó: la respuesta, el mensaje y el contacto son iguales al último registro.',
+    })
+    return
   }
 
   const callLog = await prisma.callLog.create({
@@ -432,6 +481,51 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   })
 
   res.json(updated)
+})
+
+// DELETE /api/calls/:id — super admin / system owner only
+router.delete('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
+  if (!isSuperAdminOrOwner(req.user!)) {
+    res.status(403).json({ error: 'Solo super admin u owner pueden eliminar registros de llamada' })
+    return
+  }
+
+  const existing = await prisma.callLog.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, companyId: true, contactId: true },
+  })
+
+  if (!existing) {
+    res.status(404).json({ error: 'Registro de llamada no encontrado' })
+    return
+  }
+
+  await prisma.callback.deleteMany({ where: { callLogId: existing.id } })
+  await prisma.callLog.delete({ where: { id: existing.id } })
+
+  if (existing.contactId) {
+    await recomputeContactStatus(existing.contactId)
+  } else {
+    const contactCount = await prisma.contact.count({
+      where: { companyId: existing.companyId },
+    })
+    if (contactCount > 0) {
+      await recomputeCompanyStatus(existing.companyId)
+    } else {
+      const latestLog = await prisma.callLog.findFirst({
+        where: { companyId: existing.companyId },
+        orderBy: { calledAt: 'desc' },
+        select: { disposition: true },
+      })
+      const status = latestLog ? statusForDisposition(latestLog.disposition) : 'PENDING'
+      await prisma.company.update({
+        where: { id: existing.companyId },
+        data: { status },
+      })
+    }
+  }
+
+  res.json({ success: true })
 })
 
 export default router

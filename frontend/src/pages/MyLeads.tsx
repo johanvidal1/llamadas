@@ -1809,9 +1809,24 @@ export default function MyLeads() {
       if (result.autoNext === 'nextPending') await goToNextPending()
       else if (result.autoNext) await goNext()
     },
-    onError: (err: Error) => {
-      if (err.name === 'SaveCancelled') return
-      const message = err?.message ?? 'Error al guardar'
+    onError: (err: unknown) => {
+      if (err instanceof Error && err.name === 'SaveCancelled') return
+      const axiosErr = err as {
+        response?: { status?: number; data?: { error?: string; message?: string } }
+        message?: string
+      }
+      if (
+        axiosErr?.response?.status === 409 &&
+        axiosErr?.response?.data?.error === 'duplicate_call_log'
+      ) {
+        toast(
+          axiosErr.response.data.message ??
+            'No se grabó: la respuesta, el mensaje y el contacto son iguales al último registro.',
+          { icon: '⚠️' }
+        )
+        return
+      }
+      const message = axiosErr?.message ?? 'Error al guardar'
       if (
         message.includes('Selecciona una respuesta')
       ) {

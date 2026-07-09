@@ -47,7 +47,14 @@ export default function CallModal({ client, onClose }: Props) {
       qc.invalidateQueries({ queryKey: ['dashboard'] })
       onClose()
     },
-    onError: (err: { response?: { data?: { error?: string } } }) => {
+    onError: (err: { response?: { status?: number; data?: { error?: string; message?: string } } }) => {
+      if (
+        err?.response?.status === 409 &&
+        err?.response?.data?.error === 'duplicate_call_log'
+      ) {
+        toast(err.response.data.message ?? 'Registro duplicado', { icon: '⚠️' })
+        return
+      }
       toast.error(err?.response?.data?.error ?? 'Error al registrar la llamada')
     },
   })

@@ -476,6 +476,7 @@ export const getCalls = (params?: GetCallsParams) =>
 export const logCall = (data: object) => api.post('/calls', data).then((r) => r.data)
 export const updateCall = (id: string, data: object) =>
   api.put(`/calls/${id}`, data).then((r) => r.data)
+export const deleteCall = (id: string) => api.delete(`/calls/${id}`).then((r) => r.data)
 
 // ─── Callbacks ────────────────────────────────────────────
 export const getCallbacks = (params?: object) =>

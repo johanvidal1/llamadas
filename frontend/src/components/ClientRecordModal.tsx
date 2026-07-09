@@ -1,6 +1,8 @@
-import { useEffect, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { getClient } from '../api/client'
+import { useEffect, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { deleteCall, getClient } from '../api/client'
+import { useAuth } from '../contexts/AuthContext'
+import toast from 'react-hot-toast'
 import {
   X,
   Phone,
@@ -8,6 +10,7 @@ import {
   CalendarClock,
   AlertCircle,
   History,
+  Trash2,
 } from 'lucide-react'
 import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -89,6 +92,24 @@ export default function ClientRecordModal({
 }: Props) {
   const historyRef = useRef<HTMLDivElement>(null)
   const callbackRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const [deleteTarget, setDeleteTarget] = useState<CallLogEntry | null>(null)
+  const { user } = useAuth()
+  const qc = useQueryClient()
+  const canDeleteCallLog = user?.isSuperAdmin === true || user?.isSystemOwner === true
+
+  const deleteMutation = useMutation({
+    mutationFn: (callLogId: string) => deleteCall(callLogId),
+    onSuccess: () => {
+      toast.success('Registro de llamada eliminado')
+      qc.invalidateQueries({ queryKey: ['client', clientId] })
+      qc.invalidateQueries({ queryKey: ['clients'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+      setDeleteTarget(null)
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      toast.error(err?.response?.data?.error ?? 'Error al eliminar el registro')
+    },
+  })
 
   const { data: client, isLoading, isError } = useQuery({
     queryKey: ['client', clientId],
@@ -320,6 +341,17 @@ export default function ClientRecordModal({
                         <div className="flex items-center justify-between gap-2 mb-1.5">
                           <span className={`badge text-[10px] ${cfg.classes}`}>{cfg.label}</span>
                           <div className="flex items-center gap-1 shrink-0">
+                            {canDeleteCallLog && (
+                              <button
+                                type="button"
+                                onClick={() => setDeleteTarget(log)}
+                                className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
+                                title="Eliminar registro"
+                                disabled={deleteMutation.isPending}
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
                             {callLogWasEdited(log) && (
                               <span className="text-[9px] text-amber-600 font-semibold uppercase tracking-wide">
                                 Editado
@@ -381,6 +413,51 @@ export default function ClientRecordModal({
           </button>
         </div>
       </div>
+
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4"
+          onClick={() => !deleteMutation.isPending && setDeleteTarget(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center shrink-0">
+                <Trash2 size={18} className="text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900">Eliminar registro de llamada</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  ¿Eliminar el registro del{' '}
+                  {format(callLogDisplayTime(deleteTarget), 'dd/MM/yyyy HH:mm', { locale: es })}
+                  {deleteTarget.contact ? ` (${deleteTarget.contact.nombre})` : ''}? Esta acción no
+                  se puede deshacer.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleteMutation.isPending}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-danger"
+                onClick={() => deleteMutation.mutate(deleteTarget.id)}
+                disabled={deleteMutation.isPending}
+              >
+                {deleteMutation.isPending ? 'Eliminando...' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
