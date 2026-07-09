@@ -14,6 +14,7 @@ import {
   dispositionMatchesFilter,
   filterCompanyIdsByLastActivityRange,
   FUNNEL_PIPELINE_KEYS,
+  getCallCountsInPeriodByCompanyIds,
   getFirstRegisteredAtByCompanyIds,
   getLastDispositionByCompanyIds,
   isActiveNoContesta,
@@ -109,7 +110,8 @@ async function fetchCompanies(
 async function enrichWithLastDisposition(
   companies: CompanyRow[],
   agentUserId?: string,
-  preloadedLast?: Awaited<ReturnType<typeof getLastDispositionByCompanyIds>>
+  preloadedLast?: Awaited<ReturnType<typeof getLastDispositionByCompanyIds>>,
+  calledAtRange?: { gte?: Date; lte?: Date }
 ): Promise<
   (CompanyRow & {
     lastDisposition: string | null
@@ -119,16 +121,20 @@ async function enrichWithLastDisposition(
     lastCallContactId: string | null
     lastCallAgent?: { id: string; name: string } | null
     callLogCount: number
+    periodCallCount?: number
   })[]
 > {
   if (companies.length === 0) return []
 
   const companyIds = companies.map((c) => c.id)
-  const [lastByCompany, firstByCompany] = await Promise.all([
+  const [lastByCompany, firstByCompany, periodCounts] = await Promise.all([
     preloadedLast
       ? Promise.resolve(preloadedLast)
       : getLastDispositionByCompanyIds(companyIds, agentUserId),
     getFirstRegisteredAtByCompanyIds(companyIds, agentUserId),
+    calledAtRange
+      ? getCallCountsInPeriodByCompanyIds(companyIds, calledAtRange, agentUserId)
+      : Promise.resolve(null),
   ])
 
   return companies.map((c) => {
@@ -144,6 +150,7 @@ async function enrichWithLastDisposition(
       lastCallContactId: last?.lastCallContactId ?? null,
       lastCallAgent: last?.lastCallAgent ?? null,
       callLogCount: last?.callLogCount ?? 0,
+      ...(periodCounts ? { periodCallCount: periodCounts.get(c.id) ?? 0 } : {}),
     }
   })
 }
@@ -199,6 +206,7 @@ type ClientsFilterContext = {
   contactWhere: Record<string, unknown> | undefined
   callLogAgentId: string
   dispositionAgentId: string | undefined
+  calledAtRange?: { gte?: Date; lte?: Date }
   registrationCount?: number
   effectiveDisposition?: string
   agentScopedPending: boolean
@@ -297,6 +305,7 @@ async function buildClientsFilterContext(
     contactWhere,
     callLogAgentId,
     dispositionAgentId,
+    ...(calledAtRange ? { calledAtRange } : {}),
     registrationCount,
     effectiveDisposition,
     agentScopedPending,
@@ -345,7 +354,8 @@ async function getActivitySortedClientsPage(
   const clients = await enrichWithLastDisposition(
     companies,
     ctx.dispositionAgentId,
-    lastByCompany
+    lastByCompany,
+    ctx.calledAtRange
   )
   return { clients, total }
 }
@@ -425,7 +435,8 @@ async function getFilteredDispositionClientsPage(
   const clients = await enrichWithLastDisposition(
     companies,
     ctx.dispositionAgentId,
-    pageLastByCompany
+    pageLastByCompany,
+    ctx.calledAtRange
   )
   return { clients, total }
 }
@@ -648,7 +659,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
           built.includeAssignmentSummary
         )
       : Promise.resolve({ pipelineCounts: undefined, assignmentSummary: undefined }),
-    enrichWithLastDisposition(companies, built.dispositionAgentId),
+    enrichWithLastDisposition(companies, built.dispositionAgentId, undefined, built.calledAtRange),
   ])
 
   res.json({

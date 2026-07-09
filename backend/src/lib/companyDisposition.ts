@@ -153,6 +153,41 @@ export async function getLastDispositionByCompanyIds(
   return result
 }
 
+/** Call-log count per company within a calledAt range (same agent scope as getLastDispositionByCompanyIds). */
+export async function getCallCountsInPeriodByCompanyIds(
+  companyIds: string[],
+  calledAtRange: { gte?: Date; lte?: Date },
+  agentUserId?: string
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>()
+  if (companyIds.length === 0) return result
+
+  const rows = await prisma.callLog.groupBy({
+    by: ['companyId'],
+    where: {
+      companyId: { in: companyIds },
+      ...(agentUserId
+        ? { agentId: agentUserId, contact: { assignment: { agentId: agentUserId } } }
+        : {}),
+      calledAt: {
+        ...(calledAtRange.gte ? { gte: calledAtRange.gte } : {}),
+        ...(calledAtRange.lte ? { lte: calledAtRange.lte } : {}),
+      },
+    },
+    _count: { _all: true },
+  })
+
+  for (const row of rows) {
+    result.set(row.companyId, row._count._all)
+  }
+
+  for (const id of companyIds) {
+    if (!result.has(id)) result.set(id, 0)
+  }
+
+  return result
+}
+
 /** Earliest scoped call timestamp per company (first registration date). */
 export async function getFirstRegisteredAtByCompanyIds(
   companyIds: string[],

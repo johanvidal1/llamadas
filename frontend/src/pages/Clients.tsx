@@ -518,6 +518,28 @@ function funnelPeriodLabel(
   return formatDateChip(from, to)
 }
 
+function periodCallBadgeLabel(
+  count: number,
+  from: string,
+  to: string,
+  intent: DatePreset | 'custom' | null
+): string {
+  const preset = resolveDatePresetDisplay(from, to, intent)
+  if (preset === 'today') return `${count}× hoy`
+  return `${count}×`
+}
+
+function periodCallBadgeTooltip(
+  count: number,
+  from: string,
+  to: string,
+  intent: DatePreset | 'custom' | null
+): string {
+  const preset = resolveDatePresetDisplay(from, to, intent)
+  if (preset === 'today') return `${count} llamadas hoy`
+  return `${count} llamadas en el período`
+}
+
 function activityFilterChipLabel(
   from: string,
   to: string,
@@ -1030,12 +1052,20 @@ function ClientTableRow({
   showBatchColumn,
   visibleColumns,
   onOpenRecord,
+  hasDateFilter = false,
+  registeredFrom = '',
+  registeredTo = '',
+  datePresetIntent = null,
 }: {
   client: ClientListItem
   showAgentColumn: boolean
   showBatchColumn: boolean
   visibleColumns: Record<ColumnKey, boolean>
   onOpenRecord: (clientId: string, initialFocus?: 'summary' | 'history') => void
+  hasDateFilter?: boolean
+  registeredFrom?: string
+  registeredTo?: string
+  datePresetIntent?: DatePreset | 'custom' | null
 }) {
   const showAgent = showAgentColumn && visibleColumns.agente
   const showBatch = showBatchColumn && visibleColumns.lote
@@ -1065,6 +1095,10 @@ function ClientTableRow({
   const recordable = hasRecord(c)
   const rowHover = recordable ? 'group hover:bg-blue-50 cursor-pointer' : 'group hover:bg-gray-50'
   const stickyBg = recordable ? 'bg-white group-hover:bg-blue-50' : 'bg-white group-hover:bg-gray-50'
+  const periodCount = c.periodCallCount ?? 0
+  const showPeriodBadge = hasDateFilter && periodCount >= 2
+  const showHistoryBadge =
+    !showPeriodBadge && (c.callLogCount ?? 0) > 1 && (!hasDateFilter || periodCount <= 1)
 
   return (
     <tr className={rowHover} onClick={recordable ? () => onOpenRecord(c.id) : undefined}>
@@ -1155,7 +1189,15 @@ function ClientTableRow({
           {c.lastCalledAt ? (
             <span className="inline-flex items-center gap-1">
               <span>{format(new Date(c.lastCalledAt), 'dd/MM/yy HH:mm', { locale: es })}</span>
-              {(c.callLogCount ?? 0) > 1 && (
+              {showPeriodBadge && (
+                <span
+                  className="text-[9px] text-violet-700 font-bold uppercase tracking-wide"
+                  title={periodCallBadgeTooltip(periodCount, registeredFrom, registeredTo, datePresetIntent)}
+                >
+                  {periodCallBadgeLabel(periodCount, registeredFrom, registeredTo, datePresetIntent)}
+                </span>
+              )}
+              {showHistoryBadge && (
                 <span
                   className="text-[9px] text-amber-600 font-semibold uppercase tracking-wide"
                   title={`${c.callLogCount} registros en historial · último: ${format(new Date(c.lastCalledAt), 'dd/MM/yy HH:mm', { locale: es })}`}
@@ -2171,6 +2213,10 @@ export default function Clients() {
                                   showBatchColumn={showBatchColumn}
                                   visibleColumns={visibleColumns}
                                   onOpenRecord={openRecord}
+                                  hasDateFilter={hasDateFilter}
+                                  registeredFrom={registeredFrom}
+                                  registeredTo={registeredTo}
+                                  datePresetIntent={datePresetIntent}
                                 />
                               ))}
                             </tbody>
@@ -2214,6 +2260,10 @@ export default function Clients() {
                     showBatchColumn={showBatchColumn}
                     visibleColumns={visibleColumns}
                     onOpenRecord={openRecord}
+                    hasDateFilter={hasDateFilter}
+                    registeredFrom={registeredFrom}
+                    registeredTo={registeredTo}
+                    datePresetIntent={datePresetIntent}
                   />
                 ))}
               </tbody>
