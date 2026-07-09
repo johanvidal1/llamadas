@@ -633,29 +633,15 @@ router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    await prisma.$transaction(async (tx) => {
-      const companies = await tx.company.findMany({
-        where: { importBatchId: batchId },
-        select: { id: true },
-      })
-      const companyIds = companies.map((c) => c.id)
-
-      if (companyIds.length > 0) {
-        await tx.callback.deleteMany({ where: { companyId: { in: companyIds } } })
-        await tx.callLog.deleteMany({ where: { companyId: { in: companyIds } } })
-      }
-
-      await tx.mobileLine.deleteMany({ where: { importBatchId: batchId } })
-
-      if (companyIds.length > 0) {
-        await tx.assignment.deleteMany({
-          where: { contact: { company: { importBatchId: batchId } } },
-        })
+    // usedCount === 0 guarantees no assignments, call logs, or callbacks on this batch.
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.mobileLine.deleteMany({ where: { importBatchId: batchId } })
         await tx.company.deleteMany({ where: { importBatchId: batchId } })
-      }
-
-      await tx.importBatch.delete({ where: { id: batchId } })
-    })
+        await tx.importBatch.delete({ where: { id: batchId } })
+      },
+      { timeout: 120_000, maxWait: 10_000 }
+    )
 
     await deleteImportOriginalFile(batch.storagePath)
 
@@ -667,6 +653,14 @@ router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
     ) {
       res.status(400).json({
         error: 'No se puede eliminar la importación porque tiene registros relacionados en uso.',
+      })
+      return
+    }
+    const message = err instanceof Error ? err.message : ''
+    if (message.includes('Transaction already closed') || message.includes('timeout')) {
+      res.status(503).json({
+        error:
+          'La importación es muy grande y la eliminación tardó demasiado. Intenta de nuevo; si persiste, contacta al administrador.',
       })
       return
     }
