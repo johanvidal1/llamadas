@@ -591,41 +591,6 @@ export type DaySummaryEntry = {
   pending: number
 }
 
-/** Raw CallLog disposition codes that match a pipeline / period filter key. */
-export function callLogDispositionsForPeriodFilter(filter: string): string[] {
-  if (filter === 'INTERESADO') return ['INTERESADO', 'INTERESTED']
-  if (filter === 'VOLVER_A_LLAMAR') return ['VOLVER_A_LLAMAR', 'CALLBACK']
-  return [filter]
-}
-
-/** Companies with at least one scoped CallLog matching disposition in the date range. */
-export async function filterCompanyIdsByDispositionInPeriod(
-  companyIds: string[],
-  dispositionFilter: string,
-  calledAtRange: { gte?: Date; lte?: Date },
-  agentUserId?: string
-): Promise<string[]> {
-  if (companyIds.length === 0) return []
-
-  const dispositions = callLogDispositionsForPeriodFilter(dispositionFilter)
-  const calledAt: { gte?: Date; lte?: Date } = {}
-  if (calledAtRange.gte) calledAt.gte = calledAtRange.gte
-  if (calledAtRange.lte) calledAt.lte = calledAtRange.lte
-
-  const rows = await prisma.callLog.findMany({
-    where: {
-      companyId: { in: companyIds },
-      disposition: { in: dispositions },
-      ...(Object.keys(calledAt).length > 0 ? { calledAt } : {}),
-      ...(agentUserId ? { agentId: agentUserId } : {}),
-    },
-    select: { companyId: true },
-    distinct: ['companyId'],
-  })
-
-  return rows.map((r) => r.companyId)
-}
-
 /** Companies whose scoped last activity falls within the date range. */
 export async function filterCompanyIdsByLastActivityRange(
   companyIds: string[],

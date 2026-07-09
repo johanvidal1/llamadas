@@ -178,17 +178,23 @@ export async function fetchFunnelByPeriod(params: {
     ? Prisma.sql`AND cl."agentId" = ${params.agentId}`
     : globalCallLogAgentFilter
 
-  const rows = await prisma.$queryRaw<{ disposition: string; calls: bigint; registered: bigint }[]>`
+  const rows = await prisma.$queryRaw<{ disposition: string; companies: bigint }[]>`
+    WITH last_in_period AS (
+      SELECT DISTINCT ON (cl."companyId")
+        cl."companyId",
+        cl.disposition
+      FROM "CallLog" cl
+      WHERE cl."calledAt" >= ${from}
+        AND cl."calledAt" <= ${to}
+        ${agentFilter}
+      ORDER BY cl."companyId", cl."calledAt" DESC
+    )
     SELECT
-      cl.disposition,
-      COUNT(*)::bigint AS calls,
-      COUNT(DISTINCT cl."companyId")::bigint AS registered
-    FROM "CallLog" cl
-    WHERE cl."calledAt" >= ${from}
-      AND cl."calledAt" <= ${to}
-      AND cl.disposition IN (${Prisma.join([...FUNNEL_CALL_DISPOSITIONS])})
-      ${agentFilter}
-    GROUP BY cl.disposition
+      disposition,
+      COUNT(*)::bigint AS companies
+    FROM last_in_period
+    WHERE disposition IN (${Prisma.join([...FUNNEL_CALL_DISPOSITIONS])})
+    GROUP BY disposition
   `
 
   const stages = Object.fromEntries(FUNNEL_PIPELINE_KEYS.map((k) => [k, 0])) as Record<string, number>
@@ -196,8 +202,9 @@ export async function fetchFunnelByPeriod(params: {
   for (const row of rows) {
     const bucket = pipelineBucketForDisposition(row.disposition)
     if ((FUNNEL_PIPELINE_KEYS as readonly string[]).includes(bucket)) {
-      stages[bucket] += Number(row.calls)
-      registeredStages[bucket] += Number(row.registered)
+      const count = Number(row.companies)
+      stages[bucket] += count
+      registeredStages[bucket] += count
     }
   }
 
@@ -232,17 +239,23 @@ export async function fetchZeroResponsesByPeriod(params: {
     ? Prisma.sql`AND cl."agentId" = ${params.agentId}`
     : globalCallLogAgentFilter
 
-  const rows = await prisma.$queryRaw<{ disposition: string; calls: bigint; registered: bigint }[]>`
+  const rows = await prisma.$queryRaw<{ disposition: string; companies: bigint }[]>`
+    WITH last_in_period AS (
+      SELECT DISTINCT ON (cl."companyId")
+        cl."companyId",
+        cl.disposition
+      FROM "CallLog" cl
+      WHERE cl."calledAt" >= ${from}
+        AND cl."calledAt" <= ${to}
+        ${agentFilter}
+      ORDER BY cl."companyId", cl."calledAt" DESC
+    )
     SELECT
-      cl.disposition,
-      COUNT(*)::bigint AS calls,
-      COUNT(DISTINCT cl."companyId")::bigint AS registered
-    FROM "CallLog" cl
-    WHERE cl."calledAt" >= ${from}
-      AND cl."calledAt" <= ${to}
-      AND cl.disposition IN (${Prisma.join(ZERO_PROGRESS_CALL_DISPOSITIONS)})
-      ${agentFilter}
-    GROUP BY cl.disposition
+      disposition,
+      COUNT(*)::bigint AS companies
+    FROM last_in_period
+    WHERE disposition IN (${Prisma.join(ZERO_PROGRESS_CALL_DISPOSITIONS)})
+    GROUP BY disposition
   `
 
   const dispositions = Object.fromEntries(
@@ -253,8 +266,9 @@ export async function fetchZeroResponsesByPeriod(params: {
   ) as Record<string, number>
   for (const row of rows) {
     if ((ZERO_PROGRESS_CALL_DISPOSITIONS as readonly string[]).includes(row.disposition)) {
-      dispositions[row.disposition] = Number(row.calls)
-      registeredDispositions[row.disposition] = Number(row.registered)
+      const count = Number(row.companies)
+      dispositions[row.disposition] = count
+      registeredDispositions[row.disposition] = count
     }
   }
 

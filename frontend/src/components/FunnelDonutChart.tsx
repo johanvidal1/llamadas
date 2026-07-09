@@ -33,7 +33,8 @@ export function FunnelDonutChart({
   series,
   loading,
   onStageClick,
-  emptyMessage = 'Sin llamadas en el periodo',
+  emptyMessage = 'Sin empresas en el periodo',
+  centerLabel = 'empresas',
   legendScrollThreshold = 6,
 }: {
   pipeline: Record<string, number>
@@ -41,6 +42,7 @@ export function FunnelDonutChart({
   loading?: boolean
   onStageClick: (stageKey: string) => void
   emptyMessage?: string
+  centerLabel?: string
   legendScrollThreshold?: number
 }) {
   const legendRows: DonutSeriesRow[] = series ?? AGENT_PIPELINE_FUNNEL.map((row) => ({
@@ -159,7 +161,7 @@ export function FunnelDonutChart({
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="text-center">
             <p className="text-2xl font-bold text-gray-900 leading-none">{total}</p>
-            <p className="text-[11px] text-gray-500 mt-1">llamadas</p>
+            <p className="text-[11px] text-gray-500 mt-1">{centerLabel}</p>
           </div>
         </div>
       </div>

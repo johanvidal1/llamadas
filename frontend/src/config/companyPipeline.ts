@@ -90,7 +90,6 @@ export function getPipelineFilterLabel(filter: string): string | undefined {
 
 export type BuildClientsUrlOpts = {
   filter?: string
-  dispositionInPeriod?: string
   agentId?: string
   registeredFrom?: string
   registeredTo?: string
@@ -100,7 +99,6 @@ export type BuildClientsUrlOpts = {
 export function buildClientsUrl(opts?: BuildClientsUrlOpts): string {
   const params = new URLSearchParams()
   if (opts?.filter) params.set('filter', opts.filter)
-  if (opts?.dispositionInPeriod) params.set('dispositionInPeriod', opts.dispositionInPeriod)
   if (opts?.agentId) params.set('agentId', opts.agentId)
   if (opts?.registeredFrom) params.set('registeredFrom', opts.registeredFrom)
   if (opts?.registeredTo) params.set('registeredTo', opts.registeredTo)
