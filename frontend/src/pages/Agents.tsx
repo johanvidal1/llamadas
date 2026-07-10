@@ -163,7 +163,7 @@ function UserTable({
           <th className="text-left px-4 py-3 font-medium text-gray-600">Usuario</th>
           <th className="text-left px-4 py-3 font-medium text-gray-600">Rol</th>
           <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
-          <th className="text-center px-4 py-3 font-medium text-gray-600">Asignados</th>
+          <th className="text-center px-4 py-3 font-medium text-gray-600" title="Empresas con contactos asignados">Empresas</th>
           <th className="text-center px-4 py-3 font-medium text-gray-600">
             <div className="inline-flex items-center justify-center gap-1.5">
               <span title="Llamadas registradas hoy (zona horaria del sistema)">Llamadas (hoy)</span>
@@ -283,7 +283,7 @@ function UserTable({
                     </button>
                   )}
                 </td>
-                <td className="px-4 py-3 text-center">{u._count.assignments}</td>
+                <td className="px-4 py-3 text-center">{u.assignedCompanies ?? 0}</td>
               <td className="px-4 py-3 text-center">{u.callsToday ?? 0}</td>
               {showTotalCallsColumn && (
                 <td className="px-4 py-3 text-center">{u._count.callLogs}</td>
@@ -494,6 +494,10 @@ export default function Agents() {
       qc.invalidateQueries({ queryKey: ['clients'] })
       qc.invalidateQueries({ queryKey: ['callbacks'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
+      qc.invalidateQueries({ queryKey: ['reports-agents'] })
+      qc.invalidateQueries({ queryKey: ['reports-summary'] })
+      qc.invalidateQueries({ queryKey: ['reports-batches'] })
+      qc.invalidateQueries({ queryKey: ['reports'] })
     },
     onError: (err: { response?: { data?: { error?: string } } }) => {
       toast.error(err?.response?.data?.error ?? 'Error al resetear el agente')
@@ -856,6 +860,10 @@ export default function Agents() {
                   </p>
                   <p className="text-sm text-gray-500 mt-2">
                     El historial de asignaciones anteriores se archivará en Asignaciones.
+                  </p>
+                  <p className="text-xs text-gray-400 mt-2">
+                    Tras el reset, las llamadas en reportes vuelven a 0 para este agente. Reasignar
+                    empresas no borra el historial de llamadas.
                   </p>
                 </div>
               </div>

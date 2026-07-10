@@ -15,8 +15,11 @@ import {
   filterCompanyIdsByLastActivityRange,
   FUNNEL_PIPELINE_KEYS,
   getCallCountsInPeriodByCompanyIds,
+  getCallCountsInPeriodByCompanyIdsPerAssignment,
   getFirstRegisteredAtByCompanyIds,
+  getFirstRegisteredAtByCompanyIdsPerAssignment,
   getLastDispositionByCompanyIds,
+  getLastDispositionByCompanyIdsPerAssignment,
   isActiveNoContesta,
   isDepuradoNoContesta,
   isNoContestaDisposition,
@@ -59,7 +62,7 @@ function scopedAgentId(role: string, userId: string, agentId?: string): string {
   return agentId || userId
 }
 
-/** Last-disposition scope: global for ADMIN without agentId (matches Reports pipeline). */
+/** Last-disposition scope: agent filter, or per-company assigned agent when admin sees all. */
 function dispositionScopeAgentId(
   role: string,
   userId: string,
@@ -68,6 +71,46 @@ function dispositionScopeAgentId(
   if (role === 'AGENT') return userId
   if (agentId) return agentId
   return undefined
+}
+
+function dispositionPerAssignedAgent(role: string, agentId?: string): boolean {
+  return role !== 'AGENT' && !agentId
+}
+
+type LastDispositionMap = Awaited<ReturnType<typeof getLastDispositionByCompanyIds>>
+
+async function loadLastDispositionByCompanyIds(
+  companyIds: string[],
+  dispositionAgentId: string | undefined,
+  perAssignedAgent: boolean
+): Promise<LastDispositionMap> {
+  if (perAssignedAgent) {
+    return getLastDispositionByCompanyIdsPerAssignment(companyIds)
+  }
+  return getLastDispositionByCompanyIds(companyIds, dispositionAgentId)
+}
+
+async function loadFirstRegisteredAtByCompanyIds(
+  companyIds: string[],
+  dispositionAgentId: string | undefined,
+  perAssignedAgent: boolean
+): Promise<Map<string, Date>> {
+  if (perAssignedAgent) {
+    return getFirstRegisteredAtByCompanyIdsPerAssignment(companyIds)
+  }
+  return getFirstRegisteredAtByCompanyIds(companyIds, dispositionAgentId)
+}
+
+async function loadCallCountsInPeriodByCompanyIds(
+  companyIds: string[],
+  calledAtRange: { gte?: Date; lte?: Date },
+  dispositionAgentId: string | undefined,
+  perAssignedAgent: boolean
+): Promise<Map<string, number>> {
+  if (perAssignedAgent) {
+    return getCallCountsInPeriodByCompanyIdsPerAssignment(companyIds, calledAtRange)
+  }
+  return getCallCountsInPeriodByCompanyIds(companyIds, calledAtRange, dispositionAgentId)
 }
 
 type CompanyRow = Awaited<ReturnType<typeof fetchCompanies>>[number]
@@ -109,9 +152,10 @@ async function fetchCompanies(
 
 async function enrichWithLastDisposition(
   companies: CompanyRow[],
-  agentUserId?: string,
-  preloadedLast?: Awaited<ReturnType<typeof getLastDispositionByCompanyIds>>,
-  calledAtRange?: { gte?: Date; lte?: Date }
+  dispositionAgentId?: string,
+  preloadedLast?: LastDispositionMap,
+  calledAtRange?: { gte?: Date; lte?: Date },
+  perAssignedAgent = false
 ): Promise<
   (CompanyRow & {
     lastDisposition: string | null
@@ -130,10 +174,15 @@ async function enrichWithLastDisposition(
   const [lastByCompany, firstByCompany, periodCounts] = await Promise.all([
     preloadedLast
       ? Promise.resolve(preloadedLast)
-      : getLastDispositionByCompanyIds(companyIds, agentUserId),
-    getFirstRegisteredAtByCompanyIds(companyIds, agentUserId),
+      : loadLastDispositionByCompanyIds(companyIds, dispositionAgentId, perAssignedAgent),
+    loadFirstRegisteredAtByCompanyIds(companyIds, dispositionAgentId, perAssignedAgent),
     calledAtRange
-      ? getCallCountsInPeriodByCompanyIds(companyIds, calledAtRange, agentUserId)
+      ? loadCallCountsInPeriodByCompanyIds(
+          companyIds,
+          calledAtRange,
+          dispositionAgentId,
+          perAssignedAgent
+        )
       : Promise.resolve(null),
   ])
 
@@ -206,6 +255,7 @@ type ClientsFilterContext = {
   contactWhere: Record<string, unknown> | undefined
   callLogAgentId: string
   dispositionAgentId: string | undefined
+  dispositionPerAssignedAgent: boolean
   calledAtRange?: { gte?: Date; lte?: Date }
   registrationCount?: number
   effectiveDisposition?: string
@@ -239,6 +289,7 @@ async function buildClientsFilterContext(
   const isAgent = req.user!.role === 'AGENT'
   const callLogAgentId = scopedAgentId(req.user!.role, req.user!.id, agentId)
   const dispositionAgentId = dispositionScopeAgentId(req.user!.role, req.user!.id, agentId)
+  const dispositionPerAssignedAgentFlag = dispositionPerAssignedAgent(req.user!.role, agentId)
   const filterParam = query.filter
   const effectiveDisposition =
     disposition || (filterParam && filterParam !== 'PENDING' ? filterParam : undefined)
@@ -281,7 +332,8 @@ async function buildClientsFilterContext(
     const companyIdsInRange = await filterCompanyIdsByLastActivityRange(
       scopedIds,
       calledAtRange,
-      dispositionAgentId
+      dispositionAgentId,
+      dispositionPerAssignedAgentFlag
     )
     registrationCount = companyIdsInRange.length
     if (companyIdsInRange.length === 0) {
@@ -305,6 +357,7 @@ async function buildClientsFilterContext(
     contactWhere,
     callLogAgentId,
     dispositionAgentId,
+    dispositionPerAssignedAgent: dispositionPerAssignedAgentFlag,
     ...(calledAtRange ? { calledAtRange } : {}),
     registrationCount,
     effectiveDisposition,
@@ -327,12 +380,14 @@ async function getActivitySortedClientsPage(
   const lightweight = await fetchLightweightCompanies(ctx.where)
   let sortedIds = await sortCompanyIdsByActivityQueue(
     lightweight,
-    ctx.dispositionAgentId
+    ctx.dispositionAgentId,
+    ctx.dispositionPerAssignedAgent
   )
   if (ctx.agentQueueExcludeArchived) {
-    const lastByCompany = await getLastDispositionByCompanyIds(
+    const lastByCompany = await loadLastDispositionByCompanyIds(
       sortedIds,
-      ctx.dispositionAgentId
+      ctx.dispositionAgentId,
+      ctx.dispositionPerAssignedAgent
     )
     sortedIds = sortedIds.filter((id) => {
       const last = lastByCompany.get(id)
@@ -345,7 +400,11 @@ async function getActivitySortedClientsPage(
   }
   const total = sortedIds.length
   const pageIds = sortedIds.slice(skip, skip + take)
-  const lastByCompany = await getLastDispositionByCompanyIds(pageIds, ctx.dispositionAgentId)
+  const lastByCompany = await loadLastDispositionByCompanyIds(
+    pageIds,
+    ctx.dispositionAgentId,
+    ctx.dispositionPerAssignedAgent
+  )
   const companies = await fetchCompaniesByIdsInOrder(
     pageIds,
     ctx.contactWhere,
@@ -355,7 +414,8 @@ async function getActivitySortedClientsPage(
     companies,
     ctx.dispositionAgentId,
     lastByCompany,
-    ctx.calledAtRange
+    ctx.calledAtRange,
+    ctx.dispositionPerAssignedAgent
   )
   return { clients, total }
 }
@@ -367,9 +427,10 @@ async function getFilteredDispositionClientsPage(
 ) {
   const lightweight = await fetchLightweightCompanies(ctx.where)
   const companyIds = lightweight.map((c) => c.id)
-  const lastByCompany = await getLastDispositionByCompanyIds(
+  const lastByCompany = await loadLastDispositionByCompanyIds(
     companyIds,
-    ctx.dispositionAgentId
+    ctx.dispositionAgentId,
+    ctx.dispositionPerAssignedAgent
   )
 
   const filteredIds: string[] = []
@@ -436,7 +497,8 @@ async function getFilteredDispositionClientsPage(
     companies,
     ctx.dispositionAgentId,
     pageLastByCompany,
-    ctx.calledAtRange
+    ctx.calledAtRange,
+    ctx.dispositionPerAssignedAgent
   )
   return { clients, total }
 }
@@ -455,7 +517,8 @@ type PipelineScopeData = {
 async function buildPipelineScopeData(
   companyIds: string[],
   dispositionAgentId?: string,
-  includeAssignmentSummary = false
+  includeAssignmentSummary = false,
+  dispositionPerAssignedAgent = false
 ): Promise<PipelineScopeData> {
   if (companyIds.length === 0) {
     return {
@@ -471,7 +534,11 @@ async function buildPipelineScopeData(
         : {}),
     }
   }
-  const lastByCompany = await getLastDispositionByCompanyIds(companyIds, dispositionAgentId)
+  const lastByCompany = await loadLastDispositionByCompanyIds(
+    companyIds,
+    dispositionAgentId,
+    dispositionPerAssignedAgent
+  )
   const companyPipeline = buildCompanyPipelineCounts(lastByCompany)
   const pipelineCounts = Object.fromEntries(
     FUNNEL_PIPELINE_KEYS.map((k) => [k, companyPipeline[k]])
@@ -510,7 +577,8 @@ router.get('/pipeline-summary', requireAuth, async (req: AuthRequest, res: Respo
   const { pipelineCounts, assignmentSummary } = await buildPipelineScopeData(
     scopedIds,
     built.dispositionAgentId,
-    built.includeAssignmentSummary
+    built.includeAssignmentSummary,
+    built.dispositionPerAssignedAgent
   )
 
   res.json({
@@ -534,7 +602,11 @@ router.get('/day-summary', requireAuth, async (req: AuthRequest, res: Response) 
   }
 
   const scopedIds = await getScopedCompanyIds(built.where)
-  const days = await buildDaySummary(scopedIds, built.dispositionAgentId)
+  const days = await buildDaySummary(
+    scopedIds,
+    built.dispositionAgentId,
+    built.dispositionPerAssignedAgent
+  )
   res.json({ days, total: scopedIds.length })
 })
 
@@ -627,7 +699,8 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       const pipelineData = await buildPipelineScopeData(
         scopedIds,
         built.dispositionAgentId,
-        built.includeAssignmentSummary
+        built.includeAssignmentSummary,
+        built.dispositionPerAssignedAgent
       )
       pipelineCounts = pipelineData.pipelineCounts
       assignmentSummary = pipelineData.assignmentSummary
@@ -656,10 +729,17 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       ? buildPipelineScopeData(
           scopedIds,
           built.dispositionAgentId,
-          built.includeAssignmentSummary
+          built.includeAssignmentSummary,
+          built.dispositionPerAssignedAgent
         )
       : Promise.resolve({ pipelineCounts: undefined, assignmentSummary: undefined }),
-    enrichWithLastDisposition(companies, built.dispositionAgentId, undefined, built.calledAtRange),
+    enrichWithLastDisposition(
+      companies,
+      built.dispositionAgentId,
+      undefined,
+      built.calledAtRange,
+      built.dispositionPerAssignedAgent
+    ),
   ])
 
   res.json({

@@ -7,6 +7,7 @@ import {
   buildAgentResetPreview,
   executeAgentReset,
 } from '../lib/agentReset'
+import { clearReportsCache } from './dashboard'
 
 const router = Router()
 
@@ -95,6 +96,7 @@ router.post('/agents/:id/reset', requireAdmin, async (req: AuthRequest, res: Res
       deletePendingCallbacks: parsed.data.deletePendingCallbacks,
       reason: parsed.data.reason,
     })
+    clearReportsCache()
     res.json(result)
   } catch (err) {
     if (err instanceof AgentResetBlockedError) {

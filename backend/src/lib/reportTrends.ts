@@ -1,5 +1,6 @@
 import { prisma } from './prisma'
 import { Prisma } from '@prisma/client'
+import { getLatestResetAtByAgentIds } from './agentReset'
 import {
   addDaysYmd,
   localDayEndUtc,
@@ -397,6 +398,7 @@ export async function fetchAgentSparklines(
   const metricsCount = await prisma.dailyAgentMetrics.count({ take: 1 })
 
   if (metricsCount > 0) {
+    const resetAtByAgent = await getLatestResetAtByAgentIds(agentIds)
     const rows = await prisma.dailyAgentMetrics.findMany({
       where: {
         agentId: { in: agentIds },
@@ -411,6 +413,8 @@ export async function fetchAgentSparklines(
       result[id] = buildSparklineDays(fromDate, days)
     }
     for (const row of rows) {
+      const resetAt = resetAtByAgent.get(row.agentId)
+      if (resetAt && row.date.getTime() < resetAt.getTime()) continue
       const key = toDateKey(row.date)
       if (!result[row.agentId]) result[row.agentId] = buildSparklineDays(fromDate, days)
       const point = result[row.agentId].find((p) => p.date === key)
@@ -420,11 +424,19 @@ export async function fetchAgentSparklines(
   }
 
   const rows = await prisma.$queryRaw<{ agentId: string; day: Date; calls: bigint }[]>`
-    SELECT "agentId", DATE("calledAt") AS day, COUNT(*)::bigint AS calls
-    FROM "CallLog"
-    WHERE "calledAt" >= ${fromDate}
-      AND "agentId" IN (${Prisma.join(agentIds)})
-    GROUP BY "agentId", DATE("calledAt")
+    SELECT cl."agentId", DATE(cl."calledAt") AS day, COUNT(*)::bigint AS calls
+    FROM "CallLog" cl
+    LEFT JOIN LATERAL (
+      SELECT "createdAt" AS reset_at
+      FROM "AgentResetLog"
+      WHERE "originalAgentId" = cl."agentId"
+      ORDER BY "createdAt" DESC
+      LIMIT 1
+    ) r ON true
+    WHERE cl."calledAt" >= ${fromDate}
+      AND cl."agentId" IN (${Prisma.join(agentIds)})
+      AND (r.reset_at IS NULL OR cl."calledAt" >= r.reset_at)
+    GROUP BY cl."agentId", DATE(cl."calledAt")
   `
 
   const result: Record<string, { date: string; calls: number }[]> = {}

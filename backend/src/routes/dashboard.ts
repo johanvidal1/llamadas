@@ -1,5 +1,9 @@
 import { Router, Response } from 'express'
 import { activeAgentUserWhere } from '../lib/archivedAgent'
+import {
+  countCallLogsAfterResetByAgentIds,
+  getLatestResetAtByAgentIds,
+} from '../lib/agentReset'
 import { prisma } from '../lib/prisma'
 import { requireAuth, requireAdmin, AuthRequest } from '../middleware/auth'
 import {
@@ -66,6 +70,10 @@ function getCachedReports<T>(cacheKey: string, bypassCache: boolean): T | null {
 
 function setCachedReports(cacheKey: string, data: unknown) {
   reportsCache.set(cacheKey, { data, expiresAt: Date.now() + REPORTS_CACHE_TTL_MS })
+}
+
+export function clearReportsCache() {
+  reportsCache.clear()
 }
 
 function buildScopedCallWhere(filterAgentId?: string) {
@@ -423,16 +431,33 @@ router.get('/agents-stats', requireAdmin, async (_req: AuthRequest, res: Respons
     select: { id: true, name: true, _count: { select: { assignments: true, callLogs: true, callbacks: true } } },
   })
 
+  const agentIds = agents.map((a) => a.id)
+  const [resetAtByAgent, callCountsAfterReset] = await Promise.all([
+    getLatestResetAtByAgentIds(agentIds),
+    countCallLogsAfterResetByAgentIds(agentIds),
+  ])
+
   const result = await Promise.all(
     agents.map(async (agent) => {
+      const resetAt = resetAtByAgent.get(agent.id)
       const dispositions = await prisma.callLog.groupBy({
         by: ['disposition'],
         _count: { disposition: true },
-        where: { agentId: agent.id },
+        where: {
+          agentId: agent.id,
+          ...(resetAt ? { calledAt: { gte: resetAt } } : {}),
+        },
       })
       const dispMap: Record<string, number> = {}
       for (const d of dispositions) dispMap[d.disposition] = d._count.disposition
-      return { ...agent, dispositions: dispMap }
+      return {
+        ...agent,
+        _count: {
+          ...agent._count,
+          callLogs: callCountsAfterReset.get(agent.id) ?? 0,
+        },
+        dispositions: dispMap,
+      }
     })
   )
 
@@ -659,9 +684,10 @@ async function buildReportsAgents(filterAgentId?: string) {
   }
 
   const agentIds = agents.map((a) => a.id)
-  const [statusMaps, sparklinesByAgent] = await Promise.all([
+  const [statusMaps, sparklinesByAgent, callCountsAfterReset] = await Promise.all([
     buildAgentStatusMaps(agentIds, filterAgentId),
     fetchAgentSparklines(agentIds, 7),
+    countCallLogsAfterResetByAgentIds(agentIds),
   ])
   const {
     agentContactStatusMap,
@@ -672,7 +698,7 @@ async function buildReportsAgents(filterAgentId?: string) {
 
   const agentPerformance = agents.map((a) => {
     const assigned = a._count.assignments
-    const totalCalls = a._count.callLogs
+    const totalCalls = callCountsAfterReset.get(a.id) ?? 0
     const calledContacts = calledByAgent[a.id]?.size ?? 0
     const contactStatuses = agentContactStatusMap[a.id] ?? {}
     const companyStatuses = agentCompanyStatusMap[a.id] ?? {}

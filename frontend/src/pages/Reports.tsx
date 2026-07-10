@@ -1772,7 +1772,12 @@ export default function Reports() {
       <>
       {/* ── Agent performance table ── */}
       <section>
-        <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Rendimiento por agente</h2>
+        <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-1">Rendimiento por agente</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          <strong>Asignado</strong> = cola actual. <strong>Llamadas</strong> = historial del agente (vuelve a 0
+          tras reset; las anteriores quedan en Agente borrado). Reasignar empresas no borra el historial de
+          llamadas.
+        </p>
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">

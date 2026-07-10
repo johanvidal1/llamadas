@@ -18,6 +18,7 @@ import {
   MAX_REGULAR_ADMINS,
 } from '../lib/userPermissions'
 import { excludeArchivedAgentWhere } from '../lib/archivedAgent'
+import { countCallLogsAfterResetByAgentIds } from '../lib/agentReset'
 import { todayYmdInAppTz, localDayStartUtc, localDayEndUtc } from '../lib/appTimezone'
 
 const router = Router()
@@ -84,7 +85,8 @@ router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   const todayStart = localDayStartUtc(todayYmd)
   const todayEnd = localDayEndUtc(todayYmd)
 
-  const [assignmentRunStatsByAgent, pendingByAgent, callsTodayRows] = await Promise.all([
+  const [assignmentRunStatsByAgent, pendingByAgent, callsTodayRows, callCountsAfterReset] =
+    await Promise.all([
     getAgentAssignmentRunStatsByAgentId(),
     getPendingCompaniesByAgentId(companiesByAgent),
     agentIds.length > 0
@@ -97,6 +99,7 @@ router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
           _count: { _all: true },
         })
       : Promise.resolve([]),
+    countCallLogsAfterResetByAgentIds(agentIds),
   ])
 
   const callsTodayByAgent = new Map(
@@ -107,6 +110,10 @@ router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     const runStats = assignmentRunStatsByAgent.get(u.id)
     return {
       ...u,
+      _count: {
+        ...u._count,
+        callLogs: callCountsAfterReset.get(u.id) ?? 0,
+      },
       assignedCompanies: companiesByAgent.get(u.id)?.size ?? 0,
       pendingCompanies: pendingByAgent.get(u.id) ?? 0,
       assignmentRunCount: runStats?.assignmentRunCount ?? 0,

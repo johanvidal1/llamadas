@@ -1,4 +1,4 @@
-import { AssignmentRunStatus } from '@prisma/client'
+import { AssignmentRunStatus, Prisma } from '@prisma/client'
 import { ensureArchivedAgent, ARCHIVED_AGENT_NAME } from './archivedAgent'
 import { isAdminUser } from './userPermissions'
 import { prisma } from './prisma'
@@ -31,6 +31,39 @@ export async function getLatestResetAtByAgentIds(
 export function isAssignmentAfterReset(assignedAt: Date, resetAt: Date | undefined): boolean {
   if (!resetAt) return true
   return assignedAt.getTime() >= resetAt.getTime()
+}
+
+/** Call logs for an agent since their latest reset (defense in depth if logs were not archived). */
+export async function countCallLogsAfterReset(agentId: string): Promise<number> {
+  const counts = await countCallLogsAfterResetByAgentIds([agentId])
+  return counts.get(agentId) ?? 0
+}
+
+/** Batch version: one query for all agents (avoids N+1). */
+export async function countCallLogsAfterResetByAgentIds(
+  agentIds: string[]
+): Promise<Map<string, number>> {
+  if (agentIds.length === 0) return new Map()
+
+  const rows = await prisma.$queryRaw<{ agentId: string; count: bigint }[]>`
+    SELECT cl."agentId", COUNT(*)::bigint AS count
+    FROM "CallLog" cl
+    LEFT JOIN LATERAL (
+      SELECT "createdAt" AS reset_at
+      FROM "AgentResetLog"
+      WHERE "originalAgentId" = cl."agentId"
+      ORDER BY "createdAt" DESC
+      LIMIT 1
+    ) r ON true
+    WHERE cl."agentId" IN (${Prisma.join(agentIds)})
+      AND (r.reset_at IS NULL OR cl."calledAt" >= r.reset_at)
+    GROUP BY cl."agentId"
+  `
+
+  const result = new Map<string, number>()
+  for (const id of agentIds) result.set(id, 0)
+  for (const row of rows) result.set(row.agentId, Number(row.count))
+  return result
 }
 
 export type AgentResetPreview = {

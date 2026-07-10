@@ -153,6 +153,182 @@ export async function getLastDispositionByCompanyIds(
   return result
 }
 
+/** Current assigned agent per company (majority of contact assignments; null if unassigned). */
+export async function getAssignedAgentIdByCompanyIds(
+  companyIds: string[]
+): Promise<Map<string, string | null>> {
+  const result = new Map<string, string | null>()
+  if (companyIds.length === 0) return result
+
+  for (const id of companyIds) result.set(id, null)
+
+  const assignments = await prisma.assignment.findMany({
+    where: { contact: { companyId: { in: companyIds } } },
+    select: { agentId: true, contact: { select: { companyId: true } } },
+  })
+
+  const agentCountsByCompany = new Map<string, Map<string, number>>()
+  for (const a of assignments) {
+    const companyId = a.contact.companyId
+    if (!agentCountsByCompany.has(companyId)) {
+      agentCountsByCompany.set(companyId, new Map())
+    }
+    const counts = agentCountsByCompany.get(companyId)!
+    counts.set(a.agentId, (counts.get(a.agentId) ?? 0) + 1)
+  }
+
+  for (const [companyId, agentCounts] of agentCountsByCompany) {
+    let bestAgent: string | null = null
+    let bestCount = 0
+    for (const [agentId, count] of agentCounts) {
+      if (count > bestCount) {
+        bestCount = count
+        bestAgent = agentId
+      }
+    }
+    result.set(companyId, bestAgent)
+  }
+
+  return result
+}
+
+const emptyLastDispositionEntry = (): {
+  disposition: string | null
+  aclaracion: string | null
+  lastCalledAt: Date | null
+  lastCallContactId: string | null
+  lastCallAgentId: string | null
+  lastCallAgent: { id: string; name: string } | null
+  callLogCount: number
+} => ({
+  disposition: null,
+  aclaracion: null,
+  lastCalledAt: null,
+  lastCallContactId: null,
+  lastCallAgentId: null,
+  lastCallAgent: null,
+  callLogCount: 0,
+})
+
+/** Last disposition per company scoped to each company's current assigned agent. */
+export async function getLastDispositionByCompanyIdsPerAssignment(
+  companyIds: string[]
+): Promise<
+  Map<
+    string,
+    {
+      disposition: string | null
+      aclaracion: string | null
+      lastCalledAt: Date | null
+      lastCallContactId: string | null
+      lastCallAgentId: string | null
+      lastCallAgent: { id: string; name: string } | null
+      callLogCount: number
+    }
+  >
+> {
+  if (companyIds.length === 0) return new Map()
+
+  const agentByCompany = await getAssignedAgentIdByCompanyIds(companyIds)
+  const idsByAgent = new Map<string, string[]>()
+
+  for (const id of companyIds) {
+    const agentId = agentByCompany.get(id)
+    if (!agentId) continue
+    if (!idsByAgent.has(agentId)) idsByAgent.set(agentId, [])
+    idsByAgent.get(agentId)!.push(id)
+  }
+
+  const result = new Map<
+    string,
+    {
+      disposition: string | null
+      aclaracion: string | null
+      lastCalledAt: Date | null
+      lastCallContactId: string | null
+      lastCallAgentId: string | null
+      lastCallAgent: { id: string; name: string } | null
+      callLogCount: number
+    }
+  >()
+
+  await Promise.all(
+    [...idsByAgent.entries()].map(async ([agentId, ids]) => {
+      const partial = await getLastDispositionByCompanyIds(ids, agentId)
+      for (const [companyId, entry] of partial) {
+        result.set(companyId, entry)
+      }
+    })
+  )
+
+  for (const id of companyIds) {
+    if (!result.has(id)) result.set(id, emptyLastDispositionEntry())
+  }
+
+  return result
+}
+
+/** Earliest scoped call per company using each company's assigned agent. */
+export async function getFirstRegisteredAtByCompanyIdsPerAssignment(
+  companyIds: string[]
+): Promise<Map<string, Date>> {
+  if (companyIds.length === 0) return new Map()
+
+  const agentByCompany = await getAssignedAgentIdByCompanyIds(companyIds)
+  const idsByAgent = new Map<string, string[]>()
+
+  for (const id of companyIds) {
+    const agentId = agentByCompany.get(id)
+    if (!agentId) continue
+    if (!idsByAgent.has(agentId)) idsByAgent.set(agentId, [])
+    idsByAgent.get(agentId)!.push(id)
+  }
+
+  const result = new Map<string, Date>()
+  await Promise.all(
+    [...idsByAgent.entries()].map(async ([agentId, ids]) => {
+      const partial = await getFirstRegisteredAtByCompanyIds(ids, agentId)
+      for (const [companyId, date] of partial) {
+        result.set(companyId, date)
+      }
+    })
+  )
+
+  return result
+}
+
+/** Period call counts per company using each company's assigned agent. */
+export async function getCallCountsInPeriodByCompanyIdsPerAssignment(
+  companyIds: string[],
+  calledAtRange: { gte?: Date; lte?: Date }
+): Promise<Map<string, number>> {
+  if (companyIds.length === 0) return new Map()
+
+  const agentByCompany = await getAssignedAgentIdByCompanyIds(companyIds)
+  const idsByAgent = new Map<string, string[]>()
+
+  for (const id of companyIds) {
+    const agentId = agentByCompany.get(id)
+    if (!agentId) continue
+    if (!idsByAgent.has(agentId)) idsByAgent.set(agentId, [])
+    idsByAgent.get(agentId)!.push(id)
+  }
+
+  const result = new Map<string, number>()
+  for (const id of companyIds) result.set(id, 0)
+
+  await Promise.all(
+    [...idsByAgent.entries()].map(async ([agentId, ids]) => {
+      const partial = await getCallCountsInPeriodByCompanyIds(ids, calledAtRange, agentId)
+      for (const [companyId, count] of partial) {
+        result.set(companyId, count)
+      }
+    })
+  )
+
+  return result
+}
+
 /** Call-log count per company within a calledAt range (same agent scope as getLastDispositionByCompanyIds). */
 export async function getCallCountsInPeriodByCompanyIds(
   companyIds: string[],
@@ -601,11 +777,14 @@ export type ActivitySortRow = ActivityQueueSortable & { id: string }
 /** Sort company ids by activity queue without loading full company graphs. */
 export async function sortCompanyIdsByActivityQueue(
   rows: { id: string; ruc: string; globalCallLogCount: number }[],
-  dispositionAgentId?: string
+  dispositionAgentId?: string,
+  dispositionPerAssignedAgent = false
 ): Promise<string[]> {
   if (rows.length === 0) return []
   const companyIds = rows.map((r) => r.id)
-  const lastByCompany = await getLastDispositionByCompanyIds(companyIds, dispositionAgentId)
+  const lastByCompany = dispositionPerAssignedAgent
+    ? await getLastDispositionByCompanyIdsPerAssignment(companyIds)
+    : await getLastDispositionByCompanyIds(companyIds, dispositionAgentId)
   const sortable: ActivitySortRow[] = rows.map((r) => {
     const last = lastByCompany.get(r.id)
     return {
@@ -630,11 +809,14 @@ export type DaySummaryEntry = {
 export async function filterCompanyIdsByLastActivityRange(
   companyIds: string[],
   calledAtRange: { gte?: Date; lte?: Date },
-  dispositionAgentId?: string
+  dispositionAgentId?: string,
+  dispositionPerAssignedAgent = false
 ): Promise<string[]> {
   if (companyIds.length === 0) return []
 
-  const lastByCompany = await getLastDispositionByCompanyIds(companyIds, dispositionAgentId)
+  const lastByCompany = dispositionPerAssignedAgent
+    ? await getLastDispositionByCompanyIdsPerAssignment(companyIds)
+    : await getLastDispositionByCompanyIds(companyIds, dispositionAgentId)
   const result: string[] = []
 
   for (const id of companyIds) {
@@ -651,11 +833,14 @@ export async function filterCompanyIdsByLastActivityRange(
 /** Per-day counts for collapsed day-group headers (bucketed by last activity). */
 export async function buildDaySummary(
   companyIds: string[],
-  dispositionAgentId?: string
+  dispositionAgentId?: string,
+  dispositionPerAssignedAgent = false
 ): Promise<DaySummaryEntry[]> {
   if (companyIds.length === 0) return []
 
-  const lastByCompany = await getLastDispositionByCompanyIds(companyIds, dispositionAgentId)
+  const lastByCompany = dispositionPerAssignedAgent
+    ? await getLastDispositionByCompanyIdsPerAssignment(companyIds)
+    : await getLastDispositionByCompanyIds(companyIds, dispositionAgentId)
   const byDay = new Map<string, { count: number; registered: number; pending: number }>()
 
   for (const id of companyIds) {

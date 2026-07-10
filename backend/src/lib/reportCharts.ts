@@ -121,8 +121,16 @@ export async function fetchAgentCallsByPeriod(params: {
       COUNT(DISTINCT cl."companyId")::bigint AS registered
     FROM "CallLog" cl
     INNER JOIN "User" u ON u.id = cl."agentId" AND u.role = 'AGENT' AND u.active = true AND u."isArchivedAgent" = false
+    LEFT JOIN LATERAL (
+      SELECT "createdAt" AS reset_at
+      FROM "AgentResetLog"
+      WHERE "originalAgentId" = cl."agentId"
+      ORDER BY "createdAt" DESC
+      LIMIT 1
+    ) r ON true
     WHERE cl."calledAt" >= ${from}
       AND cl."calledAt" <= ${to}
+      AND (r.reset_at IS NULL OR cl."calledAt" >= r.reset_at)
     GROUP BY cl."agentId"
   `
 
