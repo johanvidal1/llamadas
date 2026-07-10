@@ -1559,13 +1559,16 @@ export default function Clients() {
 
   const lazyDayKeys = useMemo(() => {
     if (groupMode !== 'day') return []
+    const singleDayFilter =
+      hasDateFilter && !!registeredFrom && registeredFrom === registeredTo
     return [...expandedGroups].filter((dayKey) => {
+      if (singleDayFilter && dayKey === registeredFrom) return false
       const group = displayGroups.find((g) => g.key === dayKey)
       if (!group) return true
-      if (group.clients.length > 0 && !hasDateFilter) return false
+      if (group.clients.length > 0) return false
       return true
     })
-  }, [groupMode, expandedGroups, displayGroups, hasDateFilter])
+  }, [groupMode, expandedGroups, displayGroups, hasDateFilter, registeredFrom, registeredTo])
 
   const lazyAgentQueries = useQueries({
     queries: lazyAgentIds.map((id) => ({

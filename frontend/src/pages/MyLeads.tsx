@@ -827,6 +827,8 @@ export default function MyLeads() {
   const [agendaConfirm, setAgendaConfirm] = useState<{ dateStr: string } | null>(null)
   const agendaConfirmResolveRef = useRef<((conservar: boolean) => void) | null>(null)
   const [exporting, setExporting] = useState(false)
+  const [saveNotice, setSaveNotice] = useState<{ message: string; variant?: 'success' | 'info' } | null>(null)
+  const saveNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const savedContactRef = useRef<{ id: string; telefono: string; email: string; dni: string } | null>(null)
   const lastSyncedContactKey = useRef<string | null>(null)
   const contactTabRefs = useRef<(HTMLButtonElement | null)[]>([])
@@ -1581,6 +1583,29 @@ export default function MyLeads() {
     [disposition, schedDate]
   )
 
+  useEffect(() => {
+    setSaveNotice(null)
+    if (saveNoticeTimerRef.current) {
+      clearTimeout(saveNoticeTimerRef.current)
+      saveNoticeTimerRef.current = null
+    }
+  }, [currentClient?.id])
+
+  useEffect(() => {
+    return () => {
+      if (saveNoticeTimerRef.current) clearTimeout(saveNoticeTimerRef.current)
+    }
+  }, [])
+
+  const showSaveNotice = useCallback((message: string, variant: 'success' | 'info' = 'success') => {
+    if (saveNoticeTimerRef.current) clearTimeout(saveNoticeTimerRef.current)
+    setSaveNotice({ message, variant })
+    saveNoticeTimerRef.current = setTimeout(() => {
+      setSaveNotice(null)
+      saveNoticeTimerRef.current = null
+    }, 3500)
+  }, [])
+
   type SaveAutoNext = false | true | 'sequential' | 'nextPending'
 
   const saveMutation = useMutation({
@@ -1786,21 +1811,21 @@ export default function MyLeads() {
           setEditingCallLogId(null)
         }
         if (result.movedToDepuradoNoContesta) {
-          toast(
+          showSaveNotice(
             'Empresa movida a No contesta — depurado (3 o más intentos sin contacto).',
-            { icon: 'ℹ️' }
+            'info'
           )
         } else {
-          toast.success('Resultado guardado')
+          showSaveNotice('Resultado guardado')
         }
       } else if (result.contactSaved) {
-        toast.success('Datos de contacto actualizados')
+        showSaveNotice('Datos de contacto actualizados')
       } else if (result.planChanged) {
-        toast.success('Plan actualizado')
+        showSaveNotice('Plan actualizado')
       } else if (result.razonSocialChanged) {
-        toast.success('Razón social actualizada')
+        showSaveNotice('Razón social actualizada')
       } else if (result.noOp) {
-        toast('Sin cambios que guardar', { icon: 'ℹ️' })
+        showSaveNotice('Sin cambios que guardar', 'info')
       }
       qc.invalidateQueries({ queryKey: ['client-detail', currentClient?.id] })
       qc.invalidateQueries({ queryKey: ['callbacks'] })
@@ -2257,7 +2282,21 @@ export default function MyLeads() {
 
                 {/* ── Datos de la Empresa ── */}
                 <div className="bg-white border border-gray-200 rounded-lg p-4 shrink-0">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Empresa</p>
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Empresa</p>
+                    {saveNotice && (
+                      <span
+                        className={`flex items-center gap-1 text-xs font-medium rounded-full px-2.5 py-1 shrink-0 ${
+                          saveNotice.variant === 'info'
+                            ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                            : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                        }`}
+                      >
+                        <CheckCircle2 size={12} />
+                        {saveNotice.message}
+                      </span>
+                    )}
+                  </div>
                   {duplicateRucCount > 1 && (
                     <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                       <AlertCircle size={15} className="text-amber-600 shrink-0 mt-0.5" />

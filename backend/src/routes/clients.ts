@@ -27,6 +27,7 @@ import {
   pipelineBucketForDisposition,
   sortClientsByActivityQueue,
   sortCompanyIdsByActivityQueue,
+  type LastDispositionMap,
 } from '../lib/companyDisposition'
 import { countUnassignedCompanies, BatchBlockedError } from '../lib/assignmentOrder'
 
@@ -77,7 +78,40 @@ function dispositionPerAssignedAgent(role: string, agentId?: string): boolean {
   return role !== 'AGENT' && !agentId
 }
 
-type LastDispositionMap = Awaited<ReturnType<typeof getLastDispositionByCompanyIds>>
+const PIPELINE_SUMMARY_CACHE_TTL_MS = 15_000
+const pipelineSummaryCache = new Map<
+  string,
+  { expiresAt: number; payload: Record<string, unknown> }
+>()
+
+function pipelineSummaryCacheKey(req: AuthRequest, query: Record<string, string>): string {
+  const sorted = Object.keys(query)
+    .sort()
+    .map((k) => `${k}=${query[k] ?? ''}`)
+    .join('&')
+  return `${req.user!.id}:${req.user!.role}:${sorted}`
+}
+
+function getCachedPipelineSummary(key: string): Record<string, unknown> | null {
+  const entry = pipelineSummaryCache.get(key)
+  if (!entry) return null
+  if (Date.now() > entry.expiresAt) {
+    pipelineSummaryCache.delete(key)
+    return null
+  }
+  return entry.payload
+}
+
+function setCachedPipelineSummary(key: string, payload: Record<string, unknown>): void {
+  pipelineSummaryCache.set(key, {
+    expiresAt: Date.now() + PIPELINE_SUMMARY_CACHE_TTL_MS,
+    payload,
+  })
+  if (pipelineSummaryCache.size > 200) {
+    const oldest = pipelineSummaryCache.keys().next().value
+    if (oldest) pipelineSummaryCache.delete(oldest)
+  }
+}
 
 async function loadLastDispositionByCompanyIds(
   companyIds: string[],
@@ -268,6 +302,8 @@ type ClientsFilterContext = {
   includeAssignmentSummary: boolean
   /** Agent default queue (Cola Todos): exclude archived dispositions unless explicitly filtered. */
   agentQueueExcludeArchived: boolean
+  /** Dispositions already loaded for the filtered company set (e.g. date filter). */
+  preloadedLastByCompany?: LastDispositionMap
 }
 
 async function buildClientsFilterContext(
@@ -326,20 +362,22 @@ async function buildClientsFilterContext(
   }
 
   let registrationCount: number | undefined
+  let preloadedLastByCompany: LastDispositionMap | undefined
 
   if (calledAtRange) {
     const scopedIds = await getScopedCompanyIds(where)
-    const companyIdsInRange = await filterCompanyIdsByLastActivityRange(
+    const filtered = await filterCompanyIdsByLastActivityRange(
       scopedIds,
       calledAtRange,
       dispositionAgentId,
       dispositionPerAssignedAgentFlag
     )
-    registrationCount = companyIdsInRange.length
-    if (companyIdsInRange.length === 0) {
+    preloadedLastByCompany = filtered.lastByCompany
+    registrationCount = filtered.companyIds.length
+    if (filtered.companyIds.length === 0) {
       return { empty: true, take, page, registrationCount: 0 }
     }
-    where.id = { in: companyIdsInRange }
+    where.id = { in: filtered.companyIds }
   }
 
   const agentQueueExcludeArchived =
@@ -369,6 +407,7 @@ async function buildClientsFilterContext(
     agentScopedDisposition,
     includeAssignmentSummary: !!agentId,
     agentQueueExcludeArchived,
+    ...(preloadedLastByCompany ? { preloadedLastByCompany } : {}),
   }
 }
 
@@ -378,19 +417,16 @@ async function getActivitySortedClientsPage(
   take: number
 ) {
   const lightweight = await fetchLightweightCompanies(ctx.where)
-  let sortedIds = await sortCompanyIdsByActivityQueue(
+  const { ids: sortedIds, lastByCompany: allLastByCompany } = await sortCompanyIdsByActivityQueue(
     lightweight,
     ctx.dispositionAgentId,
-    ctx.dispositionPerAssignedAgent
+    ctx.dispositionPerAssignedAgent,
+    ctx.preloadedLastByCompany
   )
+  let filteredIds = sortedIds
   if (ctx.agentQueueExcludeArchived) {
-    const lastByCompany = await loadLastDispositionByCompanyIds(
-      sortedIds,
-      ctx.dispositionAgentId,
-      ctx.dispositionPerAssignedAgent
-    )
-    sortedIds = sortedIds.filter((id) => {
-      const last = lastByCompany.get(id)
+    filteredIds = sortedIds.filter((id) => {
+      const last = allLastByCompany.get(id)
       const disposition = last?.disposition ?? null
       const callLogCount = last?.callLogCount ?? 0
       if (isHiddenFromAgentQueue(disposition)) return false
@@ -398,12 +434,10 @@ async function getActivitySortedClientsPage(
       return true
     })
   }
-  const total = sortedIds.length
-  const pageIds = sortedIds.slice(skip, skip + take)
-  const lastByCompany = await loadLastDispositionByCompanyIds(
-    pageIds,
-    ctx.dispositionAgentId,
-    ctx.dispositionPerAssignedAgent
+  const total = filteredIds.length
+  const pageIds = filteredIds.slice(skip, skip + take)
+  const pageLastByCompany = new Map(
+    pageIds.map((id) => [id, allLastByCompany.get(id)!])
   )
   const companies = await fetchCompaniesByIdsInOrder(
     pageIds,
@@ -413,11 +447,11 @@ async function getActivitySortedClientsPage(
   const clients = await enrichWithLastDisposition(
     companies,
     ctx.dispositionAgentId,
-    lastByCompany,
+    pageLastByCompany,
     ctx.calledAtRange,
     ctx.dispositionPerAssignedAgent
   )
-  return { clients, total }
+  return { clients, total, lastByCompany: allLastByCompany }
 }
 
 async function getFilteredDispositionClientsPage(
@@ -427,11 +461,13 @@ async function getFilteredDispositionClientsPage(
 ) {
   const lightweight = await fetchLightweightCompanies(ctx.where)
   const companyIds = lightweight.map((c) => c.id)
-  const lastByCompany = await loadLastDispositionByCompanyIds(
-    companyIds,
-    ctx.dispositionAgentId,
-    ctx.dispositionPerAssignedAgent
-  )
+  const lastByCompany =
+    ctx.preloadedLastByCompany ??
+    (await loadLastDispositionByCompanyIds(
+      companyIds,
+      ctx.dispositionAgentId,
+      ctx.dispositionPerAssignedAgent
+    ))
 
   const filteredIds: string[] = []
   for (const row of lightweight) {
@@ -500,7 +536,7 @@ async function getFilteredDispositionClientsPage(
     ctx.calledAtRange,
     ctx.dispositionPerAssignedAgent
   )
-  return { clients, total }
+  return { clients, total, lastByCompany }
 }
 
 type AssignmentSummary = {
@@ -518,7 +554,8 @@ async function buildPipelineScopeData(
   companyIds: string[],
   dispositionAgentId?: string,
   includeAssignmentSummary = false,
-  dispositionPerAssignedAgent = false
+  dispositionPerAssignedAgent = false,
+  preloadedLastByCompany?: LastDispositionMap
 ): Promise<PipelineScopeData> {
   if (companyIds.length === 0) {
     return {
@@ -534,11 +571,26 @@ async function buildPipelineScopeData(
         : {}),
     }
   }
-  const lastByCompany = await loadLastDispositionByCompanyIds(
-    companyIds,
-    dispositionAgentId,
-    dispositionPerAssignedAgent
-  )
+  const lastByCompany = preloadedLastByCompany
+    ? new Map(
+        companyIds.map((id) => [
+          id,
+          preloadedLastByCompany.get(id) ?? {
+            disposition: null,
+            aclaracion: null,
+            lastCalledAt: null,
+            lastCallContactId: null,
+            lastCallAgentId: null,
+            lastCallAgent: null,
+            callLogCount: 0,
+          },
+        ])
+      )
+    : await loadLastDispositionByCompanyIds(
+        companyIds,
+        dispositionAgentId,
+        dispositionPerAssignedAgent
+      )
   const companyPipeline = buildCompanyPipelineCounts(lastByCompany)
   const pipelineCounts = Object.fromEntries(
     FUNNEL_PIPELINE_KEYS.map((k) => [k, companyPipeline[k]])
@@ -561,15 +613,24 @@ async function buildPipelineScopeData(
 // GET /api/clients/pipeline-summary — funnel counts without full client list
 router.get('/pipeline-summary', requireAuth, async (req: AuthRequest, res: Response) => {
   const query = req.query as Record<string, string>
+  const cacheKey = pipelineSummaryCacheKey(req, query)
+  const cached = getCachedPipelineSummary(cacheKey)
+  if (cached) {
+    res.json(cached)
+    return
+  }
+
   const built = await buildClientsFilterContext(req, query)
   const take = Math.min(Number(query.limit) || 50, 500)
   const page = Math.max(Number(query.page) || 1, 1)
 
   if ('empty' in built) {
-    res.json({
+    const payload = {
       pipelineCounts: emptyFunnelPipelineCounts(),
       ...(built.registrationCount !== undefined ? { registrationCount: built.registrationCount } : {}),
-    })
+    }
+    setCachedPipelineSummary(cacheKey, payload)
+    res.json(payload)
     return
   }
 
@@ -578,17 +639,20 @@ router.get('/pipeline-summary', requireAuth, async (req: AuthRequest, res: Respo
     scopedIds,
     built.dispositionAgentId,
     built.includeAssignmentSummary,
-    built.dispositionPerAssignedAgent
+    built.dispositionPerAssignedAgent,
+    built.preloadedLastByCompany
   )
 
-  res.json({
+  const payload = {
     pipelineCounts,
     ...(assignmentSummary ? { assignmentSummary } : {}),
     ...(built.registrationCount !== undefined ? { registrationCount: built.registrationCount } : {}),
     total: scopedIds.length,
     page,
     limit: take,
-  })
+  }
+  setCachedPipelineSummary(cacheKey, payload)
+  res.json(payload)
 })
 
 // GET /api/clients/day-summary — per-day counts for grouped day view headers
@@ -688,9 +752,10 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     built.agentScopedNoContestaDepurado
 
   if (needsDispositionFilter || sortBy === 'activity' || built.agentQueueExcludeArchived) {
-    const { clients, total } = needsDispositionFilter
+    const pageResult = needsDispositionFilter
       ? await getFilteredDispositionClientsPage(built, skip, take)
       : await getActivitySortedClientsPage(built, skip, take)
+    const { clients, total } = pageResult
 
     let pipelineCounts: Record<string, number> | undefined
     let assignmentSummary: AssignmentSummary | undefined
@@ -700,7 +765,9 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
         scopedIds,
         built.dispositionAgentId,
         built.includeAssignmentSummary,
-        built.dispositionPerAssignedAgent
+        built.dispositionPerAssignedAgent,
+        built.preloadedLastByCompany ??
+          ('lastByCompany' in pageResult ? pageResult.lastByCompany : undefined)
       )
       pipelineCounts = pipelineData.pipelineCounts
       assignmentSummary = pipelineData.assignmentSummary
@@ -730,7 +797,8 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
           scopedIds,
           built.dispositionAgentId,
           built.includeAssignmentSummary,
-          built.dispositionPerAssignedAgent
+          built.dispositionPerAssignedAgent,
+          built.preloadedLastByCompany
         )
       : Promise.resolve({ pipelineCounts: undefined, assignmentSummary: undefined }),
     enrichWithLastDisposition(
