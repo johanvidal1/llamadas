@@ -166,8 +166,7 @@ function UserTable({
     ? presenceByUserId?.[presencePopover.userId]
     : undefined
 
-  const columnCount =
-    8 + (showTotalCallsColumn ? 1 : 0) + (showTotalCallbacksColumn ? 1 : 0)
+  const columnCount = 8
 
   return (
     <>
@@ -179,39 +178,45 @@ function UserTable({
           <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
           <th className="text-center px-4 py-3 font-medium text-gray-600" title="Empresas con contactos asignados">Empresas</th>
           <th className="text-center px-4 py-3 font-medium text-gray-600">
-            <div className="inline-flex items-center justify-center gap-1.5">
+            <div className="inline-flex items-center justify-center gap-1">
               <span title="Llamadas registradas hoy (zona horaria del sistema)">Llamadas (hoy)</span>
               <button
                 type="button"
                 onClick={onToggleShowTotalCallsColumn}
-                title="Mostrar u ocultar llamadas históricas"
-                className="text-xs font-normal text-gray-500 hover:text-gray-800 hover:bg-gray-200/80 rounded px-1 py-0.5 transition-colors"
+                title={showTotalCallsColumn ? 'Ocultar total histórico' : 'Mostrar total histórico'}
+                aria-pressed={showTotalCallsColumn}
+                className={`p-0.5 rounded transition-colors hover:bg-gray-200/80 ${
+                  showTotalCallsColumn ? 'text-gray-700' : 'text-gray-400'
+                }`}
               >
-                {showTotalCallsColumn ? '▼' : '▶'} Total
+                <ChevronDown
+                  size={14}
+                  className={`transition-transform ${showTotalCallsColumn ? '' : '-rotate-90'}`}
+                />
               </button>
             </div>
           </th>
-          {showTotalCallsColumn && (
-            <th className="text-center px-4 py-3 font-medium text-gray-600">Llamadas (total)</th>
-          )}
           <th className="text-center px-4 py-3 font-medium text-gray-600">
-            <div className="inline-flex items-center justify-center gap-1.5">
+            <div className="inline-flex items-center justify-center gap-1">
               <span title="Callbacks pendientes agendados para hoy (zona horaria del sistema)">
                 Callbacks (hoy)
               </span>
               <button
                 type="button"
                 onClick={onToggleShowTotalCallbacksColumn}
-                title="Mostrar u ocultar callbacks históricos"
-                className="text-xs font-normal text-gray-500 hover:text-gray-800 hover:bg-gray-200/80 rounded px-1 py-0.5 transition-colors"
+                title={showTotalCallbacksColumn ? 'Ocultar total histórico' : 'Mostrar total histórico'}
+                aria-pressed={showTotalCallbacksColumn}
+                className={`p-0.5 rounded transition-colors hover:bg-gray-200/80 ${
+                  showTotalCallbacksColumn ? 'text-gray-700' : 'text-gray-400'
+                }`}
               >
-                {showTotalCallbacksColumn ? '▼' : '▶'} Total
+                <ChevronDown
+                  size={14}
+                  className={`transition-transform ${showTotalCallbacksColumn ? '' : '-rotate-90'}`}
+                />
               </button>
             </div>
           </th>
-          {showTotalCallbacksColumn && (
-            <th className="text-center px-4 py-3 font-medium text-gray-600">Callbacks</th>
-          )}
           <th className="text-center px-4 py-3 font-medium text-gray-600">Importaciones</th>
           <th className="text-right px-4 py-3 font-medium text-gray-600">Acciones</th>
         </tr>
@@ -315,14 +320,26 @@ function UserTable({
                   )}
                 </td>
                 <td className="px-4 py-3 text-center">{u.assignedCompanies ?? 0}</td>
-              <td className="px-4 py-3 text-center">{u.callsToday ?? 0}</td>
-              {showTotalCallsColumn && (
-                <td className="px-4 py-3 text-center">{u._count.callLogs}</td>
-              )}
-              <td className="px-4 py-3 text-center">{u.callbacksToday ?? 0}</td>
-              {showTotalCallbacksColumn && (
-                <td className="px-4 py-3 text-center">{u._count.callbacks}</td>
-              )}
+              <td className="px-4 py-3 text-center">
+                <div className="flex flex-col items-center leading-tight tabular-nums">
+                  <span>{u.callsToday ?? 0}</span>
+                  {showTotalCallsColumn && (
+                    <span className="text-[11px] text-gray-400 font-normal">
+                      {u._count.callLogs} total
+                    </span>
+                  )}
+                </div>
+              </td>
+              <td className="px-4 py-3 text-center">
+                <div className="flex flex-col items-center leading-tight tabular-nums">
+                  <span>{u.callbacksToday ?? 0}</span>
+                  {showTotalCallbacksColumn && (
+                    <span className="text-[11px] text-gray-400 font-normal">
+                      {u._count.callbacks} total
+                    </span>
+                  )}
+                </div>
+              </td>
               <td className="px-4 py-3 text-center">{u._count.imports}</td>
               <td className="px-4 py-3 text-right">
                 <div className="flex justify-end gap-2">
