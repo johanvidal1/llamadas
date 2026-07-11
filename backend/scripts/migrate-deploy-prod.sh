@@ -26,13 +26,18 @@ log() {
 }
 
 assignment_has_contact_id() {
-  node -e "
+  # One-off schema check: use a single connection to avoid pool contention at deploy.
+  DATABASE_CONNECTION_LIMIT=1 DATABASE_POOL_TIMEOUT=20 node -e "
 const { PrismaClient } = require('@prisma/client');
+const { buildDatasourceUrl } = require('./dist/lib/prisma');
 (async () => {
-  const p = new PrismaClient();
+  const p = new PrismaClient({
+    datasources: { db: { url: buildDatasourceUrl() } },
+  });
   const rows = await p.\$queryRawUnsafe(
     \"SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'Assignment' AND column_name = 'contactId' LIMIT 1\"
   );
+  await p.\$disconnect();
   process.exit(rows.length > 0 ? 0 : 1);
 })().catch(() => process.exit(1));
 " 2>/dev/null

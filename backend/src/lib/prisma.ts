@@ -3,13 +3,15 @@ import { PrismaClient } from '@prisma/client'
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient }
 
 function ensureDatasourceParam(url: string, param: string, value: string): string {
-  const paramPattern = new RegExp(`([?&])${param}=`)
-  if (paramPattern.test(url)) return url
+  const paramPattern = new RegExp(`([?&])${param}=[^&]*`)
+  if (paramPattern.test(url)) {
+    return url.replace(paramPattern, `$1${param}=${value}`)
+  }
   const separator = url.includes('?') ? '&' : '?'
   return `${url}${separator}${param}=${value}`
 }
 
-function buildDatasourceUrl(): string {
+export function buildDatasourceUrl(): string {
   const base = process.env.DATABASE_URL
   if (!base) throw new Error('DATABASE_URL is required')
   let url = base

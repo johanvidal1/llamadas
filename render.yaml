@@ -16,7 +16,8 @@ services:
     plan: starter
     rootDir: backend
     buildCommand: npm install --include=dev && npm run build
-    startCommand: bash scripts/migrate-deploy-prod.sh && npx prisma db seed && npm start
+    # Seed is manual only (npm run db:seed) — not on every deploy (avoids pool contention).
+    startCommand: bash scripts/migrate-deploy-prod.sh && npm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
@@ -25,10 +26,9 @@ services:
         fromDatabase:
           name: llamadas-db
           property: connectionString
-        # Pool tuning is applied in code (prisma.ts) if params are absent:
-        # connection_limit=5, pool_timeout=20. Override via env:
-        # DATABASE_CONNECTION_LIMIT, DATABASE_POOL_TIMEOUT
-        # Or append to DATABASE_URL: ?connection_limit=5&pool_timeout=20
+        # Pool tuning is always applied in code (prisma.ts), overriding any
+        # connection_limit/pool_timeout in the URL. Defaults: 5 / 20.
+        # Override via DATABASE_CONNECTION_LIMIT, DATABASE_POOL_TIMEOUT.
       - key: JWT_SECRET
         generateValue: true   # Render genera un valor seguro automáticamente
       - key: FRONTEND_URL
