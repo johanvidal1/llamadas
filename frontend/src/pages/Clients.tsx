@@ -1109,16 +1109,24 @@ function ClientTableRow({
         {c.ruc}
       </td>
       {visibleColumns.razonSocial && (
-        <td
-          className="px-3 py-2 font-medium text-gray-900 max-w-[200px]"
-          onClick={(e) => e.stopPropagation()}
-        >
+        <td className="px-3 py-2 font-medium text-gray-900 max-w-[200px]">
           {c.razonSocial ? (
-            <span className="truncate block" title={c.razonSocial}>
+            <span
+              className={`truncate block ${recordable ? 'text-blue-700 hover:underline' : ''}`}
+              title={c.razonSocial}
+            >
               {c.razonSocial}
             </span>
           ) : (
-            <span className="text-gray-400 italic text-sm">Sin razón social</span>
+            <span
+              className={
+                recordable
+                  ? 'text-blue-600 hover:underline text-sm'
+                  : 'text-gray-400 italic text-sm'
+              }
+            >
+              Sin razón social
+            </span>
           )}
         </td>
       )}
