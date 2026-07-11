@@ -97,6 +97,7 @@ export type AppUser = {
   assignmentRunCount?: number
   lastAssignmentAt?: string | null
   callsToday?: number
+  callbacksToday?: number
   _count: {
     assignments: number
     callLogs: number

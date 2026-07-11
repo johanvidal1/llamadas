@@ -85,7 +85,7 @@ router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   const todayStart = localDayStartUtc(todayYmd)
   const todayEnd = localDayEndUtc(todayYmd)
 
-  const [assignmentRunStatsByAgent, pendingByAgent, callsTodayRows, callCountsAfterReset] =
+  const [assignmentRunStatsByAgent, pendingByAgent, callsTodayRows, callbacksTodayRows, callCountsAfterReset] =
     await Promise.all([
     getAgentAssignmentRunStatsByAgentId(),
     getPendingCompaniesByAgentId(companiesByAgent),
@@ -99,11 +99,25 @@ router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
           _count: { _all: true },
         })
       : Promise.resolve([]),
+    agentIds.length > 0
+      ? prisma.callback.groupBy({
+          by: ['agentId'],
+          where: {
+            agentId: { in: agentIds },
+            completed: false,
+            scheduledAt: { gte: todayStart, lte: todayEnd },
+          },
+          _count: { _all: true },
+        })
+      : Promise.resolve([]),
     countCallLogsAfterResetByAgentIds(agentIds),
   ])
 
   const callsTodayByAgent = new Map(
     callsTodayRows.map((row) => [row.agentId, row._count._all]),
+  )
+  const callbacksTodayByAgent = new Map(
+    callbacksTodayRows.map((row) => [row.agentId, row._count._all]),
   )
 
   const enriched = users.map((u) => {
@@ -119,6 +133,7 @@ router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
       assignmentRunCount: runStats?.assignmentRunCount ?? 0,
       lastAssignmentAt: runStats?.lastAssignmentAt?.toISOString() ?? null,
       callsToday: callsTodayByAgent.get(u.id) ?? 0,
+      callbacksToday: callbacksTodayByAgent.get(u.id) ?? 0,
     }
   })
 

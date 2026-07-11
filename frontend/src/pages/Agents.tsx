@@ -153,7 +153,7 @@ function UserTable({
     ? presenceByUserId?.[presencePopover.userId]
     : undefined
 
-  const columnCount = showTotalCallsColumn ? 9 : 8
+  const columnCount = showTotalCallsColumn ? 10 : 9
 
   return (
     <>
@@ -180,6 +180,12 @@ function UserTable({
           {showTotalCallsColumn && (
             <th className="text-center px-4 py-3 font-medium text-gray-600">Llamadas (total)</th>
           )}
+          <th
+            className="text-center px-4 py-3 font-medium text-gray-600"
+            title="Callbacks pendientes agendados para hoy (zona horaria del sistema)"
+          >
+            Callbacks (hoy)
+          </th>
           <th className="text-center px-4 py-3 font-medium text-gray-600">Callbacks</th>
           <th className="text-center px-4 py-3 font-medium text-gray-600">Importaciones</th>
           <th className="text-right px-4 py-3 font-medium text-gray-600">Acciones</th>
@@ -288,6 +294,7 @@ function UserTable({
               {showTotalCallsColumn && (
                 <td className="px-4 py-3 text-center">{u._count.callLogs}</td>
               )}
+              <td className="px-4 py-3 text-center">{u.callbacksToday ?? 0}</td>
               <td className="px-4 py-3 text-center">{u._count.callbacks}</td>
               <td className="px-4 py-3 text-center">{u._count.imports}</td>
               <td className="px-4 py-3 text-right">
