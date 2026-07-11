@@ -76,6 +76,29 @@ export function clearReportsCache() {
   reportsCache.clear()
 }
 
+const DASHBOARD_STATS_CACHE_TTL_MS = 45_000
+type DashboardStatsCacheEntry = { data: unknown; expiresAt: number }
+const dashboardStatsCache = new Map<string, DashboardStatsCacheEntry>()
+
+function dashboardStatsCacheKey(isAdmin: boolean, agentId: string, batchId?: string) {
+  return isAdmin ? 'dashboard:stats:admin' : `dashboard:stats:agent:${agentId}:${batchId ?? 'all'}`
+}
+
+function getCachedDashboardStats<T>(cacheKey: string, bypassCache: boolean): T | null {
+  if (bypassCache) return null
+  const cached = dashboardStatsCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.data as T
+  return null
+}
+
+function setCachedDashboardStats(cacheKey: string, data: unknown) {
+  dashboardStatsCache.set(cacheKey, { data, expiresAt: Date.now() + DASHBOARD_STATS_CACHE_TTL_MS })
+}
+
+export function clearDashboardStatsCache() {
+  dashboardStatsCache.clear()
+}
+
 function buildScopedCallWhere(filterAgentId?: string) {
   const assignmentScope = filterAgentId
     ? { agentId: filterAgentId }
@@ -287,6 +310,15 @@ async function enrichRecentCallsWithNextCallback<
 // GET /api/dashboard/stats
 router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
   const isAdmin = req.user!.role === 'ADMIN'
+  const { batchId } = req.query as Record<string, string>
+  const bypassCache = req.query.refresh === 'true' || req.get('x-refresh') === 'true'
+  const cacheKey = dashboardStatsCacheKey(isAdmin, req.user!.id, batchId)
+
+  const cached = getCachedDashboardStats<Record<string, unknown>>(cacheKey, bypassCache)
+  if (cached) {
+    res.json(cached)
+    return
+  }
 
   if (isAdmin) {
     const assignedCompanyFilter = { contacts: { some: { assignment: { is: {} } } } }
@@ -297,34 +329,33 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       contactsByStatusRows,
       companiesByStatusRows,
       totalAgents,
-      totalCalls,
-      pendingCallbacks,
-      recentCalls,
-      assignedCompanyRows,
-      assignedContacts,
     ] = await Promise.all([
       prisma.company.count(),
       prisma.contact.count(),
       prisma.contact.groupBy({ by: ['status'], _count: { status: true } }),
       prisma.company.groupBy({ by: ['status'], _count: { status: true } }),
       prisma.user.count({ where: activeAgentUserWhere }),
-      prisma.callLog.count(),
-      prisma.callback.count({ where: { completed: false } }),
-      prisma.callLog.findMany({
-        take: 10,
-        orderBy: { calledAt: 'desc' },
-        include: {
-          company: { select: { id: true, ruc: true, razonSocial: true } },
-          contact: { select: { nombre: true } },
-          agent: { select: { name: true } },
-        },
-      }),
-      prisma.company.findMany({
-        where: assignedCompanyFilter,
-        select: { id: true },
-      }),
-      prisma.assignment.count(),
     ])
+
+    const [totalCalls, pendingCallbacks, recentCalls, assignedCompanyRows, assignedContacts] =
+      await Promise.all([
+        prisma.callLog.count(),
+        prisma.callback.count({ where: { completed: false } }),
+        prisma.callLog.findMany({
+          take: 10,
+          orderBy: { calledAt: 'desc' },
+          include: {
+            company: { select: { id: true, ruc: true, razonSocial: true } },
+            contact: { select: { nombre: true } },
+            agent: { select: { name: true } },
+          },
+        }),
+        prisma.company.findMany({
+          where: assignedCompanyFilter,
+          select: { id: true },
+        }),
+        prisma.assignment.count(),
+      ])
 
     const contactsByStatus = toStatusMap(contactsByStatusRows)
     const companiesByStatus = toStatusMap(companiesByStatusRows)
@@ -342,7 +373,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
 
     const recentCallsWithCallbacks = await enrichRecentCallsWithNextCallback(recentCalls)
 
-    res.json({
+    const data = {
       totalClients,
       totalContacts,
       totalAgents,
@@ -356,9 +387,10 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       companiesByStatus,
       clientsByStatus: companiesByStatus,
       recentCalls: recentCallsWithCallbacks,
-    })
+    }
+    setCachedDashboardStats(cacheKey, data)
+    res.json(data)
   } else {
-    const { batchId } = req.query as Record<string, string>
     const batchFilter = batchId ? { company: { importBatchId: batchId } } : {}
     const agentCompanyFilter = {
       contacts: { some: { assignment: { agentId: req.user!.id } } },
@@ -371,35 +403,37 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       ? { agentId: req.user!.id, company: { importBatchId: batchId } }
       : { agentId: req.user!.id }
 
-    const [assignedContacts, assignedCompanies, totalCalls, pendingCallbacks, todayCallbacks, recentCalls] =
-      await Promise.all([
-        prisma.assignment.count({ where: { agentId: req.user!.id, ...batchFilter } }),
-        prisma.company.findMany({
-          where: agentCompanyFilter,
-          select: { id: true },
-        }),
-        prisma.callLog.count({ where: callFilter }),
-        prisma.callback.count({ where: { ...cbFilter, completed: false } }),
-        prisma.callback.count({
-          where: {
-            ...cbFilter,
-            completed: false,
-            scheduledAt: {
-              gte: new Date(new Date().setHours(0, 0, 0, 0)),
-              lte: new Date(new Date().setHours(23, 59, 59, 999)),
-            },
+    const [assignedContacts, assignedCompanies, totalCalls] = await Promise.all([
+      prisma.assignment.count({ where: { agentId: req.user!.id, ...batchFilter } }),
+      prisma.company.findMany({
+        where: agentCompanyFilter,
+        select: { id: true },
+      }),
+      prisma.callLog.count({ where: callFilter }),
+    ])
+
+    const [pendingCallbacks, todayCallbacks, recentCalls] = await Promise.all([
+      prisma.callback.count({ where: { ...cbFilter, completed: false } }),
+      prisma.callback.count({
+        where: {
+          ...cbFilter,
+          completed: false,
+          scheduledAt: {
+            gte: new Date(new Date().setHours(0, 0, 0, 0)),
+            lte: new Date(new Date().setHours(23, 59, 59, 999)),
           },
-        }),
-        prisma.callLog.findMany({
-          where: callFilter,
-          take: 10,
-          orderBy: { calledAt: 'desc' },
-          include: {
-            company: { select: { id: true, ruc: true, razonSocial: true } },
-            contact: { select: { nombre: true } },
-          },
-        }),
-      ])
+        },
+      }),
+      prisma.callLog.findMany({
+        where: callFilter,
+        take: 10,
+        orderBy: { calledAt: 'desc' },
+        include: {
+          company: { select: { id: true, ruc: true, razonSocial: true } },
+          contact: { select: { nombre: true } },
+        },
+      }),
+    ])
 
     const lastByCompany = await getLastDispositionByCompanyIds(
       assignedCompanies.map((c) => c.id),
@@ -411,7 +445,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       req.user!.id
     )
 
-    res.json({
+    const data = {
       assignedClients: assignedContacts,
       assignedContacts,
       assignedCompanies: assignedCompanies.length,
@@ -420,7 +454,9 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       todayCallbacks,
       companyPipeline,
       recentCalls: recentCallsWithCallbacks,
-    })
+    }
+    setCachedDashboardStats(cacheKey, data)
+    res.json(data)
   }
 })
 
