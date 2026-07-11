@@ -57,10 +57,19 @@ function hasHistory(u: AppUser) {
 const MAX_AGENTS = 25
 const MAX_REGULAR_ADMINS = 1
 const SHOW_TOTAL_CALLS_KEY = 'agents-show-total-calls'
+const SHOW_TOTAL_CALLBACKS_KEY = 'agents-show-total-callbacks'
 
 function readShowTotalCallsColumn(): boolean {
   try {
     return localStorage.getItem(SHOW_TOTAL_CALLS_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function readShowTotalCallbacksColumn(): boolean {
+  try {
+    return localStorage.getItem(SHOW_TOTAL_CALLBACKS_KEY) === 'true'
   } catch {
     return false
   }
@@ -120,6 +129,8 @@ function UserTable({
   onResetAgent,
   showTotalCallsColumn,
   onToggleShowTotalCallsColumn,
+  showTotalCallbacksColumn,
+  onToggleShowTotalCallbacksColumn,
 }: {
   users: AppUser[]
   onEdit: (u: AppUser) => void
@@ -135,6 +146,8 @@ function UserTable({
   onResetAgent?: (u: AppUser) => void
   showTotalCallsColumn: boolean
   onToggleShowTotalCallsColumn: () => void
+  showTotalCallbacksColumn: boolean
+  onToggleShowTotalCallbacksColumn: () => void
 }) {
   const [expandedPresenceId, setExpandedPresenceId] = useState<string | null>(null)
   const [presencePopover, setPresencePopover] = useState<{
@@ -153,7 +166,8 @@ function UserTable({
     ? presenceByUserId?.[presencePopover.userId]
     : undefined
 
-  const columnCount = showTotalCallsColumn ? 10 : 9
+  const columnCount =
+    8 + (showTotalCallsColumn ? 1 : 0) + (showTotalCallbacksColumn ? 1 : 0)
 
   return (
     <>
@@ -180,13 +194,24 @@ function UserTable({
           {showTotalCallsColumn && (
             <th className="text-center px-4 py-3 font-medium text-gray-600">Llamadas (total)</th>
           )}
-          <th
-            className="text-center px-4 py-3 font-medium text-gray-600"
-            title="Callbacks pendientes agendados para hoy (zona horaria del sistema)"
-          >
-            Callbacks (hoy)
+          <th className="text-center px-4 py-3 font-medium text-gray-600">
+            <div className="inline-flex items-center justify-center gap-1.5">
+              <span title="Callbacks pendientes agendados para hoy (zona horaria del sistema)">
+                Callbacks (hoy)
+              </span>
+              <button
+                type="button"
+                onClick={onToggleShowTotalCallbacksColumn}
+                title="Mostrar u ocultar callbacks históricos"
+                className="text-xs font-normal text-gray-500 hover:text-gray-800 hover:bg-gray-200/80 rounded px-1 py-0.5 transition-colors"
+              >
+                {showTotalCallbacksColumn ? '▼' : '▶'} Total
+              </button>
+            </div>
           </th>
-          <th className="text-center px-4 py-3 font-medium text-gray-600">Callbacks</th>
+          {showTotalCallbacksColumn && (
+            <th className="text-center px-4 py-3 font-medium text-gray-600">Callbacks</th>
+          )}
           <th className="text-center px-4 py-3 font-medium text-gray-600">Importaciones</th>
           <th className="text-right px-4 py-3 font-medium text-gray-600">Acciones</th>
         </tr>
@@ -295,7 +320,9 @@ function UserTable({
                 <td className="px-4 py-3 text-center">{u._count.callLogs}</td>
               )}
               <td className="px-4 py-3 text-center">{u.callbacksToday ?? 0}</td>
-              <td className="px-4 py-3 text-center">{u._count.callbacks}</td>
+              {showTotalCallbacksColumn && (
+                <td className="px-4 py-3 text-center">{u._count.callbacks}</td>
+              )}
               <td className="px-4 py-3 text-center">{u._count.imports}</td>
               <td className="px-4 py-3 text-right">
                 <div className="flex justify-end gap-2">
@@ -456,6 +483,9 @@ export default function Agents() {
   const [agentResetReason, setAgentResetReason] = useState('')
   const [deletePendingCallbacks, setDeletePendingCallbacks] = useState(true)
   const [showTotalCallsColumn, setShowTotalCallsColumn] = useState(readShowTotalCallsColumn)
+  const [showTotalCallbacksColumn, setShowTotalCallbacksColumn] = useState(
+    readShowTotalCallbacksColumn,
+  )
   const qc = useQueryClient()
 
   const toggleShowTotalCallsColumn = () => {
@@ -463,6 +493,18 @@ export default function Agents() {
       const next = !prev
       try {
         localStorage.setItem(SHOW_TOTAL_CALLS_KEY, String(next))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }
+
+  const toggleShowTotalCallbacksColumn = () => {
+    setShowTotalCallbacksColumn((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(SHOW_TOTAL_CALLBACKS_KEY, String(next))
       } catch {
         /* ignore */
       }
@@ -805,6 +847,8 @@ export default function Agents() {
             onResetAgent={isAdmin ? handleResetAgent : undefined}
             showTotalCallsColumn={showTotalCallsColumn}
             onToggleShowTotalCallsColumn={toggleShowTotalCallsColumn}
+            showTotalCallbacksColumn={showTotalCallbacksColumn}
+            onToggleShowTotalCallbacksColumn={toggleShowTotalCallbacksColumn}
           />
         )}
       </div>
@@ -842,6 +886,8 @@ export default function Agents() {
                 muted
                 showTotalCallsColumn={showTotalCallsColumn}
                 onToggleShowTotalCallsColumn={toggleShowTotalCallsColumn}
+                showTotalCallbacksColumn={showTotalCallbacksColumn}
+                onToggleShowTotalCallbacksColumn={toggleShowTotalCallbacksColumn}
               />
             </div>
           )}
