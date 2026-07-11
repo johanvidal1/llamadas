@@ -32,6 +32,7 @@ import CallModal from '../components/CallModal'
 import CompleteCallbackModal, { type CompleteConfirm } from '../components/CompleteCallbackModal'
 import DispositionSelector from '../components/DispositionSelector'
 import { ColaFilterDropdown } from '../components/ColaFilterDropdown'
+import { DuplicateRucBanner } from '../components/DuplicateRucBanner'
 import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { StatusBadge, DISPOSITION_CONFIG, getDispositionBorderColor, DispositionBadge } from '../components/StatusBadge'
@@ -1909,9 +1910,13 @@ export default function MyLeads() {
   const atFirstEmpty =
     firstEmptyTarget != null && firstEmptyTarget.clientIdx === currentIndex
 
-  const duplicateRucCount = detail
-    ? clients.filter((c) => c.ruc === detail.ruc).length
-    : 0
+  const duplicateRucSiblings = useMemo(() => {
+    if (!detail?.ruc) return []
+    const pool = isAdmin
+      ? allClients
+      : allClients.filter((c) => !isHiddenFromAgentNav(c.lastDisposition, c.callLogCount))
+    return pool.filter((c) => c.ruc === detail.ruc)
+  }, [detail?.ruc, allClients, isAdmin])
   const safeContactIdx =
     displayContacts.length > 0
       ? Math.min(activeContactIdx, displayContacts.length - 1)
@@ -2297,14 +2302,13 @@ export default function MyLeads() {
                       </span>
                     )}
                   </div>
-                  {duplicateRucCount > 1 && (
-                    <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                      <AlertCircle size={15} className="text-amber-600 shrink-0 mt-0.5" />
-                      <p className="text-xs text-amber-800">
-                        Hay {duplicateRucCount} registros con el mismo RUC ({displayDetail.ruc}) en tu lista.
-                        Revisá el lote de importación para distinguirlos.
-                      </p>
-                    </div>
+                  {detail && (
+                    <DuplicateRucBanner
+                      ruc={displayDetail.ruc}
+                      siblings={duplicateRucSiblings}
+                      currentCompanyId={detail.id}
+                      onSwitchBatch={switchBatch}
+                    />
                   )}
                   <div className="flex flex-col sm:flex-row gap-3 items-start">
                     <ReadField label="RUC" value={displayDetail.ruc} className="sm:w-40 shrink-0" mono />
