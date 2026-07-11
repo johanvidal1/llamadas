@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
+import { getCachedAuthUser, setCachedAuthUser } from '../lib/authUserCache'
 import { prisma } from '../lib/prisma'
 
 export interface AuthRequest extends Request {
@@ -29,24 +30,30 @@ async function authenticateRequest(req: AuthRequest, res: Response): Promise<boo
       name: string
       tokenVersion?: number
     }
-    const user = await prisma.user.findUnique({
-      where: { id: payload.id },
-      select: {
-        id: true,
-        email: true,
-        role: true,
-        name: true,
-        active: true,
-        isSuperAdmin: true,
-        isSystemOwner: true,
-        tokenVersion: true,
-      },
-    })
+    const jwtTokenVersion = payload.tokenVersion ?? 0
+    let user = getCachedAuthUser(payload.id, jwtTokenVersion)
+    if (!user) {
+      user = await prisma.user.findUnique({
+        where: { id: payload.id },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          name: true,
+          active: true,
+          isSuperAdmin: true,
+          isSystemOwner: true,
+          tokenVersion: true,
+        },
+      })
+      if (user?.active) {
+        setCachedAuthUser(user)
+      }
+    }
     if (!user || !user.active) {
       res.status(401).json({ error: 'Sesión inválida. Inicia sesión nuevamente.' })
       return false
     }
-    const jwtTokenVersion = payload.tokenVersion ?? 0
     if (jwtTokenVersion !== user.tokenVersion) {
       res.status(401).json({
         error: 'Tu sesión fue cerrada por un administrador. Inicia sesión nuevamente.',

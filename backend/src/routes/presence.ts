@@ -1,6 +1,7 @@
 import { Router, Response } from 'express'
 import { z } from 'zod'
 import UAParser = require('ua-parser-js')
+import { invalidateAuthUserCache } from '../lib/authUserCache'
 import { prisma } from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { excludeArchivedAgentWhere } from '../lib/archivedAgent'
@@ -159,6 +160,7 @@ router.post('/agents/:userId/revoke-sessions', requireAuth, async (req: AuthRequ
     }),
   ])
 
+  invalidateAuthUserCache(userId)
   res.json({ ok: true })
 })
 

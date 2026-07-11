@@ -1,10 +1,12 @@
 import { Router, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
+import { invalidateAuthUserCache } from '../lib/authUserCache'
 import { prisma } from '../lib/prisma'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
 import {
   getAgentAssignmentRunStatsByAgentId,
+  getDistinctCompanyIdsByAgentId,
   getPendingCompaniesByAgentId,
 } from '../lib/companyDisposition'
 import {
@@ -22,6 +24,35 @@ import { countCallLogsAfterResetByAgentIds } from '../lib/agentReset'
 import { todayYmdInAppTz, localDayStartUtc, localDayEndUtc } from '../lib/appTimezone'
 
 const router = Router()
+
+const USERS_LIST_CACHE_TTL_MS = 30_000
+const usersListCache = new Map<string, { expiresAt: number; payload: unknown }>()
+
+function usersListCacheKey(actorId: string, isSystemOwner: boolean): string {
+  return `${actorId}:${isSystemOwner}`
+}
+
+function getCachedUsersList(key: string): unknown | null {
+  const entry = usersListCache.get(key)
+  if (!entry) return null
+  if (Date.now() > entry.expiresAt) {
+    usersListCache.delete(key)
+    return null
+  }
+  return entry.payload
+}
+
+function setCachedUsersList(key: string, payload: unknown): void {
+  usersListCache.set(key, { expiresAt: Date.now() + USERS_LIST_CACHE_TTL_MS, payload })
+  if (usersListCache.size > 50) {
+    const oldest = usersListCache.keys().next().value
+    if (oldest) usersListCache.delete(oldest)
+  }
+}
+
+function invalidateUsersListCache(): void {
+  usersListCache.clear()
+}
 
 const userSelect = {
   id: true,
@@ -52,6 +83,13 @@ const updateUserSchema = z.object({
 // GET /api/users — list all users
 router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   const actor = await loadActor(req.user!.id)
+  const cacheKey = usersListCacheKey(req.user!.id, actor?.isSystemOwner ?? false)
+  const cached = getCachedUsersList(cacheKey)
+  if (cached) {
+    res.json(cached)
+    return
+  }
+
   const users = await prisma.user.findMany({
     where: {
       ...(actor?.isSystemOwner ? {} : { isSystemOwner: false }),
@@ -66,19 +104,7 @@ router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     orderBy: { name: 'asc' },
   })
 
-  const assignments = await prisma.assignment.findMany({
-    select: {
-      agentId: true,
-      contact: { select: { companyId: true } },
-    },
-  })
-  const companiesByAgent = new Map<string, Set<string>>()
-  for (const a of assignments) {
-    if (!companiesByAgent.has(a.agentId)) {
-      companiesByAgent.set(a.agentId, new Set())
-    }
-    companiesByAgent.get(a.agentId)!.add(a.contact.companyId)
-  }
+  const companiesByAgent = await getDistinctCompanyIdsByAgentId()
 
   const agentIds = users.map((u) => u.id)
   const todayYmd = todayYmdInAppTz()
@@ -137,6 +163,7 @@ router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     }
   })
 
+  setCachedUsersList(cacheKey, enriched)
   res.json(enriched)
 })
 
@@ -178,6 +205,7 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     },
     select: userSelect,
   })
+  invalidateUsersListCache()
   res.status(201).json(user)
 })
 
@@ -260,6 +288,8 @@ router.put('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
       active: true,
     },
   })
+  invalidateAuthUserCache(targetId)
+  invalidateUsersListCache()
   res.json(user)
 })
 
@@ -333,6 +363,8 @@ router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
   }
 
   await prisma.user.delete({ where: { id } })
+  invalidateAuthUserCache(id)
+  invalidateUsersListCache()
   res.json({ ok: true })
 })
 

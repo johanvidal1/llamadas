@@ -640,6 +640,25 @@ export type AgentAssignmentRunStats = {
   lastAssignmentAt: Date | null
 }
 
+/** Distinct company IDs per agent via SQL (avoids loading all Assignment rows). */
+export async function getDistinctCompanyIdsByAgentId(): Promise<Map<string, Set<string>>> {
+  const rows = await prisma.$queryRaw<{ agentId: string; companyId: string }[]>`
+    SELECT DISTINCT a."agentId", c."companyId"
+    FROM "Assignment" a
+    INNER JOIN "Contact" c ON c.id = a."contactId"
+  `
+  const byAgent = new Map<string, Set<string>>()
+  for (const row of rows) {
+    let set = byAgent.get(row.agentId)
+    if (!set) {
+      set = new Set()
+      byAgent.set(row.agentId, set)
+    }
+    set.add(row.companyId)
+  }
+  return byAgent
+}
+
 /** Per-agent run count + latest assignment date (matches GET /api/assignments/runs list semantics). */
 /** Pending companies per agent (assigned with no call log from that agent). */
 export async function getPendingCompaniesByAgentId(

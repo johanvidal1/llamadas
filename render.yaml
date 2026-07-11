@@ -25,6 +25,10 @@ services:
         fromDatabase:
           name: llamadas-db
           property: connectionString
+        # Pool tuning is applied in code (prisma.ts) if params are absent:
+        # connection_limit=5, pool_timeout=20. Override via env:
+        # DATABASE_CONNECTION_LIMIT, DATABASE_POOL_TIMEOUT
+        # Or append to DATABASE_URL: ?connection_limit=5&pool_timeout=20
       - key: JWT_SECRET
         generateValue: true   # Render genera un valor seguro automáticamente
       - key: FRONTEND_URL

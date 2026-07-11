@@ -263,4 +263,6 @@ model Callback {
   completed   Boolean   @default(false)
   completedAt DateTime?
   createdAt   DateTime  @default(now())
+
+  @@index([agentId, scheduledAt])
 }

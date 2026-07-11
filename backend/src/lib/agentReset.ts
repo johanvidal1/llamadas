@@ -1,4 +1,5 @@
 import { AssignmentRunStatus, Prisma } from '@prisma/client'
+import { invalidateAuthUserCache } from './authUserCache'
 import { ensureArchivedAgent, ARCHIVED_AGENT_NAME } from './archivedAgent'
 import { isAdminUser } from './userPermissions'
 import { prisma } from './prisma'
@@ -241,6 +242,8 @@ export async function executeAgentReset(
       metricsDeleted: metricsDeleted.count,
     }
   })
+
+  invalidateAuthUserCache(agentId)
 
   return {
     message: `Cola de ${preview.agent.name} reseteada. El historial comercial quedó en "${ARCHIVED_AGENT_NAME}".`,
