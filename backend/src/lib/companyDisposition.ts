@@ -15,6 +15,17 @@ export type LastDispositionEntry = {
 
 export type LastDispositionMap = Map<string, LastDispositionEntry>
 
+/** Max company IDs per disposition SQL batch (keeps memory under Postgres limits). */
+export const DISPOSITION_CHUNK_SIZE = 40
+
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = []
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size))
+  }
+  return chunks
+}
+
 type LatestLogSqlRow = {
   companyId: string
   disposition: string
@@ -158,30 +169,28 @@ export async function getLastDispositionByCompanyIds(
 
   const agentFilter = agentUserId ? agentScopedCallLogFilter(agentUserId) : Prisma.empty
 
-  const [latestRows, countRows] = await Promise.all([
-    prisma.$queryRaw<LatestLogSqlRow[]>`
-      SELECT DISTINCT ON (cl."companyId")
-        cl."companyId",
-        cl.disposition,
-        cl.aclaracion,
-        cl."calledAt",
-        cl."contactId",
-        cl."agentId",
-        u.name AS "agentName"
-      FROM "CallLog" cl
-      JOIN "User" u ON u.id = cl."agentId"
-      WHERE cl."companyId" IN (${Prisma.join(companyIds)})
-        ${agentFilter}
-      ORDER BY cl."companyId", cl."calledAt" DESC, cl.id DESC
-    `,
-    prisma.$queryRaw<CountSqlRow[]>`
-      SELECT cl."companyId", COUNT(*)::bigint AS count
-      FROM "CallLog" cl
-      WHERE cl."companyId" IN (${Prisma.join(companyIds)})
-        ${agentFilter}
-      GROUP BY cl."companyId"
-    `,
-  ])
+  const latestRows = await prisma.$queryRaw<LatestLogSqlRow[]>`
+    SELECT DISTINCT ON (cl."companyId")
+      cl."companyId",
+      cl.disposition,
+      cl.aclaracion,
+      cl."calledAt",
+      cl."contactId",
+      cl."agentId",
+      u.name AS "agentName"
+    FROM "CallLog" cl
+    JOIN "User" u ON u.id = cl."agentId"
+    WHERE cl."companyId" IN (${Prisma.join(companyIds)})
+      ${agentFilter}
+    ORDER BY cl."companyId", cl."calledAt" DESC, cl.id DESC
+  `
+  const countRows = await prisma.$queryRaw<CountSqlRow[]>`
+    SELECT cl."companyId", COUNT(*)::bigint AS count
+    FROM "CallLog" cl
+    WHERE cl."companyId" IN (${Prisma.join(companyIds)})
+      ${agentFilter}
+    GROUP BY cl."companyId"
+  `
 
   return buildLastDispositionMap(companyIds, latestRows, countRows)
 }
@@ -225,96 +234,55 @@ export async function getAssignedAgentIdByCompanyIds(
   return result
 }
 
+async function getLastDispositionByCompanyIdsPerAssignmentChunk(
+  companyIds: string[]
+): Promise<LastDispositionMap> {
+  const agentByCompany = await getAssignedAgentIdByCompanyIds(companyIds)
+  const idsByAgent = new Map<string, string[]>()
+
+  for (const id of companyIds) {
+    const agentId = agentByCompany.get(id)
+    if (!agentId) continue
+    if (!idsByAgent.has(agentId)) idsByAgent.set(agentId, [])
+    idsByAgent.get(agentId)!.push(id)
+  }
+
+  const result = new Map<string, LastDispositionEntry>()
+  for (const [agentId, ids] of idsByAgent) {
+    const partial = await getLastDispositionByCompanyIds(ids, agentId)
+    for (const [companyId, entry] of partial) {
+      result.set(companyId, entry)
+    }
+  }
+
+  for (const id of companyIds) {
+    if (!result.has(id)) {
+      result.set(id, emptyLastDispositionEntry())
+    }
+  }
+
+  return result
+}
+
 /** Last disposition per company scoped to each company's current assigned agent. */
 export async function getLastDispositionByCompanyIdsPerAssignment(
   companyIds: string[]
 ): Promise<LastDispositionMap> {
   if (companyIds.length === 0) return new Map()
 
-  const [latestRows, countRows] = await Promise.all([
-    prisma.$queryRaw<LatestLogSqlRow[]>`
-      WITH agent_counts AS (
-        SELECT
-          c."companyId",
-          a."agentId",
-          COUNT(*)::bigint AS cnt,
-          ROW_NUMBER() OVER (
-            PARTITION BY c."companyId"
-            ORDER BY COUNT(*) DESC, a."agentId"
-          ) AS rn
-        FROM "Contact" c
-        JOIN "Assignment" a ON a."contactId" = c.id
-        WHERE c."companyId" IN (${Prisma.join(companyIds)})
-        GROUP BY c."companyId", a."agentId"
-      ),
-      assigned_agent AS (
-        SELECT "companyId", "agentId"
-        FROM agent_counts
-        WHERE rn = 1
-      )
-      SELECT DISTINCT ON (cl."companyId")
-        cl."companyId",
-        cl.disposition,
-        cl.aclaracion,
-        cl."calledAt",
-        cl."contactId",
-        cl."agentId",
-        u.name AS "agentName"
-      FROM "CallLog" cl
-      JOIN assigned_agent aa ON aa."companyId" = cl."companyId" AND aa."agentId" = cl."agentId"
-      JOIN "User" u ON u.id = cl."agentId"
-      WHERE cl."companyId" IN (${Prisma.join(companyIds)})
-        AND EXISTS (
-          SELECT 1
-          FROM "Assignment" asn
-          WHERE asn."contactId" = cl."contactId"
-            AND asn."agentId" = aa."agentId"
-        )
-      ORDER BY cl."companyId", cl."calledAt" DESC, cl.id DESC
-    `,
-    prisma.$queryRaw<CountSqlRow[]>`
-      WITH agent_counts AS (
-        SELECT
-          c."companyId",
-          a."agentId",
-          COUNT(*)::bigint AS cnt,
-          ROW_NUMBER() OVER (
-            PARTITION BY c."companyId"
-            ORDER BY COUNT(*) DESC, a."agentId"
-          ) AS rn
-        FROM "Contact" c
-        JOIN "Assignment" a ON a."contactId" = c.id
-        WHERE c."companyId" IN (${Prisma.join(companyIds)})
-        GROUP BY c."companyId", a."agentId"
-      ),
-      assigned_agent AS (
-        SELECT "companyId", "agentId"
-        FROM agent_counts
-        WHERE rn = 1
-      )
-      SELECT cl."companyId", COUNT(*)::bigint AS count
-      FROM "CallLog" cl
-      JOIN assigned_agent aa ON aa."companyId" = cl."companyId" AND aa."agentId" = cl."agentId"
-      WHERE cl."companyId" IN (${Prisma.join(companyIds)})
-        AND EXISTS (
-          SELECT 1
-          FROM "Assignment" asn
-          WHERE asn."contactId" = cl."contactId"
-            AND asn."agentId" = aa."agentId"
-        )
-      GROUP BY cl."companyId"
-    `,
-  ])
-
-  return buildLastDispositionMap(companyIds, latestRows, countRows)
+  const result = new Map<string, LastDispositionEntry>()
+  for (const chunk of chunkArray(companyIds, DISPOSITION_CHUNK_SIZE)) {
+    const partial = await getLastDispositionByCompanyIdsPerAssignmentChunk(chunk)
+    for (const [companyId, entry] of partial) {
+      result.set(companyId, entry)
+    }
+  }
+  return result
 }
 
-/** Earliest scoped call per company using each company's assigned agent. */
-export async function getFirstRegisteredAtByCompanyIdsPerAssignment(
+async function getFirstRegisteredAtByCompanyIdsPerAssignmentChunk(
   companyIds: string[]
 ): Promise<Map<string, Date>> {
-  if (companyIds.length === 0) return new Map()
-
   const agentByCompany = await getAssignedAgentIdByCompanyIds(companyIds)
   const idsByAgent = new Map<string, string[]>()
 
@@ -326,25 +294,36 @@ export async function getFirstRegisteredAtByCompanyIdsPerAssignment(
   }
 
   const result = new Map<string, Date>()
-  await Promise.all(
-    [...idsByAgent.entries()].map(async ([agentId, ids]) => {
-      const partial = await getFirstRegisteredAtByCompanyIds(ids, agentId)
-      for (const [companyId, date] of partial) {
-        result.set(companyId, date)
-      }
-    })
-  )
+  for (const [agentId, ids] of idsByAgent) {
+    const partial = await getFirstRegisteredAtByCompanyIds(ids, agentId)
+    for (const [companyId, date] of partial) {
+      result.set(companyId, date)
+    }
+  }
 
   return result
 }
 
-/** Period call counts per company using each company's assigned agent. */
-export async function getCallCountsInPeriodByCompanyIdsPerAssignment(
+/** Earliest scoped call per company using each company's assigned agent. */
+export async function getFirstRegisteredAtByCompanyIdsPerAssignment(
+  companyIds: string[]
+): Promise<Map<string, Date>> {
+  if (companyIds.length === 0) return new Map()
+
+  const result = new Map<string, Date>()
+  for (const chunk of chunkArray(companyIds, DISPOSITION_CHUNK_SIZE)) {
+    const partial = await getFirstRegisteredAtByCompanyIdsPerAssignmentChunk(chunk)
+    for (const [companyId, date] of partial) {
+      result.set(companyId, date)
+    }
+  }
+  return result
+}
+
+async function getCallCountsInPeriodByCompanyIdsPerAssignmentChunk(
   companyIds: string[],
   calledAtRange: { gte?: Date; lte?: Date }
 ): Promise<Map<string, number>> {
-  if (companyIds.length === 0) return new Map()
-
   const agentByCompany = await getAssignedAgentIdByCompanyIds(companyIds)
   const idsByAgent = new Map<string, string[]>()
 
@@ -358,15 +337,30 @@ export async function getCallCountsInPeriodByCompanyIdsPerAssignment(
   const result = new Map<string, number>()
   for (const id of companyIds) result.set(id, 0)
 
-  await Promise.all(
-    [...idsByAgent.entries()].map(async ([agentId, ids]) => {
-      const partial = await getCallCountsInPeriodByCompanyIds(ids, calledAtRange, agentId)
-      for (const [companyId, count] of partial) {
-        result.set(companyId, count)
-      }
-    })
-  )
+  for (const [agentId, ids] of idsByAgent) {
+    const partial = await getCallCountsInPeriodByCompanyIds(ids, calledAtRange, agentId)
+    for (const [companyId, count] of partial) {
+      result.set(companyId, count)
+    }
+  }
 
+  return result
+}
+
+/** Period call counts per company using each company's assigned agent. */
+export async function getCallCountsInPeriodByCompanyIdsPerAssignment(
+  companyIds: string[],
+  calledAtRange: { gte?: Date; lte?: Date }
+): Promise<Map<string, number>> {
+  if (companyIds.length === 0) return new Map()
+
+  const result = new Map<string, number>()
+  for (const chunk of chunkArray(companyIds, DISPOSITION_CHUNK_SIZE)) {
+    const partial = await getCallCountsInPeriodByCompanyIdsPerAssignmentChunk(chunk, calledAtRange)
+    for (const [companyId, count] of partial) {
+      result.set(companyId, count)
+    }
+  }
   return result
 }
 
@@ -869,6 +863,30 @@ export type DaySummaryEntry = {
   count: number
   registered: number
   pending: number
+}
+
+/** Distinct company IDs with at least one scoped call in the date range (light prefilter). */
+export async function getDistinctCompanyIdsWithCallsInRange(
+  calledAtRange: { gte?: Date; lte?: Date },
+  dispositionAgentId?: string
+): Promise<string[]> {
+  const rows = await prisma.callLog.findMany({
+    where: {
+      calledAt: {
+        ...(calledAtRange.gte ? { gte: calledAtRange.gte } : {}),
+        ...(calledAtRange.lte ? { lte: calledAtRange.lte } : {}),
+      },
+      ...(dispositionAgentId
+        ? {
+            agentId: dispositionAgentId,
+            contact: { assignment: { agentId: dispositionAgentId } },
+          }
+        : {}),
+    },
+    select: { companyId: true },
+    distinct: ['companyId'],
+  })
+  return rows.map((r) => r.companyId)
 }
 
 /** Companies whose scoped last activity falls within the date range. */

@@ -13,6 +13,7 @@ import {
   buildDaySummary,
   dispositionMatchesFilter,
   filterCompanyIdsByLastActivityRange,
+  getDistinctCompanyIdsWithCallsInRange,
   FUNNEL_PIPELINE_KEYS,
   getCallCountsInPeriodByCompanyIds,
   getCallCountsInPeriodByCompanyIdsPerAssignment,
@@ -365,7 +366,17 @@ async function buildClientsFilterContext(
   let preloadedLastByCompany: LastDispositionMap | undefined
 
   if (calledAtRange) {
-    const scopedIds = await getScopedCompanyIds(where)
+    const callCandidates = await getDistinctCompanyIdsWithCallsInRange(
+      calledAtRange,
+      dispositionPerAssignedAgentFlag ? undefined : dispositionAgentId
+    )
+    if (callCandidates.length === 0) {
+      return { empty: true, take, page, registrationCount: 0 }
+    }
+    const scopedIds = await getScopedCompanyIds({ ...where, id: { in: callCandidates } })
+    if (scopedIds.length === 0) {
+      return { empty: true, take, page, registrationCount: 0 }
+    }
     const filtered = await filterCompanyIdsByLastActivityRange(
       scopedIds,
       calledAtRange,
