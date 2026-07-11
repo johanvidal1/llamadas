@@ -1700,19 +1700,7 @@ export default function Clients() {
     if (groupMode === 'day') {
       setExpandedGroups((prev) => {
         const validKeys = new Set(displayGroups.map((g) => g.key))
-        const filtered = new Set([...prev].filter((k) => validKeys.has(k)))
-        if (filtered.size > 0) return filtered
-        const today = todayLocal()
-        const shouldExpandToday =
-          datePresetIntent === 'today' ||
-          (datePresetIntent === null && isTodayPreset(registeredFrom, registeredTo))
-        if (shouldExpandToday && validKeys.has(today)) {
-          return new Set([today])
-        }
-        if (displayGroups.length === 1) {
-          return new Set([displayGroups[0].key])
-        }
-        return filtered
+        return new Set([...prev].filter((k) => validKeys.has(k)))
       })
       return
     }
