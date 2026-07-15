@@ -35,7 +35,6 @@ export function FunnelDonutChart({
   onStageClick,
   emptyMessage = 'Sin empresas en el periodo',
   centerLabel = 'empresas',
-  legendScrollThreshold = 6,
 }: {
   pipeline: Record<string, number>
   series?: DonutSeriesRow[]
@@ -43,7 +42,6 @@ export function FunnelDonutChart({
   onStageClick: (stageKey: string) => void
   emptyMessage?: string
   centerLabel?: string
-  legendScrollThreshold?: number
 }) {
   const legendRows: DonutSeriesRow[] = series ?? AGENT_PIPELINE_FUNNEL.map((row) => ({
     key: row.key,
@@ -74,8 +72,6 @@ export function FunnelDonutChart({
 
     return { slices: built, total: chartTotal }
   }, [pipeline, legendRows])
-
-  const legendScrollable = slices.length > legendScrollThreshold
 
   if (loading) {
     return (
@@ -166,9 +162,7 @@ export function FunnelDonutChart({
         </div>
       </div>
 
-      <div
-        className={`mt-3${legendScrollable ? ' max-h-32 overflow-y-auto pr-1' : ''}`}
-      >
+      <div className="mt-3">
         <div className="space-y-1.5">
           {legendRows.map((row) => {
             const count = pipeline[row.key] ?? 0

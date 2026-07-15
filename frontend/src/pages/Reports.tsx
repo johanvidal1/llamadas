@@ -12,7 +12,7 @@ import { es } from 'date-fns/locale'
 import {
   Users, Phone, CalendarClock, Target,
   Award, AlertCircle, ChevronUp, ChevronDown, Package, Filter, X, RefreshCw, ChevronRight,
-  ChevronLeft, Calendar,
+  ChevronLeft, Calendar, PieChart, Layers,
 } from 'lucide-react'
 import { StatusBadge, DispositionBadge } from '../components/StatusBadge'
 import { StatusHelpPopover } from '../components/StatusHelpPopover'
@@ -1505,27 +1505,33 @@ export default function Reports() {
                     )}
                   </p>
                 </div>
-                <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-50 text-xs shrink-0">
+                <div
+                  className="inline-flex rounded-lg border border-gray-300 p-0.5 bg-gray-100 text-xs shrink-0 shadow-sm"
+                  role="group"
+                  aria-label="Cambiar vista del gráfico"
+                >
                   <button
                     type="button"
                     onClick={() => setLeftChartView('funnel')}
-                    className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-medium transition-colors cursor-pointer ${
                       leftChartView === 'funnel'
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-500 hover:text-gray-700'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-gray-600 hover:bg-white hover:text-gray-900'
                     }`}
                   >
+                    <Layers className="w-3.5 h-3.5 shrink-0" aria-hidden />
                     Embudo comercial
                   </button>
                   <button
                     type="button"
                     onClick={() => setLeftChartView('zero')}
-                    className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-medium transition-colors cursor-pointer ${
                       leftChartView === 'zero'
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-500 hover:text-gray-700'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-gray-600 hover:bg-white hover:text-gray-900'
                     }`}
                   >
+                    <PieChart className="w-3.5 h-3.5 shrink-0" aria-hidden />
                     Respuestas 0%
                   </button>
                 </div>
@@ -1544,7 +1550,6 @@ export default function Reports() {
                   loading={zeroPeriodLoading && !zeroPeriodData}
                   onStageClick={goToClientsFilter}
                   emptyMessage="Sin empresas con respuesta 0% en el periodo"
-                  legendScrollThreshold={4}
                 />
               )}
             </div>
