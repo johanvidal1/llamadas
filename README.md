@@ -264,3 +264,16 @@ Llamadas/
 - **Frontend:** React 18 · TypeScript · Vite · Tailwind CSS · TanStack Query
 - **Auth:** JWT (24h) · bcrypt (12 rounds) · RBAC (ADMIN/AGENT)
 - **Import:** xlsx · csv-parser (mapeo automático de columnas)
+---
+
+## Staging (Ubuntu) vs produccion (Render)
+
+| Entorno | Dominio | Rama Git | Deploy |
+|---------|---------|----------|--------|
+| Produccion (Render) | crm.optickcloud.com | `main` | Auto-Deploy Render |
+| Staging (Ubuntu) | pruebacrm.optickcloud.com | `staging` | `scripts/deploy-staging.sh` |
+
+Detalle y checklist: [docs/GIT-RENDER-VS-UBUNTU.md](docs/GIT-RENDER-VS-UBUNTU.md).
+
+**No** configures Auto-Deploy de Render contra `staging`. El servidor Ubuntu no debe hacer `git push`.
+
