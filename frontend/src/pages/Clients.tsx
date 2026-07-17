@@ -73,7 +73,8 @@ function isFunnelChipFilter(filter: string): boolean {
 
 const UNASSIGNED_AGENT_KEY = '__unassigned__'
 
-const PAGE_SIZE_OPTIONS = [25, 50, 100, 200, 500] as const
+const MAX_CLIENTS_LIMIT = 2000
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200, 500, 2000] as const
 const CLIENTS_PAGE_SIZE_KEY = 'clients-page-size'
 const CLIENTS_COLUMN_VISIBILITY_KEY = 'clients-column-visibility'
 
@@ -1440,7 +1441,7 @@ export default function Clients() {
     groupMode === 'week' ||
     groupMode === 'month'
 
-  const effectiveLimit = Math.min(pageSize, 500)
+  const effectiveLimit = Math.min(pageSize, MAX_CLIENTS_LIMIT)
 
   const clientsFilterParams = {
     search: search || undefined,

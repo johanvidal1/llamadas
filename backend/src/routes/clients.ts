@@ -32,6 +32,8 @@ import {
 } from '../lib/companyDisposition'
 import { countUnassignedCompanies, BatchBlockedError } from '../lib/assignmentOrder'
 
+const MAX_CLIENTS_LIMIT = 2000
+
 const router = Router()
 
 function contactFilterForRole(
@@ -321,7 +323,7 @@ async function buildClientsFilterContext(
     registeredTo,
   } = query
 
-  const take = Math.min(Number(query.limit) || 50, 500)
+  const take = Math.min(Number(query.limit) || 50, MAX_CLIENTS_LIMIT)
   const page = Math.max(Number(query.page) || 1, 1)
   const isAgent = req.user!.role === 'AGENT'
   const callLogAgentId = scopedAgentId(req.user!.role, req.user!.id, agentId)
@@ -632,7 +634,7 @@ router.get('/pipeline-summary', requireAuth, async (req: AuthRequest, res: Respo
   }
 
   const built = await buildClientsFilterContext(req, query)
-  const take = Math.min(Number(query.limit) || 50, 500)
+  const take = Math.min(Number(query.limit) || 50, MAX_CLIENTS_LIMIT)
   const page = Math.max(Number(query.page) || 1, 1)
 
   if ('empty' in built) {
@@ -696,7 +698,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     includePipeline = 'true',
   } = query
 
-  const take = Math.min(Number(limit) || 50, 500)
+  const take = Math.min(Number(limit) || 50, MAX_CLIENTS_LIMIT)
   const skip = (Math.max(Number(page) || 1, 1) - 1) * take
   const isAgent = req.user!.role === 'AGENT'
   const shouldIncludePipeline = includePipeline !== 'false'
