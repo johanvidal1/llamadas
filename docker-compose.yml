@@ -1,18 +1,102 @@
-version: '3.8'
+# /opt/llamadas/docker-compose.yml
+# CRM Llamadas — staging (pruebacrm.optickcloud.com)
+# NO publicar Postgres al host. NO mezclar con /opt/platform.
+# Caddy (en /opt/platform) hará: /api/* → llamadas-api:3000 ; resto → llamadas-frontend:80
+#
+# Aún NO levantar hasta tener .env real (Paso 3+).
+# Validar sintaxis: docker compose -f /opt/llamadas/docker-compose.yml config
 
 services:
   db:
-    image: postgres:15-alpine
-    container_name: llamadas_db
-    environment:
-      POSTGRES_DB: llamadas_crm
-      POSTGRES_USER: crm_user
-      POSTGRES_PASSWORD: crm_pass_2024
-    ports:
-      - '5432:5432'
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+    image: postgres:16-alpine
+    container_name: llamadas-db
     restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - llamadas_pgdata:/var/lib/postgresql/data
+    networks:
+      - internas
+    # IMPORTANTE: no mapear 5432 al host — solo red internas
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: llamadas-api:staging
+    container_name: llamadas-api
+    restart: unless-stopped
+    # Variables desde .env del proyecto (interpolación Compose). No usar env_file
+    # obligatorio hasta que exista .env (Paso 3).
+    environment:
+      NODE_ENV: production
+      # Puerto interno alineado con el plan Caddy (app default local es 3001)
+      PORT: "3000"
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL}
+      CORS_EXTRA_ORIGINS: ${CORS_EXTRA_ORIGINS:-}
+      APP_TIMEZONE: ${APP_TIMEZONE:-America/Lima}
+      SYSTEM_OWNER_EMAIL: ${SYSTEM_OWNER_EMAIL:-}
+      SYSTEM_OWNER_PASSWORD: ${SYSTEM_OWNER_PASSWORD:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      CONTACT_TO_SUPPORT: ${CONTACT_TO_SUPPORT:-}
+      CONTACT_TO_SALES: ${CONTACT_TO_SALES:-}
+      DATABASE_CONNECTION_LIMIT: ${DATABASE_CONNECTION_LIMIT:-5}
+      DATABASE_POOL_TIMEOUT: ${DATABASE_POOL_TIMEOUT:-20}
+    volumes:
+      - llamadas_uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internas
+      - proxy
+    # Sin ports: — Caddy entra por red proxy al container_name:3000
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Origen público SIN /api (el cliente añade /api). Same-origin vía Caddy.
+        VITE_API_URL: ${VITE_API_URL:-https://pruebacrm.optickcloud.com}
+        VITE_CSP_EXTRA_ORIGINS: ${VITE_CSP_EXTRA_ORIGINS:-}
+    image: llamadas-frontend:staging
+    container_name: llamadas-frontend
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - proxy
+    # Puerto interno 80 (nginx). Caddy reverse_proxy al container_name.
 
 volumes:
-  postgres_data:
+  llamadas_pgdata:
+  llamadas_uploads:
+
+networks:
+  proxy:
+    external: true
+  internas:
+    driver: bridge
