@@ -821,6 +821,8 @@ export default function MyLeads() {
   const pendingContactIdxRef = useRef<number | null>(null)
   const needsContactResolveRef = useRef(false)
   const companyDeepLinkHandledRef = useRef(false)
+  // Cold entry to detail (no deep-link, no explicit selection) → auto-jump to first pending
+  const autoJumpToPendingRef = useRef(!initialCompanyId)
   const [editTelefono, setEditTelefono] = useState('')
   const [editEmail, setEditEmail] = useState('')
   const [editDni, setEditDni] = useState('')
@@ -1432,6 +1434,7 @@ export default function MyLeads() {
 
   const openDetailFromList = useCallback(
     (realIdx: number) => {
+      autoJumpToPendingRef.current = false
       if (realIdx >= 0) void goTo(realIdx)
       setReturnToView('list')
       switchView('detail', { persist: false })
@@ -1510,6 +1513,17 @@ export default function MyLeads() {
     }
   }, [nextPendingTarget, navigateToCompany])
 
+  // On cold entry to detail (default view, view toggle or batch switch — never after an
+  // explicit selection or deep-link) position the agent on the first pending company
+  useEffect(() => {
+    if (viewMode !== 'detail' || !autoJumpToPendingRef.current) return
+    if (loadingList || clients.length === 0) return
+    autoJumpToPendingRef.current = false
+    if (firstEmptyTarget && firstEmptyTarget.clientIdx !== currentIndex) {
+      void navigateToCompany(firstEmptyTarget.clientIdx)
+    }
+  }, [viewMode, loadingList, clients.length, firstEmptyTarget, currentIndex, navigateToCompany])
+
   const navigateWithSave = useCallback(
     (action: () => Promise<void>) => async () => {
       try {
@@ -1524,6 +1538,7 @@ export default function MyLeads() {
   const switchBatch = (batchId: string) => {
     setSelectedBatchId(batchId)
     setCurrentIndex(0)
+    autoJumpToPendingRef.current = true
     pendingContactIdRef.current = null
     pendingContactIdxRef.current = null
     pendingCallLogIdRef.current = null
@@ -1564,6 +1579,7 @@ export default function MyLeads() {
     opts?: { callLogId?: string; contactId?: string }
   ) => {
     if (opts?.callLogId) pendingCallLogIdRef.current = opts.callLogId
+    autoJumpToPendingRef.current = false
     const idx = clients.findIndex((c) => c.id === clientId)
     if (idx >= 0) {
       if (opts?.contactId) {
@@ -2132,7 +2148,11 @@ export default function MyLeads() {
           {/* ── View toggle (fixed position; nav slot always to the right) ── */}
           <div className="flex bg-blue-700 rounded-lg p-0.5 gap-0.5 shrink-0">
             <button
-              onClick={() => { setReturnToView(null); switchView('detail') }}
+              onClick={() => {
+                setReturnToView(null)
+                if (viewMode !== 'detail') autoJumpToPendingRef.current = true
+                switchView('detail')
+              }}
               title="Vista detalle — ficha individual con historial"
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
                 viewMode === 'detail'
@@ -3026,6 +3046,11 @@ export default function MyLeads() {
             (queueIndexById.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
             (queueIndexById.get(b.id) ?? Number.MAX_SAFE_INTEGER)
         )
+        // Single "start here" row: first pending company in the visible (filtered + sorted) list
+        const firstPendingListId = listSorted.find((c) => {
+          const idx = queueIndexById.get(c.id)
+          return idx != null && !companyHasAgentLog(idx)
+        })?.id
         return (
           <div className="flex-1 overflow-y-auto p-4 lg:p-5 space-y-4">
             {/* Filters — row 1: search, cola, lote */}
@@ -3196,11 +3221,17 @@ export default function MyLeads() {
                           : 'text-blue-700 bg-blue-50 border border-blue-200'
                         : ''
                       const aclaracion = c.lastAclaracion || (c.lastDisposition ? getAclaracionForDisposition(c.lastDisposition) : '')
+                      const isSelectedRow = navIdx === currentIndex
+                      const isFirstPendingRow = !isSelectedRow && c.id === firstPendingListId
                       return (
                         <tr
                           key={c.id}
-                          className={`hover:bg-blue-50 cursor-pointer transition-colors ${
-                            navIdx === currentIndex ? 'bg-blue-50 border-l-2 border-blue-500' : ''
+                          className={`hover:bg-green-50 cursor-pointer transition-colors ${
+                            isSelectedRow
+                              ? 'bg-green-50 border-l-2 border-green-500'
+                              : isFirstPendingRow
+                              ? 'bg-green-50/70 border-l-2 border-green-400'
+                              : ''
                           }`}
                           onClick={() => openDetailFromList(realIdx)}
                         >
@@ -3237,7 +3268,14 @@ export default function MyLeads() {
                                 ) : null}
                               </div>
                             ) : (
-                              <StatusBadge status="PENDING" />
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <StatusBadge status="PENDING" />
+                                {isFirstPendingRow && (
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-100 text-green-700">
+                                    Empezar aquí
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </td>
                           <td className="px-4 py-2.5">
