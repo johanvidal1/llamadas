@@ -1441,7 +1441,7 @@ export default function Clients() {
     groupMode === 'week' ||
     groupMode === 'month'
 
-  const effectiveLimit = Math.min(pageSize, MAX_CLIENTS_LIMIT)
+  const effectiveLimit = effectiveGroupBy ? MAX_CLIENTS_LIMIT : Math.min(pageSize, MAX_CLIENTS_LIMIT)
 
   const clientsFilterParams = {
     search: search || undefined,
