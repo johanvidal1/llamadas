@@ -696,8 +696,8 @@ function countCompanies(list: ClientSummary[]) {
   return list.length
 }
 
-function batchMetricsLabel(companyCount: number, contactCount: number) {
-  return `${companyCount} empresas · ${contactCount} contactos`
+function batchMetricsLabel(companyCount: number, _contactCount: number) {
+  return `${companyCount} empresas`
 }
 
 function batchLabelShort(batch: { filename: string }) {
