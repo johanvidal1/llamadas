@@ -12,6 +12,8 @@ export const TENANT_ROOT_DOMAIN = 'optickcloud.com'
 export const HOST_SLUG_ALIASES: Record<string, string> = {
   'pruebacrm.optickcloud.com': OPTICK_TENANT_SLUG,
   'crm.optickcloud.com': OPTICK_TENANT_SLUG,
+  /** PR4 smoke host (Caddy → staging stack); same Optick tenant until PR5 demo. */
+  'mt-staging.optickcloud.com': OPTICK_TENANT_SLUG,
   localhost: OPTICK_TENANT_SLUG,
   '127.0.0.1': OPTICK_TENANT_SLUG,
 }
@@ -22,6 +24,9 @@ export const RESERVED_SUBDOMAINS = new Set([
   'api',
   'mail',
   'status',
+  'monitor',
+  'prodtest',
+  'mt-staging',
 ])
 
 /** Tables that carry denormalized tenantId (must stay in sync with schema + backfill). */

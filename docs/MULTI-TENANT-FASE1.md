@@ -4,7 +4,7 @@ Documento de arquitectura y checklist Fase 1. **PRs en orden** (ver §8); no sal
 
 | Campo | Valor |
 |-------|--------|
-| Estado | PR3 hecho — filtro Prisma por tenantId (ALS + `$extends`) en staging |
+| Estado | PR4 — Caddy/DNS wildcard `*.optickcloud.com` (staging docs + platform; prod upstream) |
 | Enfoque | Shared Postgres + columna `tenantId` |
 | Stack | Node/Express + React + Prisma + Docker Compose (Ubuntu) |
 | Prod | Ubuntu (`crm.optickcloud.com`) — **no** Render como destino primario |
@@ -140,9 +140,8 @@ Same-origin (`clienteA.optickcloud.com` → `/api/...` vía Caddy): el frontend 
 
 ```ts
 // PR2 implementado: backend/src/middleware/tenant.ts + lib/tenant.ts
-// HOST_SLUG_ALIASES: pruebacrm.optickcloud.com / crm.optickcloud.com /
-//   localhost / 127.0.0.1 → slug `crm` (Optick).
-// RESERVED: www, api, mail, status.
+// HOST_SLUG_ALIASES: pruebacrm / crm / mt-staging / localhost / 127.0.0.1 → slug `crm`.
+// RESERVED: www, api, mail, status, monitor, prodtest, mt-staging.
 // Otros `*.optickcloud.com` → primer label = slug → Tenant.findUnique.
 ```
 
@@ -195,46 +194,53 @@ En `authenticate`: rechazar si `payload.tenantId !== req.tenant.id`.
 
 Caddy vive en **`/opt/platform`** (red proxy externa). **No** meter Caddy dentro del compose del CRM.
 
-### DNS
+Plantilla + runbook: [`infra/platform/Caddyfile.example`](../infra/platform/Caddyfile.example) y [`infra/platform/README-CADDY-WILDCARD.md`](../infra/platform/README-CADDY-WILDCARD.md).
 
-- Wildcard: `*.optickcloud.com` → IP pública del Ubuntu (A/AAAA o CNAME según setup).
-- Mantener `crm.optickcloud.com` como slug `crm` (tenant Optick) para no romper bookmarks.
-- Staging: `pruebacrm.optickcloud.com` sigue en stack/env **separado**; no mezclar datos staging ↔ prod.
+### Realidad en Ubuntu (hoy)
 
-### Caddyfile (concepto)
+- Público: **Cloudflare Tunnel** (`cloudflared` → `caddy:80` en red `proxy`). TLS en el edge de Cloudflare; Caddy con `auto_https off`.
+- Staging: `http://pruebacrm.optickcloud.com` → `llamadas-api:3000` / `llamadas-frontend:80`
+- Prod: `http://crm.optickcloud.com` (+ `prodtest`) → `llamadas-prod-api:3000` / `llamadas-prod-frontend:80`
+- Hosts explícitos **ganan** al wildcard en Caddy.
 
-Un site block wildcard hacia los **mismos** contenedores:
+### DNS / Tunnel (acciones del usuario)
+
+1. Cloudflare Zero Trust → Tunnel → **Public Hostname**:
+   - Existentes: `pruebacrm`, `crm`, `monitor` (y `prodtest` si aplica) → `http://caddy:80`
+   - **Nuevo:** `*` (`*.optickcloud.com`) → `http://caddy:80`
+   - Opcional smoke staging: `mt-staging` → `http://caddy:80`
+2. DNS: dejar que Cloudflare gestione el CNAME del túnel; no apuntar el wildcard de clientes a staging.
+3. SSL: Universal SSL debe cubrir `*.optickcloud.com` (un nivel).
+4. **Let’s Encrypt DNS-01 en Caddy:** solo si se publica **sin** túnel (legacy). Con el diseño actual **no** hace falta.
+
+### Caddyfile (wildcard → prod)
 
 ```caddyfile
-*.optickcloud.com {
-  encode gzip
+# Hosts explícitos (pruebacrm, crm, monitor, …) arriba — no borrarlos.
 
-  @api path /api/*
-  handle @api {
-    reverse_proxy llamadas-api:3000
+http://*.optickcloud.com {
+  handle /api/* {
+    reverse_proxy llamadas-prod-api:3000
   }
-
   handle {
-    reverse_proxy llamadas-frontend:80
+    reverse_proxy llamadas-prod-frontend:80
   }
 }
 ```
 
-Ajustar nombres de red/container al compose real (`container_name` + red `proxy`).
-
 Puntos clave:
 
-- **Un frontend, un API** para todos los tenants.
+- **Un frontend + un API de prod** para todos los tenants reales.
 - Aislamiento = Host → middleware de app, no un contenedor por cliente.
-- **Let’s Encrypt wildcard** suele requerir **DNS challenge** (p. ej. token API de Cloudflare), no solo HTTP-01.
-- Frontend en prod: preferir same-origin / relative `/api` (`window.location.origin`) para no bakear un solo dominio en la imagen.
+- Wildcard **nunca** a contenedores staging (`llamadas-api` / `llamadas-frontend`).
+- Frontend: same-origin / relative `/api` vía Caddy.
 
 ### Staging vs prod
 
-| Entorno | Dominio | DB |
-|---------|---------|-----|
-| Staging | `pruebacrm.optickcloud.com` (+ subdominios de prueba si hace falta) | Postgres de staging |
-| Prod | `crm.optickcloud.com` + `*.optickcloud.com` | Postgres de prod |
+| Entorno | Dominio | Upstream Caddy | DB |
+|---------|---------|----------------|-----|
+| Staging | `pruebacrm.optickcloud.com`, opcional `mt-staging.optickcloud.com` | `llamadas-api` / `llamadas-frontend` | Postgres staging |
+| Prod | `crm.optickcloud.com` + `*.optickcloud.com` | `llamadas-prod-api` / `llamadas-prod-frontend` | Postgres prod |
 
 **Nunca** poner tenants de clientes reales y datos de prueba en la misma DB multi-tenant de producción.
 
@@ -297,12 +303,15 @@ Deploy del middleware + login scoped + filtros en queries (PRs 2–3).
 - [x] Login scoped a `req.tenant.id` — PR2: JWT `{ id, email, role, name, tenantId, tokenVersion }`
 - [x] CORS por función para `*.optickcloud.com` (+ lista `FRONTEND_URL` / `CORS_EXTRA_ORIGINS`)
 - [x] Auditoría: queries Prisma de negocio con `tenantId` — PR3: AsyncLocalStorage + Prisma `$extends` (`lib/tenantContext.ts`, `lib/prisma.ts`); `resolveTenant` hace `runWithTenant`; modelos en `TENANT_SCOPED_TABLES`
-- [ ] Caddy wildcard + DNS (o subdominios de prueba) en staging
+- [x] Caddy wildcard + DNS runbook — PR4: `infra/platform/Caddyfile.example` + `README-CADDY-WILDCARD.md`; wildcard → **prod**; smoke opcional `mt-staging` → staging; CORS/`resolveTenant` ya cubren `*.optickcloud.com`
+- [ ] Cloudflare: Public Hostname `*.optickcloud.com` → `http://caddy:80` (acción manual del operador)
 - [ ] Segundo tenant vacío (`demo`) creado
 - [ ] Prueba de aislamiento: usuario de A **no** ve datos de B (API + UI)
 - [ ] Token de A contra host de B → 401/403
 - [ ] Backup/restore documentado post-migración
 - [ ] Recién entonces onboarding de cliente real
+
+**Residual PR3 (antes de PR5 demo):** `$queryRaw` en reportes/métricas **no** pasa por la extensión Prisma — con un solo tenant (Optick) no hay leak; **antes** de crear el tenant `demo` hay que scopear esos SQL con `tenantId` (o encapsularlos).
 
 ### Aplicar PR1 en staging (Ubuntu)
 
@@ -351,6 +360,17 @@ Implementación: `resolveTenant` → `runWithTenant(req.tenant.id)`; extensión 
 **Residual:** `$queryRaw` en reportes/métricas no pasa por la extensión — con un solo tenant (Optick) no hay leak; antes del tenant `demo` (PR5) hay que añadir `tenantId` a esos SQL o encapsularlos.
 
 **No** desplegar en prod (`main`) hasta cerrar checklist §6.
+
+### Aplicar PR4 (Caddy / DNS) — Ubuntu
+
+1. **Repo (laptop):** cambios en `infra/platform/` + docs; backend alias `mt-staging` (opcional). Push `staging` y, si hace falta smoke en staging app: `bash /opt/llamadas/scripts/deploy-staging.sh`.
+2. **Caddy (servidor):** ver runbook [`infra/platform/README-CADDY-WILDCARD.md`](../infra/platform/README-CADDY-WILDCARD.md) — backup → fusionar Caddyfile → `caddy validate` → `caddy reload`. **No** UFW / **no** sshd.
+3. **Cloudflare (operador):** Public Hostname `*` → `http://caddy:80` (y opcional `mt-staging`). Sin esto el wildcard no recibe tráfico público.
+4. Verificar: `curl` health con `Host: pruebacrm…` y `Host: crm…` en `127.0.0.1`; luego HTTPS público.
+
+**Aplicado en servidor (2026-07-18):** `/opt/platform/Caddyfile` actualizado (backup `Caddyfile.bak.20260718-132612`); validate + reload OK; health OK para `pruebacrm`, `crm`, `mt-staging` y un host wildcard de prueba vía `Host` en LAN. **Pendiente del operador:** Public Hostname Cloudflare `*` (y opcional `mt-staging`).
+
+**No** merge a `main` / **no** `deploy-prod.sh` solo por PR4 de docs; el reload de Caddy es aditivo si se mantienen los site blocks existentes.
 
 ---
 

@@ -1,0 +1,95 @@
+# =============================================================================
+# Caddyfile — Optick platform (servidoroptick)
+# Acceso público: Cloudflare Tunnel (TLS en el edge de Cloudflare).
+# Public Hostname Zero Trust → http://caddy:80 (red Docker proxy).
+# auto_https off: TLS lo termina Cloudflare.
+# Plantilla repo: infra/platform/Caddyfile.example (PR4 multi-tenant)
+# Fuente en servidor: /opt/platform/Caddyfile
+# =============================================================================
+{
+	email johanvidal1@gmail.com
+	auto_https off
+}
+
+# -----------------------------------------------------------------------------
+# LAN local — curl http://127.0.0.1/  ó  curl http://192.168.1.51/
+# Default → staging
+# -----------------------------------------------------------------------------
+:80 {
+	handle /api/* {
+		reverse_proxy llamadas-api:3000
+	}
+	handle {
+		reverse_proxy llamadas-frontend:80
+	}
+}
+
+# -----------------------------------------------------------------------------
+# Staging CRM — pruebacrm.optickcloud.com → /opt/llamadas
+# -----------------------------------------------------------------------------
+http://pruebacrm.optickcloud.com {
+	handle /api/* {
+		reverse_proxy llamadas-api:3000
+	}
+	handle {
+		reverse_proxy llamadas-frontend:80
+	}
+}
+
+# -----------------------------------------------------------------------------
+# Staging multi-tenant smoke — mt-staging.optickcloud.com → staging stack
+# Cloudflare: Public Hostname mt-staging → http://caddy:80 (opcional)
+# -----------------------------------------------------------------------------
+http://mt-staging.optickcloud.com {
+	handle /api/* {
+		reverse_proxy llamadas-api:3000
+	}
+	handle {
+		reverse_proxy llamadas-frontend:80
+	}
+}
+
+# -----------------------------------------------------------------------------
+# Beszel Hub — monitor.optickcloud.com
+# -----------------------------------------------------------------------------
+http://monitor.optickcloud.com {
+	reverse_proxy beszel:8090
+}
+
+# -----------------------------------------------------------------------------
+# Producción CRM — crm.optickcloud.com → /opt/llamadas-prod
+# -----------------------------------------------------------------------------
+http://crm.optickcloud.com {
+	handle /api/* {
+		reverse_proxy llamadas-prod-api:3000
+	}
+	handle {
+		reverse_proxy llamadas-prod-frontend:80
+	}
+}
+
+# -----------------------------------------------------------------------------
+# Producción (prueba) — prodtest.optickcloud.com
+# -----------------------------------------------------------------------------
+http://prodtest.optickcloud.com {
+	handle /api/* {
+		reverse_proxy llamadas-prod-api:3000
+	}
+	handle {
+		reverse_proxy llamadas-prod-frontend:80
+	}
+}
+
+# -----------------------------------------------------------------------------
+# Wildcard tenants — {slug}.optickcloud.com → PROD (nunca staging)
+# Hosts explícitos arriba ganan al wildcard.
+# Cloudflare: Public Hostname * → http://caddy:80 (acción del operador)
+# -----------------------------------------------------------------------------
+http://*.optickcloud.com {
+	handle /api/* {
+		reverse_proxy llamadas-prod-api:3000
+	}
+	handle {
+		reverse_proxy llamadas-prod-frontend:80
+	}
+}
