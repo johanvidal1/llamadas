@@ -66,11 +66,64 @@ function buildBatchStats(
   })
 }
 
-function ProgressBar({ done, total }: { done: number; total: number }) {
+/**
+ * Queue urgency from pending ratio (pending/total).
+ * Bar width = % done; bar/metric hue = remaining work load.
+ * - Heavy  (>0.5): blue-500
+ * - Mid    (0.2–0.5): blue-400
+ * - Almost (<0.2, pending>0): teal-500
+ * - Done   (pending===0): emerald-500
+ */
+type QueueTone = {
+  fill: string
+  track: string
+  metric: string
+}
+
+function queueTone(pending: number, total: number): QueueTone {
+  if (pending === 0) {
+    return {
+      fill: 'bg-emerald-500',
+      track: 'bg-emerald-100',
+      metric: 'text-emerald-700',
+    }
+  }
+  const ratio = total > 0 ? pending / total : 1
+  if (ratio < 0.2) {
+    return {
+      fill: 'bg-teal-500',
+      track: 'bg-teal-100',
+      metric: 'text-teal-700',
+    }
+  }
+  if (ratio <= 0.5) {
+    return {
+      fill: 'bg-blue-400',
+      track: 'bg-blue-100',
+      metric: 'text-blue-600',
+    }
+  }
+  return {
+    fill: 'bg-blue-500',
+    track: 'bg-blue-100',
+    metric: 'text-blue-700',
+  }
+}
+
+function ProgressBar({
+  done,
+  total,
+  pending,
+}: {
+  done: number
+  total: number
+  pending: number
+}) {
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
+  const tone = queueTone(pending, total)
   return (
     <div
-      className="h-1 w-full rounded-full bg-slate-200 overflow-hidden"
+      className={`h-1 w-full rounded-full overflow-hidden ${tone.track}`}
       role="progressbar"
       aria-valuenow={pct}
       aria-valuemin={0}
@@ -78,7 +131,7 @@ function ProgressBar({ done, total }: { done: number; total: number }) {
       aria-label={`${pct}% completado`}
     >
       <div
-        className="h-full rounded-full bg-slate-500 transition-[width] duration-200"
+        className={`h-full rounded-full transition-[width] duration-200 ${tone.fill}`}
         style={{ width: `${pct}%` }}
       />
     </div>
@@ -131,6 +184,22 @@ export function BatchPendingPicker({
     () => [{ kind: 'all' as const }, ...visibleBatches.map((s) => ({ kind: 'batch' as const, stats: s }))],
     [visibleBatches]
   )
+
+  const selectedStats = useMemo(() => {
+    if (!value) {
+      return { pending: allPending, total: allTotal, done: Math.max(0, allTotal - allPending) }
+    }
+    const s = stats.find((b) => b.id === value)
+    if (!s) return { pending: 0, total: 0, done: 0 }
+    return { pending: s.pending, total: s.total, done: s.done }
+  }, [value, stats, allPending, allTotal])
+
+  const selectedTone = useMemo(
+    () => queueTone(selectedStats.pending, selectedStats.total),
+    [selectedStats]
+  )
+
+  const allTone = useMemo(() => queueTone(allPending, allTotal), [allPending, allTotal])
 
   const selectedLabel = useMemo(() => {
     if (!value) {
@@ -216,6 +285,11 @@ export function BatchPendingPicker({
 
   if (batches.length === 0) return null
 
+  const selectedDonePct =
+    selectedStats.total > 0
+      ? Math.min(100, Math.round((selectedStats.done / selectedStats.total) * 100))
+      : 0
+
   return (
     <div ref={rootRef} className={`relative ${className}`}>
       {label && variant === 'filter' && (
@@ -234,7 +308,18 @@ export function BatchPendingPicker({
         onKeyDown={handleTriggerKeyDown}
         className={`${triggerClass} flex items-center justify-between gap-2 text-left min-w-0`}
       >
-        <span className="truncate">{selectedLabel}</span>
+        <span className="truncate min-w-0 flex-1">{selectedLabel}</span>
+        {!isHeader && selectedStats.total > 0 && (
+          <span
+            className={`h-1 w-8 shrink-0 rounded-full overflow-hidden ${selectedTone.track}`}
+            aria-hidden
+          >
+            <span
+              className={`block h-full rounded-full ${selectedTone.fill}`}
+              style={{ width: `${selectedDonePct}%` }}
+            />
+          </span>
+        )}
         <ChevronDown
           size={isHeader ? 13 : 15}
           className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''} ${
@@ -269,7 +354,7 @@ export function BatchPendingPicker({
               onClick={() => selectRow(0)}
               className={`mx-1 my-0.5 px-2.5 py-2 rounded cursor-pointer border ${
                 !value
-                  ? 'border-blue-300 bg-blue-50'
+                  ? 'border-blue-400 bg-blue-50/50'
                   : activeIdx === 0
                     ? 'border-slate-200 bg-slate-50'
                     : 'border-transparent hover:bg-slate-50'
@@ -277,17 +362,22 @@ export function BatchPendingPicker({
             >
               <div className="flex items-center justify-between gap-2 mb-1.5">
                 <span className="text-sm font-medium text-gray-900 truncate">Todos los lotes</span>
-                <span className="text-xs tabular-nums text-slate-600 shrink-0">
+                <span className={`text-xs tabular-nums shrink-0 font-medium ${allTone.metric}`}>
                   {metricLabel(allPending, allTotal)}
                 </span>
               </div>
-              <ProgressBar done={Math.max(0, allTotal - allPending)} total={allTotal} />
+              <ProgressBar
+                done={Math.max(0, allTotal - allPending)}
+                total={allTotal}
+                pending={allPending}
+              />
             </li>
 
             {visibleBatches.map((s, i) => {
               const rowIdx = i + 1
               const selected = value === s.id
               const active = activeIdx === rowIdx
+              const tone = queueTone(s.pending, s.total)
               return (
                 <li
                   key={s.id}
@@ -298,7 +388,7 @@ export function BatchPendingPicker({
                   onClick={() => selectRow(rowIdx)}
                   className={`mx-1 my-0.5 px-2.5 py-2 rounded cursor-pointer border ${
                     selected
-                      ? 'border-blue-300 bg-blue-50'
+                      ? 'border-blue-400 bg-blue-50/50'
                       : active
                         ? 'border-slate-200 bg-slate-50'
                         : 'border-transparent hover:bg-slate-50'
@@ -309,15 +399,11 @@ export function BatchPendingPicker({
                       {s.isNewest ? '★ ' : ''}
                       {s.label}
                     </span>
-                    <span
-                      className={`text-xs tabular-nums shrink-0 ${
-                        s.pending > 0 ? 'text-slate-700 font-medium' : 'text-slate-400'
-                      }`}
-                    >
+                    <span className={`text-xs tabular-nums shrink-0 font-medium ${tone.metric}`}>
                       {metricLabel(s.pending, s.total)}
                     </span>
                   </div>
-                  <ProgressBar done={s.done} total={s.total} />
+                  <ProgressBar done={s.done} total={s.total} pending={s.pending} />
                 </li>
               )
             })}

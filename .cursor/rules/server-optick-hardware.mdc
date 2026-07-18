@@ -1,0 +1,33 @@
+---
+description: Servidor Ubuntu staging Optick - hardware, politicas Docker-only, dominios, confirmaciones UFW/sshd
+alwaysApply: true
+---
+
+# Servidor Optick (staging)
+
+## Entorno
+- **Produccion:** Render (optickcloud.com) - NO tocar DNS de produccion.
+- **Staging:** host Ubuntu `servidoroptick` - apps solo en Docker; host limpio (Docker, Caddy, UFW, backups).
+- **Dominio staging:** `pruebacrm.optickcloud.com`
+- **LAN:** 192.168.1.51 (DNS puede no apuntar aun)
+- **Let's Encrypt:** johanvidal1@gmail.com
+- **Usuario ops:** `adminoptick` (sudo; no root dia a dia)
+
+## Hardware (documentar / no reinventar)
+- CPU: AMD Ryzen 7 8700G (8c/16t)
+- MB: ASUS Pro WS B850M-ACE SE
+- RAM: 32 GB Lexar Ares DDR5-6000 (2x16)
+- SSD: 1 TB Kingston Fury Renegade G5 NVMe
+- Cooler: Deepcool AK620 Digital SE
+- PSU: Cooler Master G Gold 750W V2 80+ Gold
+- Case: Antryx RX-270 Black
+
+## Politicas obligatorias
+- NO instalar Node, Postgres ni paquetes CRM en el host.
+- NO cambiar DNS produccion optickcloud.com.
+- Confirmar con el usuario ANTES de: `ufw enable`, `systemctl reload|restart ssh|sshd`.
+- Frases de confirmacion: `CONFIRMAR SSHD` / `CONFIRMAR UFW`.
+- FASE A (hardening) antes de FASE B (deploy Caddy/apps).
+
+## Scripts preparados
+Ver `infra/staging/fase-a/` en este repo (aplicar solo en Remote SSH a Ubuntu).
