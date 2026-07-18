@@ -72,11 +72,11 @@ Patrón correcto en `POST /api/platform/tenants`:
 3. Verifica en la **DB/API de staging** (no abras el URL público del slug):
 
 ```bash
-# En el servidor Ubuntu (staging), contra la API del contenedor (no uses el DNS público del slug):
-docker exec llamadas-api wget -qO- --header='Host: acme-test.optickcloud.com' \
-  --header='Content-Type: application/json' \
-  --post-data='{"email":"admin@acme.com","password":"secreto1"}' \
-  http://127.0.0.1:3001/api/auth/login
+# En el servidor Ubuntu (staging), contra la API del contenedor (puerto interno 3000):
+docker exec llamadas-api curl -sS -H 'Host: acme-test.optickcloud.com' \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@acme.com","password":"secreto1"}' \
+  http://127.0.0.1:3000/api/auth/login
 
 # O vía Caddy solo si el Host está mapeado a staging (pruebacrm sí; *.optickcloud.com público → prod):
 curl -sS -H 'Host: pruebacrm.optickcloud.com' http://127.0.0.1/api/health
