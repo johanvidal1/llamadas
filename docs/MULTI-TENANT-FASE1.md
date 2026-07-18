@@ -390,12 +390,19 @@ Defaults staging (override con env): `demo-admin@optick.demo` / `DemoAdmin123!`,
 
 **Importante — routing:** el Caddyfile wildcard `*.optickcloud.com` apunta a **prod**. En staging, smoke con Host header al API staging (contenedor `llamadas-api:3000` o curl LAN), no asumir que HTTPS público `demo.optickcloud.com` pegue a staging.
 
-Checklist aislamiento (curl):
+Checklist aislamiento (curl) — script: `backend/scripts/smoke-tenant-isolation.sh` (correr **dentro** de `llamadas-api`):
+
+```bash
+# tras git pull en /opt/llamadas
+sg docker -c 'docker cp /opt/llamadas/backend/scripts/smoke-tenant-isolation.sh llamadas-api:/tmp/smoke.sh'
+sg docker -c 'docker exec llamadas-api bash /tmp/smoke.sh'
+```
 
 1. Login Optick: `Host: pruebacrm.optickcloud.com` + credenciales Optick → 200 + JWT `tenantId=clopticktenantcrm0001`
 2. Login demo: `Host: demo.optickcloud.com` + `demo-admin@optick.demo` → 200 + JWT tenant demo
 3. Cross-login: Optick creds en Host demo → 401; demo creds en Host pruebacrm → 401
 4. List companies (auth token): Optick no ve `DEMO-00000001`; demo no ve companies Optick
+5. Token demo contra Host Optick `/api/auth/me` → 401 `TENANT_MISMATCH`
 
 **No** `deploy-prod` / **no** push `main` por PR5 hasta checklist §6 restante (backup/restore + onboarding real).
 
