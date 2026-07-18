@@ -2,8 +2,10 @@ import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
 import { getCachedAuthUser, setCachedAuthUser } from '../lib/authUserCache'
 import { prisma } from '../lib/prisma'
+import { OPTICK_TENANT_ID, type TenantContext } from '../lib/tenant'
 
 export interface AuthRequest extends Request {
+  tenant?: TenantContext
   user?: {
     id: string
     email: string
@@ -21,6 +23,11 @@ async function authenticateRequest(req: AuthRequest, res: Response): Promise<boo
     return false
   }
 
+  if (!req.tenant) {
+    res.status(400).json({ error: 'Tenant no resuelto' })
+    return false
+  }
+
   const token = header.slice(7)
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET as string) as {
@@ -28,8 +35,32 @@ async function authenticateRequest(req: AuthRequest, res: Response): Promise<boo
       email: string
       role: string
       name: string
+      tenantId?: string
       tokenVersion?: number
     }
+
+    // Old tokens without tenantId: accept only on Optick host until next login.
+    let tokenTenantId = payload.tenantId
+    if (!tokenTenantId) {
+      if (req.tenant.id === OPTICK_TENANT_ID) {
+        tokenTenantId = OPTICK_TENANT_ID
+      } else {
+        res.status(401).json({
+          error: 'Sesión inválida. Inicia sesión nuevamente.',
+          code: 'TENANT_REQUIRED',
+        })
+        return false
+      }
+    }
+
+    if (tokenTenantId !== req.tenant.id) {
+      res.status(401).json({
+        error: 'Token no válido para este tenant',
+        code: 'TENANT_MISMATCH',
+      })
+      return false
+    }
+
     const jwtTokenVersion = payload.tokenVersion ?? 0
     let user = getCachedAuthUser(payload.id, jwtTokenVersion)
     if (!user) {

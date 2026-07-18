@@ -17,6 +17,7 @@ import adminRouter from './routes/admin'
 import contactRouter from './routes/contact'
 import presenceRouter from './routes/presence'
 import { errorHandler } from './middleware/error'
+import { resolveTenant } from './middleware/tenant'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -40,16 +41,21 @@ const parsedOrigins = parseOriginList(
 const extraOrigins = parseOriginList(process.env.CORS_EXTRA_ORIGINS)
 const allowedOrigins = [...new Set([...parsedOrigins, ...extraOrigins])]
 
+/** Same-origin tenant frontends: https://{slug}.optickcloud.com */
+const TENANT_ORIGIN = /^https:\/\/[\w-]+\.optickcloud\.com$/
+
 const localhostOnly = allowedOrigins.every(
   (o) => o.includes('localhost') || o.includes('127.0.0.1')
 )
 if (process.env.NODE_ENV === 'production' && localhostOnly) {
   console.warn(
-    'FRONTEND_URL should list your production frontend origin(s), e.g. https://crm.tudominio.com'
+    'FRONTEND_URL should list your production frontend origin(s), e.g. https://crm.optickcloud.com'
   )
 }
 
-console.log(`CORS allowed origins: [${allowedOrigins.join(', ')}]`)
+console.log(
+  `CORS allowed origins: [${allowedOrigins.join(', ')}] + *.optickcloud.com`
+)
 
 app.use(
   cors({
@@ -58,11 +64,24 @@ app.use(
         callback(null, true)
         return
       }
-      if (allowedOrigins.includes(normalizeOrigin(origin))) {
+      const normalized = normalizeOrigin(origin)
+      if (allowedOrigins.includes(normalized)) {
         callback(null, origin)
-      } else {
-        callback(new Error('Not allowed by CORS'))
+        return
       }
+      if (TENANT_ORIGIN.test(normalized)) {
+        callback(null, origin)
+        return
+      }
+      if (
+        process.env.NODE_ENV !== 'production' &&
+        (normalized.startsWith('http://localhost:') ||
+          normalized.startsWith('http://127.0.0.1:'))
+      ) {
+        callback(null, origin)
+        return
+      }
+      callback(new Error('Not allowed by CORS'))
     },
     credentials: true,
   })
@@ -70,7 +89,14 @@ app.use(
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
 
-// Routes
+// Health skips tenant resolution (load balancers / deploy checks)
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() })
+})
+
+app.use(resolveTenant)
+
+// Routes (require req.tenant)
 app.use('/api/auth', authRouter)
 app.use('/api/users', usersRouter)
 app.use('/api/imports', importsRouter)
@@ -83,10 +109,6 @@ app.use('/api/dashboard', dashboardRouter)
 app.use('/api/admin', adminRouter)
 app.use('/api/contact', contactRouter)
 app.use('/api/presence', presenceRouter)
-
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() })
-})
 
 // Global error handler (must be last)
 app.use(errorHandler)

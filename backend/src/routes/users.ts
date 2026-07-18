@@ -188,8 +188,10 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     }
   }
 
-  // PR1: email unique per tenant; findFirst until PR2 scopes by req.tenant
-  const existing = await prisma.user.findFirst({ where: { email: data.email.toLowerCase() } })
+  const tenantId = req.tenant?.id ?? OPTICK_TENANT_ID
+  const existing = await prisma.user.findFirst({
+    where: { email: data.email.toLowerCase(), tenantId },
+  })
   if (existing) {
     res.status(409).json({ error: 'El email ya está registrado' })
     return
@@ -198,7 +200,7 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   const hashed = await bcrypt.hash(data.password, 12)
   const user = await prisma.user.create({
     data: {
-      tenantId: OPTICK_TENANT_ID,
+      tenantId,
       name: data.name,
       email: data.email.toLowerCase(),
       password: hashed,

@@ -4,7 +4,7 @@ Documento de arquitectura y checklist Fase 1. **PRs en orden** (ver §8); no sal
 
 | Campo | Valor |
 |-------|--------|
-| Estado | PR1 en curso — schema + backfill (staging) |
+| Estado | PR2 en curso — resolveTenant + JWT tenantId (staging) |
 | Enfoque | Shared Postgres + columna `tenantId` |
 | Stack | Node/Express + React + Prisma + Docker Compose (Ubuntu) |
 | Prod | Ubuntu (`crm.optickcloud.com`) — **no** Render como destino primario |
@@ -139,62 +139,11 @@ Same-origin (`clienteA.optickcloud.com` → `/api/...` vía Caddy): el frontend 
 ### Ejemplo middleware Express
 
 ```ts
-// middleware/tenant.ts (ejemplo — implementar en PR 2)
-import { Request, Response, NextFunction } from 'express'
-import { prisma } from '../lib/prisma'
-
-export type TenantContext = {
-  id: string
-  slug: string
-  name: string
-  status: string
-}
-
-export interface TenantRequest extends Request {
-  tenant?: TenantContext
-}
-
-const RESERVED = new Set(['www', 'api', 'pruebacrm', 'mail', 'status'])
-
-function slugFromHost(hostHeader: string | undefined): string | null {
-  const host = (hostHeader ?? '').split(':')[0].toLowerCase()
-  const root = 'optickcloud.com'
-  if (!host.endsWith(`.${root}`) && host !== root) return null
-  if (host === root || host === `www.${root}`) return null
-  const slug = host.slice(0, -(root.length + 1)).split('.')[0]
-  if (!slug || RESERVED.has(slug)) return null
-  return slug
-}
-
-export async function resolveTenant(
-  req: TenantRequest,
-  res: Response,
-  next: NextFunction
-) {
-  const host =
-    (req.headers['x-forwarded-host'] as string)?.split(',')[0]?.trim() ||
-    req.headers.host
-
-  let slug = slugFromHost(host)
-  // Solo en NODE_ENV=development:
-  // slug = slug ?? (req.headers['x-tenant-slug'] as string | undefined) ?? null
-
-  if (!slug) {
-    return res.status(400).json({ error: 'Tenant no resuelto (host inválido)' })
-  }
-
-  const tenant = await prisma.tenant.findUnique({
-    where: { slug },
-    select: { id: true, slug: true, name: true, status: true },
-  })
-
-  if (!tenant || tenant.status !== 'ACTIVE') {
-    return res.status(404).json({ error: 'Tenant no encontrado o suspendido' })
-  }
-
-  req.tenant = tenant
-  next()
-}
+// PR2 implementado: backend/src/middleware/tenant.ts + lib/tenant.ts
+// HOST_SLUG_ALIASES: pruebacrm.optickcloud.com / crm.optickcloud.com /
+//   localhost / 127.0.0.1 → slug `crm` (Optick).
+// RESERVED: www, api, mail, status.
+// Otros `*.optickcloud.com` → primer label = slug → Tenant.findUnique.
 ```
 
 ### Orden conceptual en `index.ts`
@@ -344,9 +293,9 @@ Deploy del middleware + login scoped + filtros en queries (PRs 2–3).
 ## 6. Checklist Fase 1 (antes de vender el 2.º tenant)
 
 - [x] Schema + backfill Optick (`slug: crm`) en **staging** — PR1: migración `20260718120000_multi_tenant_optick` (expand→backfill→constrain en una transacción) + script `backend/scripts/backfill-tenant-optick.ts`
-- [ ] `resolveTenant` + JWT con `tenantId` + match obligatorio
-- [ ] Login scoped a `req.tenant.id`
-- [ ] CORS por función para `*.optickcloud.com`
+- [x] `resolveTenant` + JWT con `tenantId` + match obligatorio — PR2: `middleware/tenant.ts`, `lib/tenant.ts` (aliases), `middleware/auth.ts` (match + compat tokens viejos sin `tenantId` solo en Optick)
+- [x] Login scoped a `req.tenant.id` — PR2: JWT `{ id, email, role, name, tenantId, tokenVersion }`
+- [x] CORS por función para `*.optickcloud.com` (+ lista `FRONTEND_URL` / `CORS_EXTRA_ORIGINS`)
 - [ ] Auditoría: **cero** `findMany` / `findFirst` / `update` / `delete` de negocio sin `tenantId`
 - [ ] Caddy wildcard + DNS (o subdominios de prueba) en staging
 - [ ] Segundo tenant vacío (`demo`) creado
@@ -373,7 +322,19 @@ docker exec -it llamadas-api npx ts-node --transpile-only scripts/backfill-tenan
 
 **No** aplicar esta migración en prod (`main`) hasta cerrar checklist y PRs 2–3 en staging.
 
-Creates de negocio en PR1 usan `OPTICK_TENANT_ID` fijo (`backend/src/lib/tenant.ts`) para no romper login single-tenant; PR2 sustituye por `req.tenant.id`.
+Creates de negocio en PR1 usan `OPTICK_TENANT_ID` fijo (`backend/src/lib/tenant.ts`) para no romper login single-tenant. PR2: login/JWT usan `req.tenant.id`; creates de negocio siguen con Optick fijo hasta PR3 (auditoría de queries). Tokens JWT sin `tenantId` (pre-PR2) solo se aceptan si `req.tenant.id === OPTICK_TENANT_ID`; el siguiente login emite el formato nuevo.
+
+### Aplicar PR2 en staging (Ubuntu)
+
+Tras `git push origin staging`:
+
+```bash
+bash /opt/llamadas/scripts/deploy-staging.sh
+```
+
+Verificar: `GET /api/health` OK; login en `https://pruebacrm.optickcloud.com` con admin/agente Optick; JWT decodificado incluye `tenantId=clopticktenantcrm0001`.
+
+**No** desplegar en prod (`main`) hasta cerrar checklist y PRs 2–3 en staging.
 
 ---
 
