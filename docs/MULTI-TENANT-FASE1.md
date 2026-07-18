@@ -309,7 +309,7 @@ Deploy del middleware + login scoped + filtros en queries (PRs 2–3).
 - [x] Segundo tenant (`demo`) — script idempotente `backend/scripts/seed-tenant-demo.ts` (admin + agent + company marker)
 - [x] Prueba de aislamiento staging: login Host Optick vs `demo`; listados companies sin cross-visibility (ver § PR5)
 - [x] Token / credenciales de A contra host de B → 401 (login scoped + JWT match)
-- [ ] Backup/restore documentado post-migración
+- [x] Backup/restore documentado post-migración — drill scratch OK 2026-07-18; runbook [`BACKUP-RESTORE-PROD.md`](./BACKUP-RESTORE-PROD.md) (dump ref. `/opt/backups/crm/llamadas_prod_pre_multitenant_20260718-165958.dump`)
 - [ ] Recién entonces onboarding de cliente real
 
 **Residual PR3 — cerrado (antes de PR5):** `$queryRaw` en reportes/métricas **no** pasa por la extensión Prisma. Mitigación: `resolveTenantIdForSql()` + `sqlAndTenant(alias)` inyectan `AND …."tenantId" = $id` desde ALS (fallback Optick en scripts). Cubierto: `reportCharts`, `reportTrends`, `callActivity`, `companyDisposition`, `dailyAgentMetrics`, `agentReset`.
