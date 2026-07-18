@@ -186,9 +186,8 @@ function createPrismaClient() {
       },
     })
 
-  if (process.env.NODE_ENV !== 'production') {
-    globalForPrisma.prismaBase = base
-  }
+  // Keep base for platform ops that must set tenantId explicitly (bypass ALS stamp).
+  globalForPrisma.prismaBase = base
 
   return base.$extends({
     name: 'tenantIsolation',
@@ -280,5 +279,17 @@ function createPrismaClient() {
 }
 
 export const prisma = globalForPrisma.prisma ?? createPrismaClient()
+
+/** Unscoped PrismaClient (no ALS stamp). Use only for platform cross-tenant writes. */
+export function getPrismaBase(): PrismaClient {
+  if (!globalForPrisma.prismaBase) {
+    // Ensure extended client (and base) are initialized.
+    void prisma
+  }
+  if (!globalForPrisma.prismaBase) {
+    throw new Error('Prisma base client not initialized')
+  }
+  return globalForPrisma.prismaBase
+}
 
 globalForPrisma.prisma = prisma

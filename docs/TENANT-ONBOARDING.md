@@ -53,12 +53,12 @@ Respuesta `201`:
 
 ### ALS / Prisma (importante)
 
-El middleware deja ALS = Optick. Crear el `User` admin **no** puede hacerse solo con `runWithTenant(newId)` anidado: la extensión Prisma estampa el ALS activo y, en la práctica, el create async sigue viendo Optick y **sobrescribe** `tenantId`.
+El middleware deja ALS = Optick. La extensión Prisma **siempre** estampa `tenantId` del ALS en creates scoped; `runWithTenant` / `exit` anidados no son fiables en este path.
 
 Patrón correcto en `POST /api/platform/tenants`:
 
 1. `prisma.tenant.create` (modelo no scoped)
-2. `tenantStorage.exit(() => prisma.user.create({ data: { tenantId: newId, … } }))` — sin ALS, la extensión hace pass-through y respeta el `tenantId` explícito
+2. `getPrismaBase().user.create({ data: { tenantId: newId, … } })` — cliente sin extensión
 3. Guard: rechazar si `admin.tenantId !== tenant.id`
 
 `maxAgents` no está en el schema; el tope sigue siendo global (`MAX_AGENTS`).

@@ -1,9 +1,8 @@
 import { Router, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
-import { prisma } from '../lib/prisma'
+import { getPrismaBase, prisma } from '../lib/prisma'
 import { OPTICK_TENANT_ID, RESERVED_SUBDOMAINS, TENANT_ROOT_DOMAIN } from '../lib/tenant'
-import { tenantStorage } from '../lib/tenantContext'
 import { isSuperAdminOrOwner } from '../lib/userPermissions'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
@@ -113,29 +112,25 @@ router.post('/tenants', requireAuth, async (req: AuthRequest, res: Response) => 
     select: { id: true, name: true, slug: true, status: true },
   })
 
-  // 2) Create admin under the NEW tenant id.
-  // Request ALS is still Optick (resolveTenant). Nested runWithTenant alone is not
-  // reliable across Prisma's async query path — stampTenantOnData would overwrite
-  // with Optick. Exit ALS so the extension pass-through keeps explicit tenantId.
+  // 2) Create admin with explicit tenantId via unscoped Prisma base.
+  // Extended client always stamps ALS (Optick on this request); nested runWithTenant /
+  // tenantStorage.exit are not reliable for this path — use getPrismaBase() instead.
   const hashed = await bcrypt.hash(data.adminPassword, 12)
-  const admin = await tenantStorage.exit(() =>
-    prisma.user.create({
-      data: {
-        tenantId: tenant.id,
-        name: data.adminName,
-        email: data.adminEmail.toLowerCase(),
-        password: hashed,
-        role: 'ADMIN',
-        isSuperAdmin: false,
-        isSystemOwner: false,
-        active: true,
-      },
-      select: { id: true, email: true, name: true, tenantId: true },
-    })
-  )
+  const admin = await getPrismaBase().user.create({
+    data: {
+      tenantId: tenant.id,
+      name: data.adminName,
+      email: data.adminEmail.toLowerCase(),
+      password: hashed,
+      role: 'ADMIN',
+      isSuperAdmin: false,
+      isSystemOwner: false,
+      active: true,
+    },
+    select: { id: true, email: true, name: true, tenantId: true },
+  })
 
   if (admin.tenantId !== tenant.id) {
-    // Should be unreachable; defensive guard against ALS stamp regressions.
     res.status(500).json({
       error: 'Error interno: admin creado en tenant incorrecto',
       code: 'TENANT_ALS_MISMATCH',
