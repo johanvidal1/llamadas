@@ -3046,11 +3046,6 @@ export default function MyLeads() {
             (queueIndexById.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
             (queueIndexById.get(b.id) ?? Number.MAX_SAFE_INTEGER)
         )
-        // Single "start here" row: first pending company in the visible (filtered + sorted) list
-        const firstPendingListId = listSorted.find((c) => {
-          const idx = queueIndexById.get(c.id)
-          return idx != null && !companyHasAgentLog(idx)
-        })?.id
         return (
           <div className="flex-1 overflow-y-auto p-4 lg:p-5 space-y-4">
             {/* Filters — row 1: search, cola, lote */}
@@ -3222,23 +3217,19 @@ export default function MyLeads() {
                         : ''
                       const aclaracion = c.lastAclaracion || (c.lastDisposition ? getAclaracionForDisposition(c.lastDisposition) : '')
                       const isSelectedRow = navIdx === currentIndex
-                      const isFirstPendingRow = !isSelectedRow && c.id === firstPendingListId
+                      const isPendingRow = !c.lastDisposition
                       return (
                         <tr
                           key={c.id}
-                          className={`hover:bg-green-50 cursor-pointer transition-colors ${
-                            isSelectedRow
-                              ? 'bg-green-50 border-l-2 border-green-500'
-                              : isFirstPendingRow
-                              ? 'bg-green-50/70 border-l-2 border-green-400'
-                              : ''
+                          className={`hover:bg-blue-50 cursor-pointer transition-colors ${
+                            isSelectedRow ? 'bg-blue-50 border-l-2 border-blue-500' : ''
                           }`}
                           onClick={() => openDetailFromList(realIdx)}
                         >
                           <td className="px-4 py-2.5 text-gray-400 text-xs">{realIdx >= 0 ? realIdx + 1 : '—'}</td>
-                          <td className="px-4 py-2.5 font-mono text-xs text-gray-600">{c.ruc}</td>
+                          <td className={`px-4 py-2.5 font-mono text-xs ${isPendingRow ? 'text-sky-800 font-medium' : 'text-gray-600'}`}>{c.ruc}</td>
                           <td className="px-4 py-2.5">
-                            <p className="font-medium text-gray-900 text-sm">{c.razonSocial || <span className="text-gray-400 italic text-xs">Sin razón social</span>}</p>
+                            <p className={`font-medium text-sm ${isPendingRow ? 'text-sky-900' : 'text-gray-900'}`}>{c.razonSocial || <span className="text-gray-400 italic text-xs">Sin razón social</span>}</p>
                             {c.contacts?.[0] && (
                               <p className="text-xs text-gray-400">{c.contacts[0].nombre}</p>
                             )}
@@ -3268,14 +3259,7 @@ export default function MyLeads() {
                                 ) : null}
                               </div>
                             ) : (
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <StatusBadge status="PENDING" />
-                                {isFirstPendingRow && (
-                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-100 text-green-700">
-                                    Empezar aquí
-                                  </span>
-                                )}
-                              </div>
+                              <StatusBadge status="PENDING" />
                             )}
                           </td>
                           <td className="px-4 py-2.5">

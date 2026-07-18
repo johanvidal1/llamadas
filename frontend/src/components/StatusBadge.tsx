@@ -7,7 +7,7 @@ import {
 } from '../config/responseOptions'
 
 export const STATUS_CONFIG: Record<string, { label: string; classes: string }> = {
-  PENDING: { label: 'Pendiente', classes: 'bg-gray-100 text-gray-700' },
+  PENDING: { label: 'Pendiente', classes: 'bg-sky-100 text-sky-800 ring-1 ring-inset ring-sky-200' },
   IN_PROGRESS: { label: 'En progreso', classes: 'bg-blue-100 text-blue-700' },
   INTERESTED: { label: 'Interesado', classes: 'bg-green-100 text-green-700' },
   CONVERTED: { label: 'Convertido', classes: 'bg-emerald-100 text-emerald-700' },

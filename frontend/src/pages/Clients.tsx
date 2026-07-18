@@ -2089,19 +2089,12 @@ export default function Clients() {
           </div>
         ) : effectiveGroupBy ? (
           <div className="p-3 space-y-3">
-            {total > effectiveLimit && (
+            {total > effectiveLimit && groupMode !== 'day' && (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                 {groupMode === 'agent' ? (
                   <>
                     Los totales por agente son completos. Al expandir, la tabla muestra hasta {effectiveLimit}{' '}
                     empresas del listado cargado. Filtra por agente para ver el listado completo.
-                  </>
-                ) : groupMode === 'day' ? (
-                  <>
-                    {useDaySummary
-                      ? 'Expande un día para cargar hasta '
-                      : 'Los conteos en cada día pueden ser parciales. Expande un día para cargar hasta '}
-                    {effectiveLimit} empresas de ese día con los filtros actuales.
                   </>
                 ) : (
                   <>
