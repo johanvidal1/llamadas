@@ -75,6 +75,7 @@ async function authenticateRequest(req: AuthRequest, res: Response): Promise<boo
           isSuperAdmin: true,
           isSystemOwner: true,
           tokenVersion: true,
+          tenantId: true,
         },
       })
       if (user?.active) {
@@ -83,6 +84,13 @@ async function authenticateRequest(req: AuthRequest, res: Response): Promise<boo
     }
     if (!user || !user.active) {
       res.status(401).json({ error: 'Sesión inválida. Inicia sesión nuevamente.' })
+      return false
+    }
+    if (user.tenantId !== tokenTenantId) {
+      res.status(401).json({
+        error: 'Token no válido para este tenant',
+        code: 'TENANT_MISMATCH',
+      })
       return false
     }
     if (jwtTokenVersion !== user.tokenVersion) {

@@ -48,6 +48,14 @@ export type TenantContext = {
   status: string
 }
 
+/**
+ * Explicit where fragment for routes/libs that prefer manual scoping.
+ * Prefer req.tenant.id when available; Prisma extension also injects via ALS.
+ */
+export function tenantWhere(tenantId: string): { tenantId: string } {
+  return { tenantId }
+}
+
 /** Normalize Host / X-Forwarded-Host to hostname without port. */
 export function normalizeHost(hostHeader: string | undefined): string {
   const raw = (hostHeader ?? '').split(',')[0]?.trim() ?? ''

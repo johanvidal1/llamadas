@@ -7,6 +7,7 @@ type AuthUserRecord = {
   isSuperAdmin: boolean
   isSystemOwner: boolean
   tokenVersion: number
+  tenantId: string
 }
 
 type CacheEntry = {

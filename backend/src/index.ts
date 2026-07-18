@@ -4,6 +4,8 @@ import express from 'express'
 import cors from 'cors'
 
 import { ensureArchivedAgent } from './lib/archivedAgent'
+import { OPTICK_TENANT_ID } from './lib/tenant'
+import { runWithTenant } from './lib/tenantContext'
 import authRouter from './routes/auth'
 import usersRouter from './routes/users'
 import importsRouter from './routes/imports'
@@ -115,7 +117,8 @@ app.use(errorHandler)
 
 app.listen(PORT, () => {
   console.log(`🚀 API corriendo en http://localhost:${PORT}`)
-  void ensureArchivedAgent().catch((err) => {
+  // Startup has no HTTP tenant; Optick is the only tenant until PR5 demo.
+  void runWithTenant(OPTICK_TENANT_ID, () => ensureArchivedAgent()).catch((err) => {
     console.error('No se pudo asegurar el agente comodín:', err)
   })
 })

@@ -4,13 +4,15 @@ import {
   slugFromHost,
   type TenantContext,
 } from '../lib/tenant'
+import { runWithTenant } from '../lib/tenantContext'
 import type { AuthRequest } from './auth'
 
 export type { TenantContext }
 
 /**
  * Resolve tenant from Host / X-Forwarded-Host before auth and business routes.
- * Sets req.tenant. Skip /api/health by mounting health before this middleware.
+ * Sets req.tenant and AsyncLocalStorage for Prisma tenant scoping.
+ * Skip /api/health by mounting health before this middleware.
  */
 export async function resolveTenant(
   req: AuthRequest,
@@ -47,5 +49,8 @@ export async function resolveTenant(
   }
 
   req.tenant = tenant
-  next()
+  // Bind ALS for the rest of the request (Prisma extension reads this).
+  runWithTenant(tenant.id, () => {
+    next()
+  })
 }

@@ -4,7 +4,7 @@ Documento de arquitectura y checklist Fase 1. **PRs en orden** (ver §8); no sal
 
 | Campo | Valor |
 |-------|--------|
-| Estado | PR2 en curso — resolveTenant + JWT tenantId (staging) |
+| Estado | PR3 hecho — filtro Prisma por tenantId (ALS + `$extends`) en staging |
 | Enfoque | Shared Postgres + columna `tenantId` |
 | Stack | Node/Express + React + Prisma + Docker Compose (Ubuntu) |
 | Prod | Ubuntu (`crm.optickcloud.com`) — **no** Render como destino primario |
@@ -296,7 +296,7 @@ Deploy del middleware + login scoped + filtros en queries (PRs 2–3).
 - [x] `resolveTenant` + JWT con `tenantId` + match obligatorio — PR2: `middleware/tenant.ts`, `lib/tenant.ts` (aliases), `middleware/auth.ts` (match + compat tokens viejos sin `tenantId` solo en Optick)
 - [x] Login scoped a `req.tenant.id` — PR2: JWT `{ id, email, role, name, tenantId, tokenVersion }`
 - [x] CORS por función para `*.optickcloud.com` (+ lista `FRONTEND_URL` / `CORS_EXTRA_ORIGINS`)
-- [ ] Auditoría: **cero** `findMany` / `findFirst` / `update` / `delete` de negocio sin `tenantId`
+- [x] Auditoría: queries Prisma de negocio con `tenantId` — PR3: AsyncLocalStorage + Prisma `$extends` (`lib/tenantContext.ts`, `lib/prisma.ts`); `resolveTenant` hace `runWithTenant`; modelos en `TENANT_SCOPED_TABLES`
 - [ ] Caddy wildcard + DNS (o subdominios de prueba) en staging
 - [ ] Segundo tenant vacío (`demo`) creado
 - [ ] Prueba de aislamiento: usuario de A **no** ve datos de B (API + UI)
@@ -322,7 +322,7 @@ docker exec -it llamadas-api npx ts-node --transpile-only scripts/backfill-tenan
 
 **No** aplicar esta migración en prod (`main`) hasta cerrar checklist y PRs 2–3 en staging.
 
-Creates de negocio en PR1 usan `OPTICK_TENANT_ID` fijo (`backend/src/lib/tenant.ts`) para no romper login single-tenant. PR2: login/JWT usan `req.tenant.id`; creates de negocio siguen con Optick fijo hasta PR3 (auditoría de queries). Tokens JWT sin `tenantId` (pre-PR2) solo se aceptan si `req.tenant.id === OPTICK_TENANT_ID`; el siguiente login emite el formato nuevo.
+Creates de negocio en PR1 usaban `OPTICK_TENANT_ID` fijo (`backend/src/lib/tenant.ts`). PR2: login/JWT usan `req.tenant.id`. PR3: extensión Prisma fuerza `tenantId` desde ALS (`req.tenant.id`) en creates/wheres de modelos scoped; el hardcode Optick en rutas queda como fallback sin ALS (seed/scripts). Tokens JWT sin `tenantId` (pre-PR2) solo se aceptan si `req.tenant.id === OPTICK_TENANT_ID`; el siguiente login emite el formato nuevo.
 
 ### Aplicar PR2 en staging (Ubuntu)
 
@@ -335,6 +335,22 @@ bash /opt/llamadas/scripts/deploy-staging.sh
 Verificar: `GET /api/health` OK; login en `https://pruebacrm.optickcloud.com` con admin/agente Optick; JWT decodificado incluye `tenantId=clopticktenantcrm0001`.
 
 **No** desplegar en prod (`main`) hasta cerrar checklist y PRs 2–3 en staging.
+
+### Aplicar PR3 en staging (Ubuntu)
+
+Tras `git push origin staging`:
+
+```bash
+bash /opt/llamadas/scripts/deploy-staging.sh
+```
+
+Verificar: `GET /api/health` OK; login Optick; listados autenticados (clientes / my-leads) siguen con datos.
+
+Implementación: `resolveTenant` → `runWithTenant(req.tenant.id)`; extensión Prisma inyecta `tenantId` en `where`/`data` para `TENANT_SCOPED_TABLES`. Creates con `OPTICK_TENANT_ID` hardcodeado se sobrescriben con el tenant del request. `/api/health` sin tenant; `/api/contact` (formulario) no toca tablas scoped.
+
+**Residual:** `$queryRaw` en reportes/métricas no pasa por la extensión — con un solo tenant (Optick) no hay leak; antes del tenant `demo` (PR5) hay que añadir `tenantId` a esos SQL o encapsularlos.
+
+**No** desplegar en prod (`main`) hasta cerrar checklist §6.
 
 ---
 
