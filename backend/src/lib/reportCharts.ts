@@ -14,6 +14,7 @@ import {
 } from './appTimezone'
 import { FUNNEL_PIPELINE_KEYS, pipelineBucketForDisposition } from './companyDisposition'
 import { RESPONSE_OPTIONS, SALES_FUNNEL_DISPOSITIONS } from './responseOptions'
+import { resolveTenantIdForSql, sqlAndTenant } from './tenant'
 
 /** Zero-progress dispositions agents can select (excludes audit-only e.g. AGENDA_COMPLETADA). */
 const ZERO_PROGRESS_CALL_DISPOSITIONS = RESPONSE_OPTIONS.filter(
@@ -120,16 +121,17 @@ export async function fetchAgentCallsByPeriod(params: {
       COUNT(*)::bigint AS calls,
       COUNT(DISTINCT cl."companyId")::bigint AS registered
     FROM "CallLog" cl
-    INNER JOIN "User" u ON u.id = cl."agentId" AND u.role = 'AGENT' AND u.active = true AND u."isArchivedAgent" = false
+    INNER JOIN "User" u ON u.id = cl."agentId" AND u.role = 'AGENT' AND u.active = true AND u."isArchivedAgent" = false ${sqlAndTenant('u')}
     LEFT JOIN LATERAL (
       SELECT "createdAt" AS reset_at
       FROM "AgentResetLog"
-      WHERE "originalAgentId" = cl."agentId"
+      WHERE "originalAgentId" = cl."agentId" ${sqlAndTenant()}
       ORDER BY "createdAt" DESC
       LIMIT 1
     ) r ON true
     WHERE cl."calledAt" >= ${from}
       AND cl."calledAt" <= ${to}
+      ${sqlAndTenant('cl')}
       AND (r.reset_at IS NULL OR cl."calledAt" >= r.reset_at)
     GROUP BY cl."agentId"
   `
@@ -166,7 +168,10 @@ export async function fetchAgentCallsByPeriod(params: {
 const FUNNEL_CALL_DISPOSITIONS = [...SALES_FUNNEL_DISPOSITIONS, 'INTERESTED'] as const
 
 /** Global scope: active agents plus archived wildcard (preserves reassigned history in funnel). */
-const globalCallLogAgentFilter = Prisma.sql`AND cl."agentId" IN (SELECT id FROM "User" WHERE role = 'AGENT' AND (active = true OR "isArchivedAgent" = true))`
+function globalCallLogAgentFilter(): Prisma.Sql {
+  const tenantId = resolveTenantIdForSql()
+  return Prisma.sql`AND cl."agentId" IN (SELECT id FROM "User" WHERE role = 'AGENT' AND (active = true OR "isArchivedAgent" = true) AND "tenantId" = ${tenantId})`
+}
 
 export async function fetchFunnelByPeriod(params: {
   from?: string
@@ -184,7 +189,7 @@ export async function fetchFunnelByPeriod(params: {
 
   const agentFilter = params.agentId
     ? Prisma.sql`AND cl."agentId" = ${params.agentId}`
-    : globalCallLogAgentFilter
+    : globalCallLogAgentFilter()
 
   const rows = await prisma.$queryRaw<{ disposition: string; companies: bigint }[]>`
     WITH last_in_period AS (
@@ -194,6 +199,7 @@ export async function fetchFunnelByPeriod(params: {
       FROM "CallLog" cl
       WHERE cl."calledAt" >= ${from}
         AND cl."calledAt" <= ${to}
+        ${sqlAndTenant('cl')}
         ${agentFilter}
       ORDER BY cl."companyId", cl."calledAt" DESC
     )
@@ -245,7 +251,7 @@ export async function fetchZeroResponsesByPeriod(params: {
 
   const agentFilter = params.agentId
     ? Prisma.sql`AND cl."agentId" = ${params.agentId}`
-    : globalCallLogAgentFilter
+    : globalCallLogAgentFilter()
 
   const rows = await prisma.$queryRaw<{ disposition: string; companies: bigint }[]>`
     WITH last_in_period AS (
@@ -255,6 +261,7 @@ export async function fetchZeroResponsesByPeriod(params: {
       FROM "CallLog" cl
       WHERE cl."calledAt" >= ${from}
         AND cl."calledAt" <= ${to}
+        ${sqlAndTenant('cl')}
         ${agentFilter}
       ORDER BY cl."companyId", cl."calledAt" DESC
     )
@@ -316,7 +323,7 @@ export async function fetchCallHeatmap(params: {
 
   const agentFilter = params.agentId
     ? Prisma.sql`AND cl."agentId" = ${params.agentId}`
-    : globalCallLogAgentFilter
+    : globalCallLogAgentFilter()
 
   const localCalledAt = toLocalWallClockSql('cl."calledAt"')
 
@@ -328,6 +335,7 @@ export async function fetchCallHeatmap(params: {
     FROM "CallLog" cl
     WHERE cl."calledAt" >= ${fromDate}
       AND cl."calledAt" <= ${toDate}
+      ${sqlAndTenant('cl')}
       ${agentFilter}
       AND EXTRACT(HOUR FROM ${localCalledAt}) >= 9
       AND EXTRACT(HOUR FROM ${localCalledAt}) <= 18

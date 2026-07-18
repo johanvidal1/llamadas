@@ -7,6 +7,7 @@ import {
   parseYmdString,
   todayYmdInAppTz,
 } from './appTimezone'
+import { sqlAndTenant } from './tenant'
 
 type CallLogRow = { calledAt: Date; agentId: string }
 
@@ -192,6 +193,8 @@ export async function fetchCallActivitySeriesSql(
 ): Promise<{ period: string; count: number }[]> {
   const { from, to, agentId, batchId } = filters
   const truncUnit = granularity === 'day' ? null : granularity
+  const tenantCl = sqlAndTenant('cl')
+  const tenantCo = sqlAndTenant('co')
 
   let rawRows: { period: Date; count: bigint }[]
 
@@ -202,6 +205,7 @@ export async function fetchCallActivitySeriesSql(
         FROM "CallLog" cl
         INNER JOIN "Company" co ON co.id = cl."companyId"
         WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+          ${tenantCl} ${tenantCo}
           AND cl."agentId" = ${agentId} AND co."importBatchId" = ${batchId}
         GROUP BY 1 ORDER BY 1
       `
@@ -209,7 +213,7 @@ export async function fetchCallActivitySeriesSql(
       rawRows = await prisma.$queryRaw<{ period: Date; count: bigint }[]>`
         SELECT DATE_TRUNC(${truncUnit}, cl."calledAt") AS period, COUNT(*)::bigint AS count
         FROM "CallLog" cl
-        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND cl."agentId" = ${agentId}
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} ${tenantCl} AND cl."agentId" = ${agentId}
         GROUP BY 1 ORDER BY 1
       `
     } else if (batchId) {
@@ -217,14 +221,15 @@ export async function fetchCallActivitySeriesSql(
         SELECT DATE_TRUNC(${truncUnit}, cl."calledAt") AS period, COUNT(*)::bigint AS count
         FROM "CallLog" cl
         INNER JOIN "Company" co ON co.id = cl."companyId"
-        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND co."importBatchId" = ${batchId}
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+          ${tenantCl} ${tenantCo} AND co."importBatchId" = ${batchId}
         GROUP BY 1 ORDER BY 1
       `
     } else {
       rawRows = await prisma.$queryRaw<{ period: Date; count: bigint }[]>`
         SELECT DATE_TRUNC(${truncUnit}, cl."calledAt") AS period, COUNT(*)::bigint AS count
         FROM "CallLog" cl
-        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} ${tenantCl}
         GROUP BY 1 ORDER BY 1
       `
     }
@@ -234,6 +239,7 @@ export async function fetchCallActivitySeriesSql(
       FROM "CallLog" cl
       INNER JOIN "Company" co ON co.id = cl."companyId"
       WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+        ${tenantCl} ${tenantCo}
         AND cl."agentId" = ${agentId} AND co."importBatchId" = ${batchId}
       GROUP BY DATE(cl."calledAt") ORDER BY 1
     `
@@ -241,7 +247,7 @@ export async function fetchCallActivitySeriesSql(
     rawRows = await prisma.$queryRaw<{ period: Date; count: bigint }[]>`
       SELECT DATE(cl."calledAt") AS period, COUNT(*)::bigint AS count
       FROM "CallLog" cl
-      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND cl."agentId" = ${agentId}
+      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} ${tenantCl} AND cl."agentId" = ${agentId}
       GROUP BY DATE(cl."calledAt") ORDER BY 1
     `
   } else if (batchId) {
@@ -249,14 +255,15 @@ export async function fetchCallActivitySeriesSql(
       SELECT DATE(cl."calledAt") AS period, COUNT(*)::bigint AS count
       FROM "CallLog" cl
       INNER JOIN "Company" co ON co.id = cl."companyId"
-      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND co."importBatchId" = ${batchId}
+      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+        ${tenantCl} ${tenantCo} AND co."importBatchId" = ${batchId}
       GROUP BY DATE(cl."calledAt") ORDER BY 1
     `
   } else {
     rawRows = await prisma.$queryRaw<{ period: Date; count: bigint }[]>`
       SELECT DATE(cl."calledAt") AS period, COUNT(*)::bigint AS count
       FROM "CallLog" cl
-      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} ${tenantCl}
       GROUP BY DATE(cl."calledAt") ORDER BY 1
     `
   }
@@ -285,6 +292,8 @@ export async function fetchAgentGapStatsSql(
   filters: CallActivityFilters
 ): Promise<AgentGapSqlRow[]> {
   const { from, to, agentId, batchId } = filters
+  const tenantCl = sqlAndTenant('cl')
+  const tenantCo = sqlAndTenant('co')
 
   if (agentId && batchId) {
     return prisma.$queryRaw<AgentGapSqlRow[]>`
@@ -297,6 +306,7 @@ export async function fetchAgentGapStatsSql(
         FROM "CallLog" cl
         INNER JOIN "Company" co ON co.id = cl."companyId"
         WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+          ${tenantCl} ${tenantCo}
           AND cl."agentId" = ${agentId} AND co."importBatchId" = ${batchId}
       )
       SELECT
@@ -319,7 +329,7 @@ export async function fetchAgentGapStatsSql(
             cl."calledAt" - LAG(cl."calledAt") OVER (PARTITION BY cl."agentId" ORDER BY cl."calledAt")
           )) / 60.0 AS gap_minutes
         FROM "CallLog" cl
-        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND cl."agentId" = ${agentId}
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} ${tenantCl} AND cl."agentId" = ${agentId}
       )
       SELECT
         g."agentId",
@@ -342,7 +352,8 @@ export async function fetchAgentGapStatsSql(
           )) / 60.0 AS gap_minutes
         FROM "CallLog" cl
         INNER JOIN "Company" co ON co.id = cl."companyId"
-        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND co."importBatchId" = ${batchId}
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+          ${tenantCl} ${tenantCo} AND co."importBatchId" = ${batchId}
       )
       SELECT
         g."agentId",
@@ -363,7 +374,7 @@ export async function fetchAgentGapStatsSql(
           cl."calledAt" - LAG(cl."calledAt") OVER (PARTITION BY cl."agentId" ORDER BY cl."calledAt")
         )) / 60.0 AS gap_minutes
       FROM "CallLog" cl
-      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} ${tenantCl}
     )
     SELECT
       g."agentId",
@@ -378,11 +389,15 @@ export async function fetchAgentGapStatsSql(
 
 export async function fetchTotalCallsSql(filters: CallActivityFilters): Promise<number> {
   const { from, to, agentId, batchId } = filters
+  const tenantCl = sqlAndTenant('cl')
+  const tenantCo = sqlAndTenant('co')
+
   if (agentId && batchId) {
     const rows = await prisma.$queryRaw<{ count: bigint }[]>`
       SELECT COUNT(*)::bigint AS count FROM "CallLog" cl
       INNER JOIN "Company" co ON co.id = cl."companyId"
       WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+        ${tenantCl} ${tenantCo}
         AND cl."agentId" = ${agentId} AND co."importBatchId" = ${batchId}
     `
     return Number(rows[0]?.count ?? 0)
@@ -390,7 +405,7 @@ export async function fetchTotalCallsSql(filters: CallActivityFilters): Promise<
   if (agentId) {
     const rows = await prisma.$queryRaw<{ count: bigint }[]>`
       SELECT COUNT(*)::bigint AS count FROM "CallLog" cl
-      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND cl."agentId" = ${agentId}
+      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} ${tenantCl} AND cl."agentId" = ${agentId}
     `
     return Number(rows[0]?.count ?? 0)
   }
@@ -398,13 +413,14 @@ export async function fetchTotalCallsSql(filters: CallActivityFilters): Promise<
     const rows = await prisma.$queryRaw<{ count: bigint }[]>`
       SELECT COUNT(*)::bigint AS count FROM "CallLog" cl
       INNER JOIN "Company" co ON co.id = cl."companyId"
-      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND co."importBatchId" = ${batchId}
+      WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+        ${tenantCl} ${tenantCo} AND co."importBatchId" = ${batchId}
     `
     return Number(rows[0]?.count ?? 0)
   }
   const rows = await prisma.$queryRaw<{ count: bigint }[]>`
     SELECT COUNT(*)::bigint AS count FROM "CallLog" cl
-    WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+    WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} ${tenantCl}
   `
   return Number(rows[0]?.count ?? 0)
 }
@@ -417,6 +433,8 @@ export async function fetchGlobalGapStatsSql(
   gapCount: number
 }> {
   const { from, to, agentId, batchId } = filters
+  const tenantCl = sqlAndTenant('cl')
+  const tenantCo = sqlAndTenant('co')
   let rows: { avgGapMinutes: number | null; medianGapMinutes: number | null; gapCount: bigint }[]
 
   if (agentId && batchId) {
@@ -428,6 +446,7 @@ export async function fetchGlobalGapStatsSql(
         FROM "CallLog" cl
         INNER JOIN "Company" co ON co.id = cl."companyId"
         WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+          ${tenantCl} ${tenantCo}
           AND cl."agentId" = ${agentId} AND co."importBatchId" = ${batchId}
       )
       SELECT
@@ -443,7 +462,7 @@ export async function fetchGlobalGapStatsSql(
           cl."calledAt" - LAG(cl."calledAt") OVER (ORDER BY cl."calledAt")
         )) / 60.0 AS gap_minutes
         FROM "CallLog" cl
-        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND cl."agentId" = ${agentId}
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} ${tenantCl} AND cl."agentId" = ${agentId}
       )
       SELECT
         AVG(gap_minutes) FILTER (WHERE gap_minutes >= 0) AS "avgGapMinutes",
@@ -459,7 +478,8 @@ export async function fetchGlobalGapStatsSql(
         )) / 60.0 AS gap_minutes
         FROM "CallLog" cl
         INNER JOIN "Company" co ON co.id = cl."companyId"
-        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} AND co."importBatchId" = ${batchId}
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+          ${tenantCl} ${tenantCo} AND co."importBatchId" = ${batchId}
       )
       SELECT
         AVG(gap_minutes) FILTER (WHERE gap_minutes >= 0) AS "avgGapMinutes",
@@ -474,7 +494,7 @@ export async function fetchGlobalGapStatsSql(
           cl."calledAt" - LAG(cl."calledAt") OVER (ORDER BY cl."calledAt")
         )) / 60.0 AS gap_minutes
         FROM "CallLog" cl
-        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to}
+        WHERE cl."calledAt" >= ${from} AND cl."calledAt" <= ${to} ${tenantCl}
       )
       SELECT
         AVG(gap_minutes) FILTER (WHERE gap_minutes >= 0) AS "avgGapMinutes",

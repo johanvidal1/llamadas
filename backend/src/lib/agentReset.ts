@@ -3,7 +3,7 @@ import { invalidateAuthUserCache } from './authUserCache'
 import { ensureArchivedAgent, ARCHIVED_AGENT_NAME } from './archivedAgent'
 import { isAdminUser } from './userPermissions'
 import { prisma } from './prisma'
-import { OPTICK_TENANT_ID } from './tenant'
+import { OPTICK_TENANT_ID, sqlAndTenant } from './tenant'
 
 export class AgentResetBlockedError extends Error {
   constructor(message: string) {
@@ -53,11 +53,12 @@ export async function countCallLogsAfterResetByAgentIds(
     LEFT JOIN LATERAL (
       SELECT "createdAt" AS reset_at
       FROM "AgentResetLog"
-      WHERE "originalAgentId" = cl."agentId"
+      WHERE "originalAgentId" = cl."agentId" ${sqlAndTenant()}
       ORDER BY "createdAt" DESC
       LIMIT 1
     ) r ON true
     WHERE cl."agentId" IN (${Prisma.join(agentIds)})
+      ${sqlAndTenant('cl')}
       AND (r.reset_at IS NULL OR cl."calledAt" >= r.reset_at)
     GROUP BY cl."agentId"
   `

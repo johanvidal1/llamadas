@@ -2,6 +2,9 @@
  * Multi-tenant Phase 1 helpers.
  * Host → slug → Tenant; Optick aliases keep pruebacrm/crm/localhost on slug `crm`.
  */
+import { Prisma } from '@prisma/client'
+import { getTenantIdFromContext } from './tenantContext'
+
 export const OPTICK_TENANT_ID = 'clopticktenantcrm0001'
 export const OPTICK_TENANT_SLUG = 'crm'
 export const OPTICK_TENANT_NAME = 'Optick'
@@ -59,6 +62,33 @@ export type TenantContext = {
  */
 export function tenantWhere(tenantId: string): { tenantId: string } {
   return { tenantId }
+}
+
+/**
+ * Tenant id for `$queryRaw` / `$executeRaw` (Prisma extension does not wrap raw SQL).
+ * Request path: ALS from resolveTenant. Scripts/jobs without ALS: Optick fallback.
+ */
+export function resolveTenantIdForSql(explicit?: string): string {
+  if (explicit) return explicit
+  return getTenantIdFromContext() ?? OPTICK_TENANT_ID
+}
+
+const SQL_ALIAS_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
+
+/**
+ * `AND alias."tenantId" = $id` for tagged templates.
+ * `alias` must be a trusted SQL identifier (table alias); never pass user input.
+ * Empty alias → unqualified `"tenantId"`.
+ */
+export function sqlAndTenant(alias: string = '', tenantId?: string): Prisma.Sql {
+  const id = resolveTenantIdForSql(tenantId)
+  if (!alias) {
+    return Prisma.sql`AND "tenantId" = ${id}`
+  }
+  if (!SQL_ALIAS_RE.test(alias)) {
+    throw new Error(`Invalid SQL alias for tenant filter: ${alias}`)
+  }
+  return Prisma.sql`AND ${Prisma.raw(alias)}."tenantId" = ${id}`
 }
 
 /** Normalize Host / X-Forwarded-Host to hostname without port. */

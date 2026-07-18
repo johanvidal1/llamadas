@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from './prisma'
 import { formatYmdInTz } from './appTimezone'
 import { getLatestResetAtByAgentIds, isAssignmentAfterReset } from './agentReset'
+import { sqlAndTenant } from './tenant'
 
 export type LastDispositionEntry = {
   disposition: string | null
@@ -61,6 +62,7 @@ function agentScopedCallLogFilter(agentUserId: string): Prisma.Sql {
       FROM "Assignment" asn
       WHERE asn."contactId" = cl."contactId"
         AND asn."agentId" = ${agentUserId}
+        ${sqlAndTenant('asn')}
     )
   `
 }
@@ -179,8 +181,9 @@ export async function getLastDispositionByCompanyIds(
       cl."agentId",
       u.name AS "agentName"
     FROM "CallLog" cl
-    JOIN "User" u ON u.id = cl."agentId"
+    JOIN "User" u ON u.id = cl."agentId" ${sqlAndTenant('u')}
     WHERE cl."companyId" IN (${Prisma.join(companyIds)})
+      ${sqlAndTenant('cl')}
       ${agentFilter}
     ORDER BY cl."companyId", cl."calledAt" DESC, cl.id DESC
   `
@@ -188,6 +191,7 @@ export async function getLastDispositionByCompanyIds(
     SELECT cl."companyId", COUNT(*)::bigint AS count
     FROM "CallLog" cl
     WHERE cl."companyId" IN (${Prisma.join(companyIds)})
+      ${sqlAndTenant('cl')}
       ${agentFilter}
     GROUP BY cl."companyId"
   `
@@ -640,6 +644,7 @@ export async function getDistinctCompanyIdsByAgentId(): Promise<Map<string, Set<
     SELECT DISTINCT a."agentId", c."companyId"
     FROM "Assignment" a
     INNER JOIN "Contact" c ON c.id = a."contactId"
+    WHERE true ${sqlAndTenant('a')} ${sqlAndTenant('c')}
   `
   const byAgent = new Map<string, Set<string>>()
   for (const row of rows) {

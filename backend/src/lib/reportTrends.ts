@@ -15,6 +15,7 @@ import {
   parseGranularity,
   type CallActivityGranularity,
 } from './callActivity'
+import { sqlAndTenant } from './tenant'
 
 export type DailyActivityRow = {
   date: string
@@ -102,7 +103,7 @@ export async function fetchDailyActivityFromSql(
             "agentId",
             ROW_NUMBER() OVER (PARTITION BY "companyId" ORDER BY "calledAt", id) AS company_rank
           FROM "CallLog"
-          WHERE "calledAt" >= ${fromDate} AND "agentId" = ${filterAgentId}
+          WHERE "calledAt" >= ${fromDate} AND "agentId" = ${filterAgentId} ${sqlAndTenant()}
         ),
         daily AS (
           SELECT
@@ -118,7 +119,7 @@ export async function fetchDailyActivityFromSql(
             DATE("calledAt") AS day,
             COUNT(DISTINCT "companyId")::bigint AS "contactedCompanies"
           FROM "CallLog"
-          WHERE "calledAt" >= ${fromDate} AND "agentId" = ${filterAgentId}
+          WHERE "calledAt" >= ${fromDate} AND "agentId" = ${filterAgentId} ${sqlAndTenant()}
           GROUP BY DATE("calledAt")
         )
         SELECT
@@ -146,7 +147,7 @@ export async function fetchDailyActivityFromSql(
             "agentId",
             ROW_NUMBER() OVER (PARTITION BY "companyId" ORDER BY "calledAt", id) AS company_rank
           FROM "CallLog"
-          WHERE "calledAt" >= ${fromDate}
+          WHERE "calledAt" >= ${fromDate} ${sqlAndTenant()}
         ),
         daily AS (
           SELECT
@@ -162,7 +163,7 @@ export async function fetchDailyActivityFromSql(
             DATE("calledAt") AS day,
             COUNT(DISTINCT "companyId")::bigint AS "contactedCompanies"
           FROM "CallLog"
-          WHERE "calledAt" >= ${fromDate}
+          WHERE "calledAt" >= ${fromDate} ${sqlAndTenant()}
           GROUP BY DATE("calledAt")
         )
         SELECT
@@ -354,6 +355,7 @@ export async function fetchHourlyActivity(
       WHERE "agentId" = ${agentId}
         AND "calledAt" >= ${dayStart}
         AND "calledAt" <= ${dayEnd}
+        ${sqlAndTenant()}
         AND EXTRACT(HOUR FROM ${localCalledAt}) >= 9
         AND EXTRACT(HOUR FROM ${localCalledAt}) <= 18
     )
@@ -429,11 +431,12 @@ export async function fetchAgentSparklines(
     LEFT JOIN LATERAL (
       SELECT "createdAt" AS reset_at
       FROM "AgentResetLog"
-      WHERE "originalAgentId" = cl."agentId"
+      WHERE "originalAgentId" = cl."agentId" ${sqlAndTenant()}
       ORDER BY "createdAt" DESC
       LIMIT 1
     ) r ON true
     WHERE cl."calledAt" >= ${fromDate}
+      ${sqlAndTenant('cl')}
       AND cl."agentId" IN (${Prisma.join(agentIds)})
       AND (r.reset_at IS NULL OR cl."calledAt" >= r.reset_at)
     GROUP BY cl."agentId", DATE(cl."calledAt")

@@ -4,7 +4,7 @@ Documento de arquitectura y checklist Fase 1. **PRs en orden** (ver §8); no sal
 
 | Campo | Valor |
 |-------|--------|
-| Estado | PR4 — Caddy/DNS wildcard `*.optickcloud.com` (staging docs + platform; prod upstream) |
+| Estado | PR5 — Tenant `demo` + aislamiento (staging); residual `$queryRaw` cerrado |
 | Enfoque | Shared Postgres + columna `tenantId` |
 | Stack | Node/Express + React + Prisma + Docker Compose (Ubuntu) |
 | Prod | Ubuntu (`crm.optickcloud.com`) — **no** Render como destino primario |
@@ -303,15 +303,16 @@ Deploy del middleware + login scoped + filtros en queries (PRs 2–3).
 - [x] Login scoped a `req.tenant.id` — PR2: JWT `{ id, email, role, name, tenantId, tokenVersion }`
 - [x] CORS por función para `*.optickcloud.com` (+ lista `FRONTEND_URL` / `CORS_EXTRA_ORIGINS`)
 - [x] Auditoría: queries Prisma de negocio con `tenantId` — PR3: AsyncLocalStorage + Prisma `$extends` (`lib/tenantContext.ts`, `lib/prisma.ts`); `resolveTenant` hace `runWithTenant`; modelos en `TENANT_SCOPED_TABLES`
+- [x] Residual PR3 `$queryRaw` — cerrado: `sqlAndTenant` / `resolveTenantIdForSql` en `lib/tenant.ts`; reportes, métricas, disposition, call activity, agent reset (ver § PR3 residual abajo)
 - [x] Caddy wildcard + DNS runbook — PR4: `infra/platform/Caddyfile.example` + `README-CADDY-WILDCARD.md`; wildcard → **prod**; smoke opcional `mt-staging` → staging; CORS/`resolveTenant` ya cubren `*.optickcloud.com`
-- [ ] Cloudflare: Public Hostname `*.optickcloud.com` → `http://caddy:80` (acción manual del operador)
-- [ ] Segundo tenant vacío (`demo`) creado
-- [ ] Prueba de aislamiento: usuario de A **no** ve datos de B (API + UI)
-- [ ] Token de A contra host de B → 401/403
+- [x] Cloudflare: Public Hostname `*.optickcloud.com` → `http://caddy:80` (operador; prerequisito PR5)
+- [x] Segundo tenant (`demo`) — script idempotente `backend/scripts/seed-tenant-demo.ts` (admin + agent + company marker)
+- [x] Prueba de aislamiento staging: login Host Optick vs `demo`; listados companies sin cross-visibility (ver § PR5)
+- [x] Token / credenciales de A contra host de B → 401 (login scoped + JWT match)
 - [ ] Backup/restore documentado post-migración
 - [ ] Recién entonces onboarding de cliente real
 
-**Residual PR3 (antes de PR5 demo):** `$queryRaw` en reportes/métricas **no** pasa por la extensión Prisma — con un solo tenant (Optick) no hay leak; **antes** de crear el tenant `demo` hay que scopear esos SQL con `tenantId` (o encapsularlos).
+**Residual PR3 — cerrado (antes de PR5):** `$queryRaw` en reportes/métricas **no** pasa por la extensión Prisma. Mitigación: `resolveTenantIdForSql()` + `sqlAndTenant(alias)` inyectan `AND …."tenantId" = $id` desde ALS (fallback Optick en scripts). Cubierto: `reportCharts`, `reportTrends`, `callActivity`, `companyDisposition`, `dailyAgentMetrics`, `agentReset`.
 
 ### Aplicar PR1 en staging (Ubuntu)
 
@@ -357,7 +358,7 @@ Verificar: `GET /api/health` OK; login Optick; listados autenticados (clientes /
 
 Implementación: `resolveTenant` → `runWithTenant(req.tenant.id)`; extensión Prisma inyecta `tenantId` en `where`/`data` para `TENANT_SCOPED_TABLES`. Creates con `OPTICK_TENANT_ID` hardcodeado se sobrescriben con el tenant del request. `/api/health` sin tenant; `/api/contact` (formulario) no toca tablas scoped.
 
-**Residual:** `$queryRaw` en reportes/métricas no pasa por la extensión — con un solo tenant (Optick) no hay leak; antes del tenant `demo` (PR5) hay que añadir `tenantId` a esos SQL o encapsularlos.
+**Residual `$queryRaw` — cerrado:** `sqlAndTenant` / `resolveTenantIdForSql` en `lib/tenant.ts`; inyectado en reportes/métricas/disposition/call activity/agent reset. Sin ALS (scripts) cae a Optick.
 
 **No** desplegar en prod (`main`) hasta cerrar checklist §6.
 
@@ -371,6 +372,30 @@ Implementación: `resolveTenant` → `runWithTenant(req.tenant.id)`; extensión 
 **Aplicado en servidor (2026-07-18):** `/opt/platform/Caddyfile` actualizado (backup `Caddyfile.bak.20260718-132612`); validate + reload OK; health OK para `pruebacrm`, `crm`, `mt-staging` y un host wildcard de prueba vía `Host` en LAN. **Pendiente del operador:** Public Hostname Cloudflare `*` (y opcional `mt-staging`).
 
 **No** merge a `main` / **no** `deploy-prod.sh` solo por PR4 de docs; el reload de Caddy es aditivo si se mantienen los site blocks existentes.
+
+### Aplicar PR5 (tenant demo + aislamiento) — staging
+
+Tras cerrar residual `$queryRaw` y desplegar:
+
+```bash
+bash /opt/llamadas/scripts/deploy-staging.sh
+docker exec -it llamadas-api npx ts-node --transpile-only scripts/seed-tenant-demo.ts
+```
+
+Defaults staging (override con env): `demo-admin@optick.demo` / `DemoAdmin123!`, `demo-agent@optick.demo` / `DemoAgent123!`.
+
+`resolveTenant`: `demo.optickcloud.com` → slug `demo` (no reserved; primer label del wildcard). Aliases Optick (`pruebacrm`, `crm`, `mt-staging`, localhost) siguen en slug `crm`.
+
+**Importante — routing:** el Caddyfile wildcard `*.optickcloud.com` apunta a **prod**. En staging, smoke con Host header al API staging (contenedor `llamadas-api:3000` o curl LAN), no asumir que HTTPS público `demo.optickcloud.com` pegue a staging.
+
+Checklist aislamiento (curl):
+
+1. Login Optick: `Host: pruebacrm.optickcloud.com` + credenciales Optick → 200 + JWT `tenantId=clopticktenantcrm0001`
+2. Login demo: `Host: demo.optickcloud.com` + `demo-admin@optick.demo` → 200 + JWT tenant demo
+3. Cross-login: Optick creds en Host demo → 401; demo creds en Host pruebacrm → 401
+4. List companies (auth token): Optick no ve `DEMO-00000001`; demo no ve companies Optick
+
+**No** `deploy-prod` / **no** push `main` por PR5 hasta checklist §6 restante (backup/restore + onboarding real).
 
 ---
 

@@ -1,5 +1,5 @@
 import { prisma } from './prisma'
-import { OPTICK_TENANT_ID } from './tenant'
+import { resolveTenantIdForSql, sqlAndTenant } from './tenant'
 
 function toUtcDateOnly(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
@@ -47,7 +47,7 @@ export async function incrementDailyMetricsForNewCall(callLog: CallLogForMetrics
       date_agentId: { date, agentId: callLog.agentId },
     },
     create: {
-      tenantId: OPTICK_TENANT_ID,
+      tenantId: resolveTenantIdForSql(),
       date,
       agentId: callLog.agentId,
       calls: 1,
@@ -96,6 +96,7 @@ export async function backfillDailyAgentMetrics(options?: {
           FROM "CallLog" cl
           WHERE cl."calledAt" >= ${from}
             AND cl."calledAt" <= ${to}
+            ${sqlAndTenant('cl')}
             AND cl."agentId" = ${options.agentId}
         ),
         daily AS (
@@ -116,6 +117,7 @@ export async function backfillDailyAgentMetrics(options?: {
           FROM "CallLog"
           WHERE "calledAt" >= ${from}
             AND "calledAt" <= ${to}
+            ${sqlAndTenant()}
             AND "agentId" = ${options.agentId}
           GROUP BY DATE("calledAt"), "agentId"
         )
@@ -148,6 +150,7 @@ export async function backfillDailyAgentMetrics(options?: {
           FROM "CallLog" cl
           WHERE cl."calledAt" >= ${from}
             AND cl."calledAt" <= ${to}
+            ${sqlAndTenant('cl')}
         ),
         daily AS (
           SELECT
@@ -167,6 +170,7 @@ export async function backfillDailyAgentMetrics(options?: {
           FROM "CallLog"
           WHERE "calledAt" >= ${from}
             AND "calledAt" <= ${to}
+            ${sqlAndTenant()}
           GROUP BY DATE("calledAt"), "agentId"
         )
         SELECT
@@ -192,7 +196,7 @@ export async function backfillDailyAgentMetrics(options?: {
         date_agentId: { date, agentId: row.agentId },
       },
       create: {
-        tenantId: OPTICK_TENANT_ID,
+        tenantId: resolveTenantIdForSql(),
         date,
         agentId: row.agentId,
         calls: Number(row.calls),
