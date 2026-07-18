@@ -7,8 +7,9 @@ Antes: producción en Render. **Ahora ambos entornos viven en Ubuntu** (mismo ho
 | Host | Ubuntu `servidoroptick` | Ubuntu (mismo servidor / path separado) |
 | Dominio | `pruebacrm.optickcloud.com` | `crm.optickcloud.com` |
 | Rama Git | **`staging`** | **`main`** |
-| Código en servidor | `/opt/llamadas` | `/opt/llamadas-prod` *(verificar en servidor con `ls`)* |
-| Script | `bash /opt/llamadas/scripts/deploy-staging.sh` | `bash /opt/llamadas-prod/scripts/deploy-prod.sh` *(verificar en servidor con `ls`)* |
+| Código en servidor | `/opt/llamadas` | `/opt/llamadas-prod` |
+| Compose | `docker-compose.yml` + `.env` | **`docker-compose.prod.yml`** + **`.env.prod`** |
+| Script | `bash /opt/llamadas/scripts/deploy-staging.sh` | `bash /opt/llamadas-prod/scripts/deploy-prod.sh` |
 | Proxy | Caddy en `/opt/platform` | Caddy en `/opt/platform` |
 | Repo | https://github.com/johanvidal1/llamadas | igual |
 
@@ -43,18 +44,31 @@ El script:
 ## Deploy producción (Ubuntu)
 
 ```bash
-# En el servidor — path y script a confirmar con ls si hace falta:
-ls /opt/llamadas-prod
-ls /opt/llamadas-prod/scripts/deploy-prod.sh
 bash /opt/llamadas-prod/scripts/deploy-prod.sh
+# Flags: --pull-only | --check
 ```
 
-Flujo esperado (análogo a staging):
+`deploy-prod.sh` usa:
 
-1. Laptop: merge a `main` → `git push origin main`
-2. Servidor: pull de `main` vía `deploy-prod.sh` (compose build/up + health para `crm.optickcloud.com`)
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod …
+```
 
-Si `deploy-prod.sh` aún no está en el repo del laptop, documenta/verifica en el servidor; no inventar Auto-Deploy en la nube.
+**No** uses el `docker-compose.yml` de staging en `/opt/llamadas-prod`. Ese archivo es staging-oriented en el repo; prod vive en `docker-compose.prod.yml` (mismo contenido operativo que el compose local histórico de prod: contenedores `llamadas-prod-*`, imágenes `*:prod`, volume `llamadas_prod_data`).
+
+Validar sin recrear nada:
+
+```bash
+cd /opt/llamadas-prod
+sg docker -c 'docker compose -f docker-compose.prod.yml --env-file .env.prod config'
+```
+
+Flujo esperado:
+
+1. Laptop: merge `staging` → `main` → `git push origin main`
+2. Servidor: `bash /opt/llamadas-prod/scripts/deploy-prod.sh` (pull `main` + compose build/up + health `crm.optickcloud.com`)
+
+**No** recrear el volume de Postgres (`llamadas_prod_data`) en deploys normales. **No** `skip-worktree` en `docker-compose.yml` de prod: con `docker-compose.prod.yml` el pull de `main` ya no pelea con un compose local divergente.
 
 ## Laptop (fuente de verdad para GitHub)
 
@@ -122,4 +136,5 @@ Sin write access no se puede push aunque alguien lo intente con esa key.
 ## Relacionado
 
 - Multi-tenant plan: [MULTI-TENANT-FASE1.md](./MULTI-TENANT-FASE1.md)
+- Backup / restore prod: [BACKUP-RESTORE-PROD.md](./BACKUP-RESTORE-PROD.md)
 - README ops: raíz del repo / `/opt/llamadas/README.md` en staging

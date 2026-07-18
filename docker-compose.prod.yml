@@ -1,0 +1,139 @@
+# docker-compose.prod.yml — PRODUCCIÓN (crm.optickcloud.com)
+# Path en servidor: /opt/llamadas-prod
+# Staging sigue en docker-compose.yml (/opt/llamadas).
+#
+# Validar:  docker compose -f docker-compose.prod.yml --env-file .env.prod config
+# Deploy:   bash scripts/deploy-prod.sh
+#
+# NO publicar Postgres al host. Caddy entra por la red `proxy` con aliases
+# llamadas-prod-api:3000 y llamadas-prod-frontend:80.
+# NO recrear el volume llamadas_prod_data salvo desastre de disco.
+
+name: llamadas-prod
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: llamadas-prod-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_DB: ${POSTGRES_DB:?required}
+    volumes:
+      # PG 18 image: data dir is /var/lib/postgresql (not .../data). Do not change.
+      - llamadas_prod_data:/var/lib/postgresql
+    networks:
+      - prod_internal
+    # IMPORTANTE: sin ports: — solo accesible por red interna
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4g
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: llamadas-api:prod
+    container_name: llamadas-prod-api
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: ${DATABASE_URL:?required}
+      JWT_SECRET: ${JWT_SECRET:?required}
+      FRONTEND_URL: ${FRONTEND_URL:?required}
+      CORS_EXTRA_ORIGINS: ${CORS_EXTRA_ORIGINS:-}
+      APP_TIMEZONE: ${APP_TIMEZONE:-America/Lima}
+      SYSTEM_OWNER_EMAIL: ${SYSTEM_OWNER_EMAIL:-}
+      SYSTEM_OWNER_PASSWORD: ${SYSTEM_OWNER_PASSWORD:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      CONTACT_TO_SUPPORT: ${CONTACT_TO_SUPPORT:-}
+      CONTACT_TO_SALES: ${CONTACT_TO_SALES:-}
+      DATABASE_CONNECTION_LIMIT: ${DATABASE_CONNECTION_LIMIT:-10}
+      DATABASE_POOL_TIMEOUT: ${DATABASE_POOL_TIMEOUT:-20}
+    volumes:
+      - llamadas_prod_uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      prod_internal: {}
+      proxy:
+        aliases:
+          - llamadas-prod-api
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Origen público SIN /api (el cliente añade /api). Same-origin vía Caddy.
+        VITE_API_URL: ${VITE_API_URL:?required}
+        VITE_CSP_EXTRA_ORIGINS: ${VITE_CSP_EXTRA_ORIGINS:-}
+    image: llamadas-frontend:prod
+    container_name: llamadas-prod-frontend
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      proxy:
+        aliases:
+          - llamadas-prod-frontend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:80/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+
+volumes:
+  llamadas_prod_data:
+  llamadas_prod_uploads:
+
+networks:
+  proxy:
+    external: true
+  prod_internal:
+    driver: bridge
+    internal: true
