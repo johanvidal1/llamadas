@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma'
 import { incrementDailyMetricsForNewCall } from '../lib/dailyAgentMetrics'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { getAclaracionForDisposition } from '../lib/responseOptions'
+import { OPTICK_TENANT_ID } from '../lib/tenant'
 
 const router = Router()
 
@@ -123,6 +124,7 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
 
       const callLog = await tx.callLog.create({
         data: {
+          tenantId: OPTICK_TENANT_ID,
           companyId: existing.companyId,
           agentId: existing.agentId,
           contactId,
@@ -175,6 +177,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
 
   const callback = await prisma.callback.create({
     data: {
+      tenantId: OPTICK_TENANT_ID,
       companyId: data.clientId,
       agentId: req.user!.id,
       scheduledAt: new Date(data.scheduledAt),

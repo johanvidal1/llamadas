@@ -2,11 +2,25 @@ import 'dotenv/config'
 import bcrypt from 'bcryptjs'
 import { prisma } from './lib/prisma'
 import { ensureArchivedAgent } from './lib/archivedAgent'
+import { OPTICK_TENANT_ID, OPTICK_TENANT_NAME, OPTICK_TENANT_SLUG } from './lib/tenant'
+
+async function ensureOptickTenant() {
+  await prisma.tenant.upsert({
+    where: { slug: OPTICK_TENANT_SLUG },
+    create: {
+      id: OPTICK_TENANT_ID,
+      name: OPTICK_TENANT_NAME,
+      slug: OPTICK_TENANT_SLUG,
+      status: 'ACTIVE',
+    },
+    update: {},
+  })
+}
 
 async function seedDefaultAdmin() {
   console.log('🌱 Creando usuario administrador...')
 
-  const existing = await prisma.user.findUnique({
+  const existing = await prisma.user.findFirst({
     where: { email: 'admin@llamadas.com' },
   })
 
@@ -18,6 +32,7 @@ async function seedDefaultAdmin() {
   const password = await bcrypt.hash('Admin123!', 12)
   const admin = await prisma.user.create({
     data: {
+      tenantId: OPTICK_TENANT_ID,
       name: 'Administrador',
       email: 'admin@llamadas.com',
       password,
@@ -47,7 +62,7 @@ async function seedSystemOwner() {
     data: { isSystemOwner: false },
   })
 
-  const existing = await prisma.user.findUnique({ where: { email } })
+  const existing = await prisma.user.findFirst({ where: { email } })
 
   if (existing) {
     await prisma.user.update({
@@ -72,6 +87,7 @@ async function seedSystemOwner() {
   const password = await bcrypt.hash(passwordPlain, 12)
   const owner = await prisma.user.create({
     data: {
+      tenantId: OPTICK_TENANT_ID,
       name: 'System Owner',
       email,
       password,
@@ -85,6 +101,7 @@ async function seedSystemOwner() {
 }
 
 async function main() {
+  await ensureOptickTenant()
   await seedDefaultAdmin()
   await seedSystemOwner()
   await ensureArchivedAgent()

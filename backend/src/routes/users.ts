@@ -22,6 +22,7 @@ import {
 import { excludeArchivedAgentWhere } from '../lib/archivedAgent'
 import { countCallLogsAfterResetByAgentIds } from '../lib/agentReset'
 import { todayYmdInAppTz, localDayStartUtc, localDayEndUtc } from '../lib/appTimezone'
+import { OPTICK_TENANT_ID } from '../lib/tenant'
 
 const router = Router()
 
@@ -187,7 +188,8 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     }
   }
 
-  const existing = await prisma.user.findUnique({ where: { email: data.email.toLowerCase() } })
+  // PR1: email unique per tenant; findFirst until PR2 scopes by req.tenant
+  const existing = await prisma.user.findFirst({ where: { email: data.email.toLowerCase() } })
   if (existing) {
     res.status(409).json({ error: 'El email ya está registrado' })
     return
@@ -196,6 +198,7 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   const hashed = await bcrypt.hash(data.password, 12)
   const user = await prisma.user.create({
     data: {
+      tenantId: OPTICK_TENANT_ID,
       name: data.name,
       email: data.email.toLowerCase(),
       password: hashed,

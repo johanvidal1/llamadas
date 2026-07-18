@@ -1,10 +1,10 @@
 # Multi-tenant Fase 1 — Shared DB + tenantId
 
-Documento de arquitectura (plan antes de código). **No implementar** schema, middleware ni deploy hasta completar checklist y PRs en orden.
+Documento de arquitectura y checklist Fase 1. **PRs en orden** (ver §8); no saltar a middleware/Caddy antes de schema+backfill en staging.
 
 | Campo | Valor |
 |-------|--------|
-| Estado | Plan acordado — documentación only |
+| Estado | PR1 en curso — schema + backfill (staging) |
 | Enfoque | Shared Postgres + columna `tenantId` |
 | Stack | Node/Express + React + Prisma + Docker Compose (Ubuntu) |
 | Prod | Ubuntu (`crm.optickcloud.com`) — **no** Render como destino primario |
@@ -343,7 +343,7 @@ Deploy del middleware + login scoped + filtros en queries (PRs 2–3).
 
 ## 6. Checklist Fase 1 (antes de vender el 2.º tenant)
 
-- [ ] Schema + backfill Optick (`slug: crm`) en **staging**
+- [x] Schema + backfill Optick (`slug: crm`) en **staging** — PR1: migración `20260718120000_multi_tenant_optick` (expand→backfill→constrain en una transacción) + script `backend/scripts/backfill-tenant-optick.ts`
 - [ ] `resolveTenant` + JWT con `tenantId` + match obligatorio
 - [ ] Login scoped a `req.tenant.id`
 - [ ] CORS por función para `*.optickcloud.com`
@@ -354,6 +354,26 @@ Deploy del middleware + login scoped + filtros en queries (PRs 2–3).
 - [ ] Token de A contra host de B → 401/403
 - [ ] Backup/restore documentado post-migración
 - [ ] Recién entonces onboarding de cliente real
+
+### Aplicar PR1 en staging (Ubuntu)
+
+Tras `git push origin staging`:
+
+```bash
+bash /opt/llamadas/scripts/deploy-staging.sh
+```
+
+El contenedor API corre `prisma migrate deploy` al arrancar (`migrate-deploy-prod.sh`). La migración única crea `Tenant`, inserta Optick (`id=clopticktenantcrm0001`, `slug=crm`), añade `tenantId`, backfill, `NOT NULL` + FKs, y reemplaza `User.email` único global por `@@unique([tenantId, email])`.
+
+Verificación opcional (repair / no-op si ya migró):
+
+```bash
+docker exec -it llamadas-api npx ts-node --transpile-only scripts/backfill-tenant-optick.ts
+```
+
+**No** aplicar esta migración en prod (`main`) hasta cerrar checklist y PRs 2–3 en staging.
+
+Creates de negocio en PR1 usan `OPTICK_TENANT_ID` fijo (`backend/src/lib/tenant.ts`) para no romper login single-tenant; PR2 sustituye por `req.tenant.id`.
 
 ---
 

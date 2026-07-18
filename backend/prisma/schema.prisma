@@ -16,6 +16,7 @@ datasource db {
 // ContactStatus values: same as CompanyStatus
 // ImportStatus values: OK | NO_ENCONTRADO | SIN_CONTACTOS
 // AssignmentRunStatus values: ACTIVE | PARTIALLY_RELEASED | PAUSED | CLOSED
+// Tenant.status values: ACTIVE | SUSPENDED
 
 enum AssignmentRunStatus {
   ACTIVE
@@ -24,34 +25,64 @@ enum AssignmentRunStatus {
   CLOSED
 }
 
-model User {
+model Tenant {
   id        String   @id @default(cuid())
   name      String
-  email     String   @unique
-  password  String
-  role          String   @default("AGENT")
-  isSuperAdmin  Boolean  @default(false)
-  isSystemOwner    Boolean  @default(false)
-  isArchivedAgent  Boolean  @default(false)
-  active           Boolean  @default(true)
-  tokenVersion  Int      @default(0)
+  slug      String   @unique
+  status    String   @default("ACTIVE")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  imports              ImportBatch[]
-  assignments          Assignment[]
-  assignmentRunsAsAgent AssignmentRun[] @relation("AssignmentRunAgent")
+  users              User[]
+  importBatches      ImportBatch[]
+  companies          Company[]
+  contacts           Contact[]
+  assignmentRuns     AssignmentRun[]
+  assignments        Assignment[]
+  callLogs           CallLog[]
+  callbacks          Callback[]
+  dailyAgentMetrics  DailyAgentMetrics[]
+  userSessions       UserSession[]
+  agentResetLogs     AgentResetLog[]
+  assignmentReleases AssignmentRelease[]
+  mobileLines        MobileLine[]
+}
+
+model User {
+  id               String   @id @default(cuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id])
+  name             String
+  email            String
+  password         String
+  role             String   @default("AGENT")
+  isSuperAdmin     Boolean  @default(false)
+  isSystemOwner    Boolean  @default(false)
+  isArchivedAgent  Boolean  @default(false)
+  active           Boolean  @default(true)
+  tokenVersion     Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  imports                ImportBatch[]
+  assignments            Assignment[]
+  assignmentRunsAsAgent  AssignmentRun[] @relation("AssignmentRunAgent")
   assignmentRunsAssigned AssignmentRun[] @relation("AssignmentRunAssignedBy")
-  callLogs             CallLog[]
-  callbacks   Callback[]
-  sessions    UserSession[]
-  assignmentReleases AssignmentRelease[] @relation("AssignmentReleaseBy")
-  dailyAgentMetrics    DailyAgentMetrics[]
-  agentResetsPerformed AgentResetLog[]     @relation("AgentResetBy")
+  callLogs               CallLog[]
+  callbacks              Callback[]
+  sessions               UserSession[]
+  assignmentReleases     AssignmentRelease[] @relation("AssignmentReleaseBy")
+  dailyAgentMetrics      DailyAgentMetrics[]
+  agentResetsPerformed   AgentResetLog[]     @relation("AgentResetBy")
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
 }
 
 model AgentResetLog {
   id                      String   @id @default(cuid())
+  tenantId                String
+  tenant                  Tenant   @relation(fields: [tenantId], references: [id])
   originalAgentId         String
   originalAgentName       String
   resetById               String
@@ -65,6 +96,7 @@ model AgentResetLog {
   metricsDeleted          Int      @default(0)
   createdAt               DateTime @default(now())
 
+  @@index([tenantId])
   @@index([originalAgentId])
   @@index([resetById])
   @@index([createdAt])
@@ -72,6 +104,8 @@ model AgentResetLog {
 
 model UserSession {
   id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
   userId       String
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   deviceId     String
@@ -86,30 +120,38 @@ model UserSession {
   lastSeenAt   DateTime @updatedAt
 
   @@unique([userId, deviceId])
+  @@index([tenantId])
   @@index([lastSeenAt])
   @@index([userId])
 }
 
 model ImportBatch {
-  id              String    @id @default(cuid())
-  filename        String
-  displayName     String?
-  fileSizeBytes   Int?
-  sourceRowCount  Int?
-  storagePath     String?
-  totalRecords    Int
-  blocked         Boolean   @default(false)
-  importedById    String
-  importedBy    User      @relation(fields: [importedById], references: [id])
-  createdAt     DateTime  @default(now())
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  filename       String
+  displayName    String?
+  fileSizeBytes  Int?
+  sourceRowCount Int?
+  storagePath    String?
+  totalRecords   Int
+  blocked        Boolean  @default(false)
+  importedById   String
+  importedBy     User     @relation(fields: [importedById], references: [id])
+  createdAt      DateTime @default(now())
 
   companies      Company[]
   mobileLines    MobileLine[]
   assignmentRuns AssignmentRun[]
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
 }
 
 model Company {
   id            String      @id @default(cuid())
+  tenantId      String
+  tenant        Tenant      @relation(fields: [tenantId], references: [id])
   ruc           String
   razonSocial   String?
   importStatus  String?
@@ -126,10 +168,16 @@ model Company {
   callLogs    CallLog[]
   callbacks   Callback[]
   mobileLines MobileLine[]
+
+  @@index([tenantId])
+  @@index([tenantId, ruc])
+  @@index([tenantId, createdAt])
 }
 
 model MobileLine {
   id             String       @id @default(cuid())
+  tenantId       String
+  tenant         Tenant       @relation(fields: [tenantId], references: [id])
   companyId      String
   company        Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
   ruc            String
@@ -141,12 +189,15 @@ model MobileLine {
   importBatch    ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
   createdAt      DateTime     @default(now())
 
+  @@index([tenantId])
   @@index([companyId])
   @@index([importBatchId])
 }
 
 model Contact {
   id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
   companyId    String
   company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   nombre       String
@@ -159,10 +210,14 @@ model Contact {
 
   assignment Assignment?
   callLogs   CallLog[]
+
+  @@index([tenantId])
 }
 
 model AssignmentRun {
   id            String              @id @default(cuid())
+  tenantId      String
+  tenant        Tenant              @relation(fields: [tenantId], references: [id])
   agentId       String
   agent         User                @relation("AssignmentRunAgent", fields: [agentId], references: [id])
   importBatchId String?
@@ -178,12 +233,15 @@ model AssignmentRun {
   assignments   Assignment[]
   releases      AssignmentRelease[]
 
+  @@index([tenantId])
   @@index([agentId, createdAt])
   @@index([importBatchId])
 }
 
 model AssignmentRelease {
   id              String         @id @default(cuid())
+  tenantId        String
+  tenant          Tenant         @relation(fields: [tenantId], references: [id])
   assignmentRunId String?
   assignmentRun   AssignmentRun? @relation(fields: [assignmentRunId], references: [id])
   releasedById    String
@@ -195,12 +253,15 @@ model AssignmentRelease {
   reason          String?
   createdAt       DateTime       @default(now())
 
+  @@index([tenantId])
   @@index([assignmentRunId])
   @@index([agentId, createdAt])
 }
 
 model Assignment {
   id              String         @id @default(cuid())
+  tenantId        String
+  tenant          Tenant         @relation(fields: [tenantId], references: [id])
   contactId       String         @unique
   contact         Contact        @relation(fields: [contactId], references: [id], onDelete: Cascade)
   agentId         String
@@ -208,10 +269,14 @@ model Assignment {
   assignmentRunId String?
   assignmentRun   AssignmentRun? @relation(fields: [assignmentRunId], references: [id])
   assignedAt      DateTime       @default(now())
+
+  @@index([tenantId])
 }
 
 model CallLog {
   id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
   companyId   String
   company     Company  @relation(fields: [companyId], references: [id])
   contactId   String?
@@ -226,6 +291,8 @@ model CallLog {
 
   callback Callback?
 
+  @@index([tenantId])
+  @@index([tenantId, calledAt])
   @@index([calledAt])
   @@index([agentId, calledAt])
   @@index([companyId])
@@ -235,6 +302,8 @@ model CallLog {
 
 model DailyAgentMetrics {
   id                   String   @id @default(cuid())
+  tenantId             String
+  tenant               Tenant   @relation(fields: [tenantId], references: [id])
   date                 DateTime @db.Date
   agentId              String
   agent                User     @relation(fields: [agentId], references: [id], onDelete: Cascade)
@@ -246,12 +315,15 @@ model DailyAgentMetrics {
   updatedAt            DateTime @updatedAt
 
   @@unique([date, agentId])
+  @@index([tenantId])
   @@index([date])
   @@index([agentId, date])
 }
 
 model Callback {
   id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
   companyId   String
   company     Company   @relation(fields: [companyId], references: [id])
   agentId     String
@@ -264,5 +336,6 @@ model Callback {
   completedAt DateTime?
   createdAt   DateTime  @default(now())
 
+  @@index([tenantId])
   @@index([agentId, scheduledAt])
 }

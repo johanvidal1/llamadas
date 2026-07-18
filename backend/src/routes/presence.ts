@@ -6,6 +6,7 @@ import { prisma } from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { excludeArchivedAgentWhere } from '../lib/archivedAgent'
 import { isAdminUser } from '../lib/userPermissions'
+import { OPTICK_TENANT_ID } from '../lib/tenant'
 
 const router = Router()
 
@@ -57,6 +58,7 @@ router.post('/heartbeat', requireAuth, async (req: AuthRequest, res: Response) =
       },
     },
     create: {
+      tenantId: OPTICK_TENANT_ID,
       userId: req.user!.id,
       deviceId,
       deviceLabel: deviceLabel ?? null,

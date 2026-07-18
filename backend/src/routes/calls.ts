@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma'
 import { buildCalledAtRange } from '../lib/callActivity'
 import { incrementDailyMetricsForNewCall } from '../lib/dailyAgentMetrics'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { OPTICK_TENANT_ID } from '../lib/tenant'
 import {
   recomputeCompanyStatus,
   recomputeContactStatus,
@@ -261,6 +262,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
 
   const callLog = await prisma.callLog.create({
     data: {
+      tenantId: OPTICK_TENANT_ID,
       companyId: data.clientId,
       agentId: req.user!.id,
       contactId,
@@ -286,6 +288,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     await cancelPendingCallbacksForCompanyAgent(data.clientId, req.user!.id, callLog.id)
     await prisma.callback.create({
       data: {
+        tenantId: OPTICK_TENANT_ID,
         companyId: data.clientId,
         agentId: req.user!.id,
         callLogId: callLog.id,
@@ -439,6 +442,7 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
       await prisma.callback.upsert({
         where: { callLogId: callLog.id },
         create: {
+          tenantId: OPTICK_TENANT_ID,
           companyId: existing.companyId,
           agentId: req.user!.id,
           callLogId: callLog.id,

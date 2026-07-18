@@ -13,6 +13,7 @@ import { getDispositionLabel } from '../lib/responseOptions'
 import { isSuperAdminOrOwner } from '../lib/userPermissions'
 import { countUnassignedCompanies } from '../lib/assignmentOrder'
 import { isValidMobileLineNumber, mobileDigits } from '../lib/mobileLine'
+import { OPTICK_TENANT_ID } from '../lib/tenant'
 
 function parseFechaConsulta(raw?: string): Date | null {
   if (!raw) return null
@@ -37,6 +38,7 @@ function parseFechaConsulta(raw?: string): Date | null {
 
 function toContactCreate(contacts: ParsedCompany['contacts']) {
   return contacts.map((c) => ({
+    tenantId: OPTICK_TENANT_ID,
     nombre: c.nombre.trim() || c.telefono || 'Sin nombre',
     tipoContacto: c.tipoContacto ?? null,
     dni: c.dni ?? null,
@@ -511,6 +513,7 @@ router.post(
       async (tx) => {
         const created = await tx.importBatch.create({
           data: {
+            tenantId: OPTICK_TENANT_ID,
             filename,
             displayName,
             fileSizeBytes,
@@ -525,6 +528,7 @@ router.post(
           const { contacts, name: _name, phone: _phone, email: _email, ...companyFields } = company
           const createdCompany = await tx.company.create({
             data: {
+              tenantId: OPTICK_TENANT_ID,
               ruc: companyFields.ruc,
               razonSocial: companyFields.razonSocial ?? null,
               importStatus: companyFields.estado ?? null,
@@ -547,6 +551,7 @@ router.post(
               const companyId = rucToCompanyId.get(line.ruc)
               if (!companyId) return null
               return {
+                tenantId: OPTICK_TENANT_ID,
                 companyId,
                 ruc: line.ruc,
                 numeroTelefono: line.numeroTelefono ?? null,

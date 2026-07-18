@@ -24,6 +24,7 @@ import {
 import { getAclaracionForDisposition } from '../lib/responseOptions'
 import { getLatestResetAtByAgentIds, isAssignmentAfterReset } from '../lib/agentReset'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
+import { OPTICK_TENANT_ID } from '../lib/tenant'
 
 const router = Router()
 
@@ -263,6 +264,7 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
 
   const run = await prisma.assignmentRun.create({
     data: {
+      tenantId: OPTICK_TENANT_ID,
       agentId,
       importBatchId: batchId ?? null,
       assignedById: req.user!.id,
@@ -273,6 +275,7 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
 
   await prisma.assignment.createMany({
     data: newIds.map((contactId) => ({
+      tenantId: OPTICK_TENANT_ID,
       contactId,
       agentId,
       assignmentRunId: run.id,

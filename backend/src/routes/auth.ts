@@ -16,7 +16,8 @@ const loginSchema = z.object({
 router.post('/login', async (req: Request, res: Response) => {
   const { email, password } = loginSchema.parse(req.body)
 
-  const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } })
+  // PR1: email is unique per tenant; findFirst keeps single-tenant login until PR2 scopes by req.tenant
+  const user = await prisma.user.findFirst({ where: { email: email.toLowerCase() } })
   if (!user || !user.active || user.isArchivedAgent) {
     res.status(401).json({ error: 'Credenciales incorrectas' })
     return

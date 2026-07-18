@@ -1,5 +1,6 @@
 import { AssignmentRunStatus } from '@prisma/client'
 import { prisma } from './prisma'
+import { OPTICK_TENANT_ID } from './tenant'
 
 export type ReleaseCompanySummary = {
   id: string
@@ -341,6 +342,7 @@ export async function executeReleaseRemainder(
 
   await prisma.assignmentRelease.create({
     data: {
+      tenantId: OPTICK_TENANT_ID,
       assignmentRunId: ctx.type === 'run' ? ctx.runId : null,
       releasedById,
       agentId: ctx.agentId,

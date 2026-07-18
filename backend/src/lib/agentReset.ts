@@ -3,6 +3,7 @@ import { invalidateAuthUserCache } from './authUserCache'
 import { ensureArchivedAgent, ARCHIVED_AGENT_NAME } from './archivedAgent'
 import { isAdminUser } from './userPermissions'
 import { prisma } from './prisma'
+import { OPTICK_TENANT_ID } from './tenant'
 
 export class AgentResetBlockedError extends Error {
   constructor(message: string) {
@@ -220,6 +221,7 @@ export async function executeAgentReset(
 
     await tx.agentResetLog.create({
       data: {
+        tenantId: OPTICK_TENANT_ID,
         originalAgentId: agentId,
         originalAgentName: preview.agent.name,
         resetById,

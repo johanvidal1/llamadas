@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
+import { OPTICK_TENANT_ID } from './tenant'
 
 export const ARCHIVED_AGENT_EMAIL = 'archived-agent@system.internal'
 export const ARCHIVED_AGENT_NAME = 'Agente borrado'
@@ -15,7 +16,7 @@ export const activeAgentUserWhere = {
 } as const
 
 export async function ensureArchivedAgent(): Promise<{ id: string }> {
-  const existing = await prisma.user.findUnique({
+  const existing = await prisma.user.findFirst({
     where: { email: ARCHIVED_AGENT_EMAIL },
     select: { id: true, isArchivedAgent: true, active: true },
   })
@@ -37,6 +38,7 @@ export async function ensureArchivedAgent(): Promise<{ id: string }> {
 
   const user = await prisma.user.create({
     data: {
+      tenantId: OPTICK_TENANT_ID,
       name: ARCHIVED_AGENT_NAME,
       email: ARCHIVED_AGENT_EMAIL,
       password,
