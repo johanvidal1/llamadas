@@ -277,3 +277,7 @@ Detalle y checklist: [docs/GIT-RENDER-VS-UBUNTU.md](docs/GIT-RENDER-VS-UBUNTU.md
 
 **No** configures Auto-Deploy de Render contra `staging`. El servidor Ubuntu no debe hacer `git push`.
 
+### Multi-tenant (plan Fase 1)
+
+Arquitectura acordada (Shared DB + `tenantId`, subdominios, Caddy wildcard) — solo documentación por ahora: [docs/MULTI-TENANT-FASE1.md](docs/MULTI-TENANT-FASE1.md).
+
