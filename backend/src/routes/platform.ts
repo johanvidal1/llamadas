@@ -2,12 +2,8 @@ import { Router, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma'
-import {
-  OPTICK_TENANT_ID,
-  RESERVED_SUBDOMAINS,
-  TENANT_ROOT_DOMAIN,
-} from '../lib/tenant'
-import { runWithTenant } from '../lib/tenantContext'
+import { OPTICK_TENANT_ID, RESERVED_SUBDOMAINS, TENANT_ROOT_DOMAIN } from '../lib/tenant'
+import { tenantStorage } from '../lib/tenantContext'
 import { isSuperAdminOrOwner } from '../lib/userPermissions'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
@@ -117,9 +113,12 @@ router.post('/tenants', requireAuth, async (req: AuthRequest, res: Response) => 
     select: { id: true, name: true, slug: true, status: true },
   })
 
-  // 2) Create admin under the NEW tenant ALS — never under Optick ALS.
+  // 2) Create admin under the NEW tenant id.
+  // Request ALS is still Optick (resolveTenant). Nested runWithTenant alone is not
+  // reliable across Prisma's async query path — stampTenantOnData would overwrite
+  // with Optick. Exit ALS so the extension pass-through keeps explicit tenantId.
   const hashed = await bcrypt.hash(data.adminPassword, 12)
-  const admin = await runWithTenant(tenant.id, () =>
+  const admin = await tenantStorage.exit(() =>
     prisma.user.create({
       data: {
         tenantId: tenant.id,
@@ -131,13 +130,22 @@ router.post('/tenants', requireAuth, async (req: AuthRequest, res: Response) => 
         isSystemOwner: false,
         active: true,
       },
-      select: { id: true, email: true, name: true },
+      select: { id: true, email: true, name: true, tenantId: true },
     })
   )
 
+  if (admin.tenantId !== tenant.id) {
+    // Should be unreachable; defensive guard against ALS stamp regressions.
+    res.status(500).json({
+      error: 'Error interno: admin creado en tenant incorrecto',
+      code: 'TENANT_ALS_MISMATCH',
+    })
+    return
+  }
+
   res.status(201).json({
     tenant,
-    admin,
+    admin: { id: admin.id, email: admin.email, name: admin.name },
     url: tenantPublicUrl(tenant.slug),
   })
 })

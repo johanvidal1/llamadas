@@ -53,9 +53,15 @@ Respuesta `201`:
 
 ### ALS / Prisma (importante)
 
-El middleware deja ALS = Optick. Crear el `User` admin **debe** hacerse con `runWithTenant(newTenantId, …)`; si no, la extensión Prisma estamparía `tenantId` de Optick.
+El middleware deja ALS = Optick. Crear el `User` admin **no** puede hacerse solo con `runWithTenant(newId)` anidado: la extensión Prisma estampa el ALS activo y, en la práctica, el create async sigue viendo Optick y **sobrescribe** `tenantId`.
 
-`Tenant` no está en tablas scoped → el `create` del tenant es seguro sin cambiar ALS.
+Patrón correcto en `POST /api/platform/tenants`:
+
+1. `prisma.tenant.create` (modelo no scoped)
+2. `tenantStorage.exit(() => prisma.user.create({ data: { tenantId: newId, … } }))` — sin ALS, la extensión hace pass-through y respeta el `tenantId` explícito
+3. Guard: rechazar si `admin.tenantId !== tenant.id`
+
+`maxAgents` no está en el schema; el tope sigue siendo global (`MAX_AGENTS`).
 
 ## Staging smoke (no usar prod)
 
@@ -66,17 +72,23 @@ El middleware deja ALS = Optick. Crear el `User` admin **debe** hacerse con `run
 3. Verifica en la **DB/API de staging** (no abras el URL público del slug):
 
 ```bash
-# En el servidor Ubuntu (staging), contra Caddy local o el contenedor API:
-curl -sS -H 'Host: acme-test.optickcloud.com' \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"admin@acme.com","password":"secreto1"}' \
-  http://127.0.0.1/api/auth/login
-
-# O vía docker:
-docker exec -i llamadas-api curl -sS -H 'Host: acme-test.optickcloud.com' \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"admin@acme.com","password":"secreto1"}' \
+# En el servidor Ubuntu (staging), contra la API del contenedor (no uses el DNS público del slug):
+docker exec llamadas-api wget -qO- --header='Host: acme-test.optickcloud.com' \
+  --header='Content-Type: application/json' \
+  --post-data='{"email":"admin@acme.com","password":"secreto1"}' \
   http://127.0.0.1:3001/api/auth/login
+
+# O vía Caddy solo si el Host está mapeado a staging (pruebacrm sí; *.optickcloud.com público → prod):
+curl -sS -H 'Host: pruebacrm.optickcloud.com' http://127.0.0.1/api/health
+```
+
+Suspender (usar `-X PATCH`; sin eso curl hace POST):
+
+```bash
+curl -sS -X PATCH -H 'Host: pruebacrm.optickcloud.com' \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"status":"SUSPENDED"}' \
+  http://127.0.0.1/api/platform/tenants/$TENANT_ID
 ```
 
 4. Confirma `200` + JWT con `tenantId` del nuevo tenant.
