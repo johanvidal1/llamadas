@@ -130,6 +130,8 @@ Cuando quieras desplegar en un servidor real:
 
 ## Migraciones de base de datos (Prisma Migrate)
 
+> Nota: secciones siguientes sobre **Render** son legado histórico de migraciones; prod diario es Ubuntu (`crm.optickcloud.com`). Ver [docs/GIT-STAGING-VS-PROD.md](docs/GIT-STAGING-VS-PROD.md).
+
 El proyecto usa migraciones versionadas en lugar de `db push` para despliegues seguros.
 
 | Entorno | Comando | Uso |
@@ -266,16 +268,16 @@ Llamadas/
 - **Import:** xlsx · csv-parser (mapeo automático de columnas)
 ---
 
-## Staging (Ubuntu) vs produccion (Render)
+## Staging (Ubuntu) vs produccion (Ubuntu)
 
 | Entorno | Dominio | Rama Git | Deploy |
 |---------|---------|----------|--------|
-| Produccion (Render) | crm.optickcloud.com | `main` | Auto-Deploy Render |
-| Staging (Ubuntu) | pruebacrm.optickcloud.com | `staging` | `scripts/deploy-staging.sh` |
+| Produccion (Ubuntu) | crm.optickcloud.com | `main` | `bash /opt/llamadas-prod/scripts/deploy-prod.sh` *(verificar path en servidor)* |
+| Staging (Ubuntu) | pruebacrm.optickcloud.com | `staging` | `bash /opt/llamadas/scripts/deploy-staging.sh` |
 
-Detalle y checklist: [docs/GIT-RENDER-VS-UBUNTU.md](docs/GIT-RENDER-VS-UBUNTU.md).
+Detalle y checklist: [docs/GIT-STAGING-VS-PROD.md](docs/GIT-STAGING-VS-PROD.md).
 
-**No** configures Auto-Deploy de Render contra `staging`. El servidor Ubuntu no debe hacer `git push`.
+Laptop: `git push` solamente. Servidor: `pull` / script de deploy. Render es **legado** — desactivar Auto-Deploy si aún está activo; no es el camino diario de prod.
 
 ### Multi-tenant (plan Fase 1)
 

@@ -385,6 +385,6 @@ Deploy del middleware + login scoped + filtros en queries (PRs 2–3).
 
 ## Relacionado
 
-- Deploy staging vs prod Git: [GIT-RENDER-VS-UBUNTU.md](./GIT-RENDER-VS-UBUNTU.md)
+- Deploy staging vs prod Git: [GIT-STAGING-VS-PROD.md](./GIT-STAGING-VS-PROD.md)
 - Compose CRM: `docker-compose.yml` (Caddy **no** va aquí; `/opt/platform`)
 - Schema actual (single-tenant): `backend/prisma/schema.prisma`

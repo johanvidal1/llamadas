@@ -1,17 +1,19 @@
 ---
-description: Servidor Ubuntu staging Optick - hardware, politicas Docker-only, dominios, confirmaciones UFW/sshd
+description: Servidor Ubuntu Optick - hardware, politicas Docker-only, dominios staging/prod, confirmaciones UFW/sshd
 alwaysApply: true
 ---
 
-# Servidor Optick (staging)
+# Servidor Optick (Ubuntu staging + prod)
 
 ## Entorno
-- **Produccion:** Render (optickcloud.com) - NO tocar DNS de produccion.
+- **Produccion:** Ubuntu → `crm.optickcloud.com` ← rama **`main`** + `deploy-prod.sh` (path típico `/opt/llamadas-prod`; verificar en servidor con `ls`). DNS prod ya apunta a Ubuntu.
 - **Staging:** host Ubuntu `servidoroptick` - apps solo en Docker; host limpio (Docker, Caddy, UFW, backups).
-- **Dominio staging:** `pruebacrm.optickcloud.com`
-- **LAN:** 192.168.1.51 (DNS puede no apuntar aun)
+- **Dominio staging:** `pruebacrm.optickcloud.com` ← rama **`staging`** + `/opt/llamadas` + `deploy-staging.sh`
+- **Caddy / platform:** `/opt/platform`
+- **LAN:** 192.168.1.51
 - **Let's Encrypt:** johanvidal1@gmail.com
 - **Usuario ops:** `adminoptick` (sudo; no root dia a dia)
+- **Render:** legado solamente — no es el deploy diario de prod; desactivar Auto-Deploy si sigue encendido.
 
 ## Hardware (documentar / no reinventar)
 - CPU: AMD Ryzen 7 8700G (8c/16t)
@@ -24,10 +26,12 @@ alwaysApply: true
 
 ## Politicas obligatorias
 - NO instalar Node, Postgres ni paquetes CRM en el host.
-- NO cambiar DNS produccion optickcloud.com.
+- DNS: prod ya en Ubuntu; no cambiar registros de `optickcloud.com` / `crm.optickcloud.com` sin necesidad (evitar roturas accidentales).
 - Confirmar con el usuario ANTES de: `ufw enable`, `systemctl reload|restart ssh|sshd`.
 - Frases de confirmacion: `CONFIRMAR SSHD` / `CONFIRMAR UFW`.
 - FASE A (hardening) antes de FASE B (deploy Caddy/apps).
+- Laptop: git push; servidor: pull only. Staging y prod usan scripts/paths distintos.
 
 ## Scripts preparados
 Ver `infra/staging/fase-a/` en este repo (aplicar solo en Remote SSH a Ubuntu).
+Ops Git staging vs prod: `docs/GIT-STAGING-VS-PROD.md`.

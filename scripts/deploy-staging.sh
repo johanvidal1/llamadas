@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # deploy-staging.sh — actualiza CRM staging en Ubuntu (pruebacrm.optickcloud.com)
-# NO toca Render / crm.optickcloud.com. NO hace git push.
+# Solo staging (/opt/llamadas). Producción es Ubuntu en /opt/llamadas-prod (verificar ls)
+# vía deploy-prod.sh — NO este script. NO hace git push. Render = legado, no destino.
 #
 # Uso:
 #   bash /opt/llamadas/scripts/deploy-staging.sh           # fetch + checkout + pull + compose
@@ -60,9 +61,9 @@ if [[ -n "$dirty" ]]; then
   fi
 fi
 
-log "=== Deploy staging Ubuntu (NO afecta Render) ==="
+log "=== Deploy staging Ubuntu (solo pruebacrm; NO toca prod) ==="
 log "Repo: ${REPO_DIR} | branch objetivo: ${BRANCH}"
-log "Recordatorio: crm.optickcloud.com (Render) NO se actualiza con este script."
+log "Recordatorio: producción (crm.optickcloud.com) usa /opt/llamadas-prod + deploy-prod.sh — no este script."
 
 log "git fetch origin..."
 git fetch origin
@@ -86,7 +87,7 @@ if [[ "$CHECK_ONLY" -eq 1 ]]; then
   else
     log "rama local ${BRANCH}: ausente"
   fi
-  log "Check OK. Render no fue tocado. No se hizo push."
+  log "Check OK. Solo staging; prod no fue tocado. No se hizo push."
   exit 0
 fi
 
@@ -113,7 +114,7 @@ else
 ************************************************************************
   ACCIÓN REQUERIDA EN EL LAPTOP (no desde este servidor):
   1. Asegura que la rama '${BRANCH}' exista en GitHub (push desde laptop).
-  2. Confirma en Render Dashboard que Auto-Deploy sigue en 'main' solamente.
+  2. Producción es Ubuntu (/opt/llamadas-prod + deploy-prod.sh); no uses este script para prod.
   3. En el servidor: git fetch && este script otra vez.
   Este servidor NUNCA debe hacer git push a GitHub.
 ************************************************************************
@@ -125,7 +126,7 @@ log "HEAD: $(git rev-parse --abbrev-ref HEAD) @ $(git rev-parse --short HEAD)"
 
 if [[ "$PULL_ONLY" -eq 1 ]]; then
   log "Modo --pull-only: omitiendo docker compose."
-  log "Listo (solo git). Render no fue tocado. No se hizo push."
+  log "Listo (solo git). Solo staging; prod no fue tocado. No se hizo push."
   exit 0
 fi
 
@@ -146,6 +147,6 @@ fi
 
 log "=== Fin deploy staging ==="
 log "Staging: https://pruebacrm.optickcloud.com"
-log "Este script NO despliega ni reinicia Render (crm.optickcloud.com)."
+log "Este script NO despliega producción (crm.optickcloud.com → /opt/llamadas-prod + deploy-prod.sh)."
 log "Nunca hagas git push desde este servidor."
 [[ "$health_ok" -eq 1 ]] || exit 1
