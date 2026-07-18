@@ -32,6 +32,7 @@ import CallModal from '../components/CallModal'
 import CompleteCallbackModal, { type CompleteConfirm } from '../components/CompleteCallbackModal'
 import DispositionSelector from '../components/DispositionSelector'
 import { ColaFilterDropdown } from '../components/ColaFilterDropdown'
+import { BatchPendingPicker } from '../components/BatchPendingPicker'
 import { DuplicateRucBanner } from '../components/DuplicateRucBanner'
 import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -692,18 +693,6 @@ function useIsLg() {
   return isLg
 }
 
-function countCompanies(list: ClientSummary[]) {
-  return list.length
-}
-
-function batchMetricsLabel(companyCount: number, _contactCount: number) {
-  return `${companyCount} empresas`
-}
-
-function batchLabelShort(batch: { filename: string }) {
-  return batch.filename.replace(/\.[^.]+$/, '')
-}
-
 // ─── Main Component ────────────────────────────────────────────────────────────
 
 export default function MyLeads() {
@@ -874,11 +863,8 @@ export default function MyLeads() {
     enabled: viewMode === 'grid',
   })
 
-  // All loaded clients (unfiltered) — used only for batch derivation
+  // All loaded clients (unfiltered) — used for batch derivation + pending counts
   const allClients: ClientSummary[] = allClientsData?.clients ?? []
-  const countContacts = (list: ClientSummary[]) =>
-    list.reduce((sum, c) => sum + (c.contacts?.length ?? 0), 0)
-  const allContactCount = countContacts(allClients)
 
   // Derive unique batches sorted newest first
   const batches = Array.from(
@@ -2073,23 +2059,14 @@ export default function MyLeads() {
 
           {/* Batch selector */}
           {batches.length > 0 && (
-            <select
+            <BatchPendingPicker
+              batches={batches}
+              clients={allClients}
               value={selectedBatchId}
-              onChange={(e) => switchBatch(e.target.value)}
-              className="bg-blue-700 border border-blue-500 text-white text-xs rounded px-2 py-1 focus:outline-none focus:border-blue-300 max-w-[220px] truncate"
-            >
-              <option value="">
-                Todos los lotes ({batchMetricsLabel(countCompanies(allClients), allContactCount)})
-              </option>
-              {batches.map((b, i) => {
-                const batchClients = allClients.filter((c) => c.importBatch?.id === b.id)
-                return (
-                  <option key={b.id} value={b.id}>
-                    {i === 0 ? '★ ' : ''}{batchLabelShort(b)} ({batchMetricsLabel(countCompanies(batchClients), countContacts(batchClients))})
-                  </option>
-                )
-              })}
-            </select>
+              onChange={switchBatch}
+              variant="header"
+              id="detail-batch-filter"
+            />
           )}
 
           {exportBatchId && (
@@ -2858,28 +2835,16 @@ export default function MyLeads() {
               />
             </div>
             {batches.length > 0 && (
-              <div className="flex flex-col gap-1 shrink-0 w-full sm:w-auto sm:min-w-[160px]">
-                <label htmlFor="grid-batch-filter" className="text-xs text-gray-500 font-medium">
-                  Lote
-                </label>
-                <select
-                  id="grid-batch-filter"
+              <div className="flex flex-col gap-1 shrink-0 w-full sm:w-auto sm:min-w-[200px]">
+                <BatchPendingPicker
+                  batches={batches}
+                  clients={allClients}
                   value={selectedBatchId}
-                  onChange={(e) => switchBatch(e.target.value)}
-                  className="input text-sm h-9 py-1.5 w-full"
-                >
-                  <option value="">
-                    Todos los lotes ({batchMetricsLabel(countCompanies(allClients), allContactCount)})
-                  </option>
-                  {batches.map((b, i) => {
-                    const batchClients = allClients.filter((c) => c.importBatch?.id === b.id)
-                    return (
-                      <option key={b.id} value={b.id}>
-                        {i === 0 ? '★ ' : ''}{batchLabelShort(b)} ({batchMetricsLabel(countCompanies(batchClients), countContacts(batchClients))})
-                      </option>
-                    )
-                  })}
-                </select>
+                  onChange={switchBatch}
+                  variant="filter"
+                  id="grid-batch-filter"
+                  label="Lote"
+                />
               </div>
             )}
             <div className="flex gap-2 flex-wrap">
@@ -3075,28 +3040,16 @@ export default function MyLeads() {
                   />
                 </div>
                 {batches.length > 0 && (
-                  <div className="flex flex-col gap-1 shrink-0 w-full sm:w-auto sm:min-w-[160px]">
-                    <label htmlFor="list-batch-filter" className="text-xs text-gray-500 font-medium">
-                      Lote
-                    </label>
-                    <select
-                      id="list-batch-filter"
+                  <div className="flex flex-col gap-1 shrink-0 w-full sm:w-auto sm:min-w-[200px]">
+                    <BatchPendingPicker
+                      batches={batches}
+                      clients={allClients}
                       value={selectedBatchId}
-                      onChange={(e) => switchBatch(e.target.value)}
-                      className="input text-sm h-9 py-1.5 w-full"
-                    >
-                      <option value="">
-                        Todos los lotes ({batchMetricsLabel(countCompanies(allClients), allContactCount)})
-                      </option>
-                      {batches.map((b, i) => {
-                        const batchClients = allClients.filter((c) => c.importBatch?.id === b.id)
-                        return (
-                          <option key={b.id} value={b.id}>
-                            {i === 0 ? '★ ' : ''}{batchLabelShort(b)} ({batchMetricsLabel(countCompanies(batchClients), countContacts(batchClients))})
-                          </option>
-                        )
-                      })}
-                    </select>
+                      onChange={switchBatch}
+                      variant="filter"
+                      id="list-batch-filter"
+                      label="Lote"
+                    />
                   </div>
                 )}
                 <div className="flex items-center gap-2 shrink-0 pb-0.5 sm:ml-auto">
@@ -3217,6 +3170,8 @@ export default function MyLeads() {
                         : ''
                       const aclaracion = c.lastAclaracion || (c.lastDisposition ? getAclaracionForDisposition(c.lastDisposition) : '')
                       const isSelectedRow = navIdx === currentIndex
+                      // Pending = no lastDisposition (sky emphasis). Registered = normal text;
+                      // DispositionBadge carries meaning — no green row/chip (conflicts with funnel greens).
                       const isPendingRow = !c.lastDisposition
                       return (
                         <tr
@@ -3227,9 +3182,9 @@ export default function MyLeads() {
                           onClick={() => openDetailFromList(realIdx)}
                         >
                           <td className="px-4 py-2.5 text-gray-400 text-xs">{realIdx >= 0 ? realIdx + 1 : '—'}</td>
-                          <td className={`px-4 py-2.5 font-mono text-xs ${isPendingRow ? 'text-sky-800 font-medium' : 'text-gray-600'}`}>{c.ruc}</td>
+                          <td className={`px-4 py-2.5 font-mono text-xs ${isPendingRow ? 'text-gray-400' : 'text-gray-600'}`}>{c.ruc}</td>
                           <td className="px-4 py-2.5">
-                            <p className={`font-medium text-sm ${isPendingRow ? 'text-sky-900' : 'text-gray-900'}`}>{c.razonSocial || <span className="text-gray-400 italic text-xs">Sin razón social</span>}</p>
+                            <p className={`text-sm ${isPendingRow ? 'text-gray-400 font-normal' : 'text-gray-900 font-medium'}`}>{c.razonSocial || <span className="text-gray-400 italic text-xs">Sin razón social</span>}</p>
                             {c.contacts?.[0] && (
                               <p className="text-xs text-gray-400">{c.contacts[0].nombre}</p>
                             )}
