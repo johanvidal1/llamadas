@@ -14,12 +14,22 @@ import BatchReports from './pages/BatchReports'
 import BatchDetail from './pages/BatchDetail'
 import CallHistory from './pages/CallHistory'
 import Contacto from './pages/Contacto'
+import PlatformTenants from './pages/PlatformTenants'
 
 function ProtectedRoute({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
   const { user, isAdmin, isLoading } = useAuth()
   if (isLoading) return <div className="flex items-center justify-center h-screen text-gray-500">Cargando...</div>
   if (!user) return <Navigate to="/login" replace />
   if (adminOnly && !isAdmin) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
+function PlatformRoute({ children }: { children: React.ReactNode }) {
+  const { user, isLoading } = useAuth()
+  if (isLoading) return <div className="flex items-center justify-center h-screen text-gray-500">Cargando...</div>
+  if (!user) return <Navigate to="/login" replace />
+  const isPlatform = user.isSystemOwner === true || user.isSuperAdmin === true
+  if (!isPlatform) return <Navigate to="/" replace />
   return <>{children}</>
 }
 
@@ -87,6 +97,14 @@ export default function App() {
               <ProtectedRoute adminOnly>
                 <Agents />
               </ProtectedRoute>
+            }
+          />
+          <Route
+            path="platform/tenants"
+            element={
+              <PlatformRoute>
+                <PlatformTenants />
+              </PlatformRoute>
             }
           />
           {/* Agent routes */}

@@ -924,3 +924,37 @@ export const getAgentPresence = () =>
 
 export const revokeAgentSessions = (userId: string) =>
   api.post<{ ok: true }>(`/presence/agents/${userId}/revoke-sessions`).then((r) => r.data)
+
+// ─── Platform (Optick super-admin / system owner) ─────────────────────────────
+export type PlatformTenant = {
+  id: string
+  name: string
+  slug: string
+  status: string
+  createdAt: string
+}
+
+export type CreatePlatformTenantPayload = {
+  name: string
+  slug: string
+  adminEmail: string
+  adminName: string
+  adminPassword: string
+}
+
+export type CreatePlatformTenantResult = {
+  tenant: { id: string; name: string; slug: string; status: string }
+  admin: { id: string; email: string; name: string }
+  url: string
+}
+
+export const listPlatformTenants = () =>
+  api.get<PlatformTenant[]>('/platform/tenants').then((r) => r.data)
+
+export const createPlatformTenant = (data: CreatePlatformTenantPayload) =>
+  api.post<CreatePlatformTenantResult>('/platform/tenants', data).then((r) => r.data)
+
+export const patchPlatformTenantStatus = (id: string, status: 'ACTIVE' | 'SUSPENDED') =>
+  api
+    .patch<PlatformTenant>(`/platform/tenants/${id}`, { status })
+    .then((r) => r.data)

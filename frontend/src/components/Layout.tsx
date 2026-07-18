@@ -17,6 +17,7 @@ import {
   Menu,
   X,
   Mail,
+  Building2,
 } from 'lucide-react'
 import OptickBrand from './OptickBrand'
 
@@ -29,6 +30,25 @@ const adminNav = [
   { to: '/callbacks', icon: CalendarClock, label: 'Agenda Callbacks' },
   { to: '/reports', icon: BarChart2, label: 'Reportes' },
 ]
+
+const platformNavItem = {
+  to: '/platform/tenants',
+  icon: Building2,
+  label: 'Tenants',
+  end: false as const,
+}
+
+/** Hosts that resolve to Optick (crm). */
+function isOptickHost(): boolean {
+  const host = window.location.hostname.toLowerCase()
+  return (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === 'pruebacrm.optickcloud.com' ||
+    host === 'crm.optickcloud.com' ||
+    host === 'mt-staging.optickcloud.com'
+  )
+}
 
 const agentNav = [
   { to: '/', icon: LayoutDashboard, label: 'Mi Dashboard', end: true },
@@ -47,7 +67,14 @@ export default function Layout() {
   const tabHiddenRef = useRef(document.hidden)
   const mainRef = useRef<HTMLElement>(null)
 
-  const navItems = isAdmin ? adminNav : agentNav
+  const isPlatformUser =
+    isOptickHost() &&
+    (user?.isSystemOwner === true || user?.isSuperAdmin === true)
+  const navItems = isAdmin
+    ? isPlatformUser
+      ? [...adminNav, platformNavItem]
+      : adminNav
+    : agentNav
   const sidebarBg = isAdmin ? 'bg-green-900' : 'bg-blue-900'
 
   const postHeartbeat = useCallback(() => {

@@ -16,6 +16,7 @@ import callsRouter from './routes/calls'
 import callbacksRouter from './routes/callbacks'
 import dashboardRouter from './routes/dashboard'
 import adminRouter from './routes/admin'
+import platformRouter from './routes/platform'
 import contactRouter from './routes/contact'
 import presenceRouter from './routes/presence'
 import { errorHandler } from './middleware/error'
@@ -109,6 +110,7 @@ app.use('/api/calls', callsRouter)
 app.use('/api/callbacks', callbacksRouter)
 app.use('/api/dashboard', dashboardRouter)
 app.use('/api/admin', adminRouter)
+app.use('/api/platform', platformRouter)
 app.use('/api/contact', contactRouter)
 app.use('/api/presence', presenceRouter)
 
