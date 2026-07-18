@@ -379,8 +379,10 @@ Tras cerrar residual `$queryRaw` y desplegar:
 
 ```bash
 bash /opt/llamadas/scripts/deploy-staging.sh
-docker exec -it llamadas-api npx ts-node --transpile-only scripts/seed-tenant-demo.ts
+docker exec -it llamadas-api node scripts/seed-tenant-demo.cjs
 ```
+
+(`.cjs` runs in the production API image without `ts-node`. TypeScript twin: `scripts/seed-tenant-demo.ts`.)
 
 Defaults staging (override con env): `demo-admin@optick.demo` / `DemoAdmin123!`, `demo-agent@optick.demo` / `DemoAgent123!`.
 
