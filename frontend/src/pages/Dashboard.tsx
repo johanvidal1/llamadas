@@ -3,7 +3,17 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getDashboardStats, getMyBatches } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
-import { Users, Phone, CalendarClock, Calendar, PhoneCall, Layers, RefreshCw, ArrowRight } from 'lucide-react'
+import {
+  Users,
+  Phone,
+  CalendarClock,
+  Calendar,
+  PhoneCall,
+  Layers,
+  RefreshCw,
+  ArrowRight,
+  Sparkles,
+} from 'lucide-react'
 import { RecentCallRow } from '../components/RecentCallRow'
 import ClientRecordModal from '../components/ClientRecordModal'
 import { DISPOSITION_BAR_COLORS, isFunnelDisposition } from '../config/responseOptions'
@@ -13,6 +23,10 @@ import {
   AGENT_PIPELINE_QUEUE,
   buildPipelineClientsUrl,
 } from '../config/companyPipeline'
+import {
+  CURRENT_RELEASE,
+  RELEASE_NOTES_DISMISS_KEY,
+} from '../content/releaseNotes'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -48,6 +62,22 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [selectedBatchId, setSelectedBatchId] = useState<string | undefined>(undefined)
   const [recordModal, setRecordModal] = useState<{ clientId: string } | null>(null)
+  const [releaseDismissed, setReleaseDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(RELEASE_NOTES_DISMISS_KEY(CURRENT_RELEASE.date)) === '1'
+    } catch {
+      return false
+    }
+  })
+
+  const dismissReleaseNotes = () => {
+    try {
+      localStorage.setItem(RELEASE_NOTES_DISMISS_KEY(CURRENT_RELEASE.date), '1')
+    } catch {
+      /* ignore quota / private mode */
+    }
+    setReleaseDismissed(true)
+  }
 
   const goToMyLeadsFilter = (filter: string) => {
     const params = new URLSearchParams()
@@ -373,6 +403,38 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {isAdmin && !releaseDismissed && (
+        <div className="card p-6">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
+                <Sparkles size={18} className="text-blue-600" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="font-semibold text-gray-900">Novedades del sistema</h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Última actualización: {CURRENT_RELEASE.dateLabel}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={dismissReleaseNotes}
+              className="shrink-0 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 bg-white hover:bg-gray-50 transition-colors"
+            >
+              Entendido
+            </button>
+          </div>
+          <ul className="space-y-2.5 list-disc list-outside pl-5 text-sm text-gray-600">
+            {CURRENT_RELEASE.items.map((item) => (
+              <li key={item} className="leading-relaxed">
+                {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {isAdmin && (
         <div className="flex justify-end">
