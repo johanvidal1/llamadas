@@ -55,7 +55,7 @@ function hasHistory(u: AppUser) {
 }
 
 const MAX_AGENTS = 25
-const MAX_REGULAR_ADMINS = 1
+const MAX_REGULAR_ADMINS = 2
 const SHOW_TOTAL_CALLS_KEY = 'agents-show-total-calls'
 const SHOW_TOTAL_CALLBACKS_KEY = 'agents-show-total-callbacks'
 

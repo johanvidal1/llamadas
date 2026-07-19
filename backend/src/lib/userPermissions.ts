@@ -2,7 +2,7 @@ import { excludeArchivedAgentWhere } from './archivedAgent'
 import { prisma } from './prisma'
 
 export const MAX_AGENTS = 25
-export const MAX_REGULAR_ADMINS = 1
+export const MAX_REGULAR_ADMINS = 2
 
 export interface UserActor {
   id: string
