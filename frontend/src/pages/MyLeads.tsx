@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getClients, getClient, logCall, updateCall, updateClient, updateContact, getCallbacks, updateCallback, downloadImportExport } from '../api/client'
@@ -824,6 +824,13 @@ export default function MyLeads() {
   const savedContactRef = useRef<{ id: string; telefono: string; email: string; dni: string } | null>(null)
   const lastSyncedContactKey = useRef<string | null>(null)
   const contactTabRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const detailFormScrollRef = useRef<HTMLDivElement | null>(null)
+  const historialScrollRef = useRef<HTMLDivElement | null>(null)
+  const agendadosScrollRef = useRef<HTMLDivElement | null>(null)
+  const preserveDetailScrollRef = useRef(false)
+  const savedDetailScrollRef = useRef<{ form: number; historial: number; agendados: number } | null>(
+    null
+  )
 
   // Load ALL clients without batch filter — used only to derive available batches
   const { data: allClientsData } = useQuery({
@@ -920,6 +927,12 @@ export default function MyLeads() {
     if (currentIndex < clients.length - 1) prefetchClient(clients[currentIndex + 1].id)
   }, [currentClient?.id, currentIndex, clients, qc])
 
+  // Drop pending scroll restore when navigating to another company
+  useEffect(() => {
+    preserveDetailScrollRef.current = false
+    savedDetailScrollRef.current = null
+  }, [currentClient?.id])
+
   // Prefer detail contacts; during stale placeholder keep showing previous client's contacts
   const displayContacts: ClientDetail['contacts'] =
     detail != null && (detail.contacts?.length ?? 0) > 0
@@ -942,6 +955,15 @@ export default function MyLeads() {
     refetchInterval: 60000,
   })
   const callbackList = agendados as Callback[]
+
+  // After save-without-next, invalidate remounts/resets overflow panels — restore scrollTop
+  useLayoutEffect(() => {
+    if (!preserveDetailScrollRef.current || !savedDetailScrollRef.current) return
+    const saved = savedDetailScrollRef.current
+    if (detailFormScrollRef.current) detailFormScrollRef.current.scrollTop = saved.form
+    if (historialScrollRef.current) historialScrollRef.current.scrollTop = saved.historial
+    if (agendadosScrollRef.current) agendadosScrollRef.current.scrollTop = saved.agendados
+  }, [detail, fetchingDetail, detail?.callLogs?.length, callbackList.length])
 
   const completeMutation = useMutation({
     mutationFn: (payload: { id: string; companyId: string }) =>
@@ -1830,13 +1852,37 @@ export default function MyLeads() {
       } else if (result.noOp) {
         showSaveNotice('Sin cambios que guardar', 'info')
       }
-      qc.invalidateQueries({ queryKey: ['client-detail', currentClient?.id] })
-      qc.invalidateQueries({ queryKey: ['callbacks'] })
-      qc.invalidateQueries({ queryKey: ['clients'] })
-      qc.invalidateQueries({ queryKey: ['dashboard'] })
+      const stayOnRecord = result.autoNext === false
+      if (stayOnRecord) {
+        savedDetailScrollRef.current = {
+          form: detailFormScrollRef.current?.scrollTop ?? 0,
+          historial: historialScrollRef.current?.scrollTop ?? 0,
+          agendados: agendadosScrollRef.current?.scrollTop ?? 0,
+        }
+        preserveDetailScrollRef.current = true
+      }
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['client-detail', currentClient?.id] }),
+        qc.invalidateQueries({ queryKey: ['callbacks'] }),
+        qc.invalidateQueries({ queryKey: ['clients'] }),
+        qc.invalidateQueries({ queryKey: ['dashboard'] }),
+      ])
       if (result.autoNext === 'nextPending') await goToNextPending()
       else if (result.autoNext) await goNext()
+      else if (stayOnRecord && savedDetailScrollRef.current) {
+        const saved = savedDetailScrollRef.current
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (detailFormScrollRef.current) detailFormScrollRef.current.scrollTop = saved.form
+            if (historialScrollRef.current) historialScrollRef.current.scrollTop = saved.historial
+            if (agendadosScrollRef.current) agendadosScrollRef.current.scrollTop = saved.agendados
+            preserveDetailScrollRef.current = false
+            savedDetailScrollRef.current = null
+          })
+        })
+      }
     },
+
     onError: (err: unknown) => {
       if (err instanceof Error && err.name === 'SaveCancelled') return
       const axiosErr = err as {
@@ -2236,7 +2282,10 @@ export default function MyLeads() {
       {viewMode === 'detail' && (
         <div className="flex flex-col lg:flex-row flex-1 overflow-hidden min-h-0">
           {/* ── Left: Form (scrollable) ── */}
-          <div className="flex-1 overflow-y-auto [scrollbar-gutter:stable] bg-gray-50 p-3 lg:p-4 min-h-0">
+          <div
+            ref={detailFormScrollRef}
+            className="flex-1 overflow-y-auto [scrollbar-gutter:stable] bg-gray-50 p-3 lg:p-4 min-h-0"
+          >
             {/* Loading state */}
             {loadingList && (
               <div className="flex items-center justify-center h-full text-gray-400">
@@ -2635,7 +2684,10 @@ export default function MyLeads() {
                 </div>
               )}
 
-              <div className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] p-2 space-y-1.5">
+              <div
+                ref={agendadosScrollRef}
+                className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] p-2 space-y-1.5"
+              >
                 {activeList.length === 0 ? (
                   <div className="text-center text-gray-400 py-4 text-xs px-2">
                     <CalendarClock size={20} className="mx-auto mb-1.5 opacity-40" />
@@ -2750,7 +2802,10 @@ export default function MyLeads() {
                   </div>
                 </div>
               ) : (
-                <div className="flex-1 overflow-y-auto [scrollbar-gutter:stable] p-3 space-y-2 bg-gray-50">
+                <div
+                  ref={historialScrollRef}
+                  className="flex-1 overflow-y-auto [scrollbar-gutter:stable] p-3 space-y-2 bg-gray-50"
+                >
                   {historialSplit.primaryCount === 0 ? (
                     historialScope === 'contact' && displayContacts.length > 1 ? (
                       <div className="flex items-center justify-center py-8 text-gray-400">
