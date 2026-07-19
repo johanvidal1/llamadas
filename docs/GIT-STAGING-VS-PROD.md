@@ -11,7 +11,10 @@ Antes: producción en Render. **Ahora ambos entornos viven en Ubuntu** (mismo ho
 | Compose | `docker-compose.yml` + `.env` | **`docker-compose.prod.yml`** + **`.env.prod`** |
 | Script | `bash /opt/llamadas/scripts/deploy-staging.sh` | `bash /opt/llamadas-prod/scripts/deploy-prod.sh` |
 | Proxy | Caddy en `/opt/platform` | Caddy en `/opt/platform` |
+| Frontend API | **same-origin `/api`** (`VITE_API_URL` vacío) | igual — no bakear `crm`/`pruebacrm` |
 | Repo | https://github.com/johanvidal1/llamadas | igual |
+
+**Multi-tenant:** el rebuild del frontend debe dejar `VITE_API_URL` vacío (ver `.env.example`). Un valor absoluto en la imagen hace que todos los slugs apunten al tenant de ese host. Detalle: [TENANT-ONBOARDING.md](./TENANT-ONBOARDING.md#frontend-same-origin-api-obligatorio).
 
 ## Separación (no mezclar)
 

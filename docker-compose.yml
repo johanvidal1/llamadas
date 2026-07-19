@@ -78,8 +78,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # Origen público SIN /api (el cliente añade /api). Same-origin vía Caddy.
-        VITE_API_URL: ${VITE_API_URL:-https://pruebacrm.optickcloud.com}
+        # Vacío = same-origin /api (obligatorio multi-tenant vía Caddy Host).
+        # Solo fijar VITE_API_URL para casos especiales (API en otro origen).
+        VITE_API_URL: ${VITE_API_URL:-}
         VITE_CSP_EXTRA_ORIGINS: ${VITE_CSP_EXTRA_ORIGINS:-}
     image: llamadas-frontend:staging
     container_name: llamadas-frontend

@@ -18,6 +18,13 @@ API + UI de plataforma para crear un tenant (slug + nombre) y su admin inicial, 
 
 DNS wildcard `*.optickcloud.com` ya está configurado (Caddy + Cloudflare).
 
+## Frontend: same-origin `/api` (obligatorio)
+
+El build de frontend en Ubuntu **no** debe bakear un host fijo (`VITE_API_URL` vacío u omitido). Así axios usa `/api` relativo al Host del slug y Caddy enruta al tenant correcto.
+
+- Si `VITE_API_URL=https://crm.optickcloud.com` queda en la imagen, **todos** los subdominios hablan con Optick (fuga multi-tenant).
+- Tras deploy: en el slug del tenant, cerrar sesión, borrar datos del sitio, entrar con el **admin de ese tenant**. En Network las peticiones deben ser `https://{slug}.optickcloud.com/api/...`, no `crm.optickcloud.com`.
+
 ## API
 
 | Método | Ruta | Descripción |

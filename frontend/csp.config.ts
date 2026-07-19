@@ -5,12 +5,16 @@
  * Dev server (Vite HMR / React Fast Refresh) requires 'unsafe-eval' and ws: connect-src.
  *
  * Production CSP is injected at build time from VITE_API_URL (see vite.config.ts).
+ * Empty VITE_API_URL → connect-src 'self' only (Ubuntu multi-tenant same-origin).
  * Render applies headers from render.yaml only if configured there; the build-time
  * meta tag is the primary source on Render when render.yaml has no CSP header.
  * public/_headers is for Netlify / Cloudflare Pages only.
  */
 
-/** Fallback API origins when VITE_API_URL is unset (local preview / docs). */
+/**
+ * Fallback API origins for Netlify/CF `_headers` / docs only.
+ * Vite builds with empty VITE_API_URL use connect-src 'self' (same-origin multi-tenant).
+ */
 export const DEFAULT_PRODUCTION_API_ORIGINS = [
   'https://llamadas-backend.onrender.com',
   'https://api.tudominio.com',
@@ -33,10 +37,7 @@ export function getProductionApiOriginsFromEnv(env: NodeJS.ProcessEnv = process.
     .filter(Boolean)
   origins.push(...extra)
 
-  if (origins.length === 0) {
-    return [...DEFAULT_PRODUCTION_API_ORIGINS]
-  }
-
+  // Empty = same-origin only ('self' in buildProductionCsp). Do not inject legacy hosts.
   return [...new Set(origins)]
 }
 

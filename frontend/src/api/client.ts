@@ -1,8 +1,9 @@
 import axios from 'axios'
 import { filenameFromContentDisposition, saveBlobWithPicker } from '../lib/downloadFile'
 
-// En producción VITE_API_URL apunta al backend (ej: https://llamadas-backend.onrender.com)
-// En desarrollo usa el proxy de Vite (/api → localhost:3001)
+// Ubuntu multi-tenant: dejar VITE_API_URL vacío → BASE_URL = '/api' (same-origin).
+// Si se fija (legado Render / API en otro origen), axios usa `${VITE_API_URL}/api`.
+// Dev: proxy Vite (/api → localhost:3001).
 const BASE_URL = (import.meta.env.VITE_API_URL ?? '').length > 0
   ? `${import.meta.env.VITE_API_URL}/api`
   : '/api'
