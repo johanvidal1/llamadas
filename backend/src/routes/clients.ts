@@ -27,7 +27,9 @@ import {
   matchesFunnelFilter,
   pipelineBucketForDisposition,
   sortClientsByActivityQueue,
+  sortClientsByRegisteredCreatedAtQueue,
   sortCompanyIdsByActivityQueue,
+  sortCompanyIdsByRegisteredCreatedAtQueue,
   type LastDispositionMap,
 } from '../lib/companyDisposition'
 import { countUnassignedCompanies, BatchBlockedError } from '../lib/assignmentOrder'
@@ -253,6 +255,7 @@ async function getScopedCompanyIds(where: Record<string, unknown>): Promise<stri
 type LightweightCompanyRow = {
   id: string
   ruc: string
+  createdAt: Date
   globalCallLogCount: number
 }
 
@@ -261,12 +264,13 @@ async function fetchLightweightCompanies(
 ): Promise<LightweightCompanyRow[]> {
   const rows = await prisma.company.findMany({
     where,
-    select: { id: true, ruc: true, _count: { select: { callLogs: true } } },
+    select: { id: true, ruc: true, createdAt: true, _count: { select: { callLogs: true } } },
     orderBy: { createdAt: 'asc' },
   })
   return rows.map((r) => ({
     id: r.id,
     ruc: r.ruc,
+    createdAt: r.createdAt,
     globalCallLogCount: r._count.callLogs,
   }))
 }
@@ -511,10 +515,48 @@ async function getStableOrderedClientsPage(
   return { clients, total, lastByCompany: allLastByCompany }
 }
 
-async function getFilteredDispositionClientsPage(
+/** Registered first, then pending; within each group by company createdAt asc. */
+async function getRegisteredCreatedAtOrderedClientsPage(
   ctx: ClientsFilterContext,
   skip: number,
   take: number
+) {
+  const lightweight = await fetchLightweightCompanies(ctx.where)
+  const { ids: sortedIds, lastByCompany: allLastByCompany } =
+    await sortCompanyIdsByRegisteredCreatedAtQueue(
+      lightweight,
+      ctx.dispositionAgentId,
+      ctx.dispositionPerAssignedAgent,
+      ctx.preloadedLastByCompany
+    )
+  const filteredIds = ctx.agentQueueExcludeArchived
+    ? filterAgentQueueVisibleIds(sortedIds, allLastByCompany)
+    : sortedIds
+  const total = filteredIds.length
+  const pageIds = filteredIds.slice(skip, skip + take)
+  const pageLastByCompany = new Map(
+    pageIds.map((id) => [id, allLastByCompany.get(id)!])
+  )
+  const companies = await fetchCompaniesByIdsInOrder(
+    pageIds,
+    ctx.contactWhere,
+    ctx.callLogAgentId
+  )
+  const clients = await enrichWithLastDisposition(
+    companies,
+    ctx.dispositionAgentId,
+    pageLastByCompany,
+    ctx.calledAtRange,
+    ctx.dispositionPerAssignedAgent
+  )
+  return { clients, total, lastByCompany: allLastByCompany }
+}
+
+async function getFilteredDispositionClientsPage(
+  ctx: ClientsFilterContext,
+  skip: number,
+  take: number,
+  queueSort: 'activity' | 'registeredCreatedAt' = 'activity'
 ) {
   const lightweight = await fetchLightweightCompanies(ctx.where)
   const companyIds = lightweight.map((c) => c.id)
@@ -570,12 +612,16 @@ async function getFilteredDispositionClientsPage(
     return {
       id,
       ruc: row.ruc,
+      createdAt: row.createdAt,
       lastDisposition: last?.disposition ?? null,
       lastCalledAt: last?.lastCalledAt ?? null,
       _count: { callLogs: row.globalCallLogCount },
     }
   })
-  const sortedIds = sortClientsByActivityQueue(sortable).map((r) => r.id)
+  const sortedIds =
+    queueSort === 'registeredCreatedAt'
+      ? sortClientsByRegisteredCreatedAtQueue(sortable).map((r) => r.id)
+      : sortClientsByActivityQueue(sortable).map((r) => r.id)
   const total = sortedIds.length
   const pageIds = sortedIds.slice(skip, skip + take)
   const pageLastByCompany = new Map(
@@ -808,17 +854,37 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     built.agentScopedNoContesta ||
     built.agentScopedNoContestaDepurado
 
-  // Detail nav: sortBy=createdAt / queueOrder=stable skips activity reorder (registered-on-top).
-  const wantsStableOrder = sortBy === 'createdAt' || query.queueOrder === 'stable'
+  // MyLeads: sortBy=registeredCreatedAt / queueOrder=registeredThenPending
+  // → registered first, then pending; within each group by company createdAt asc.
+  // Legacy: sortBy=createdAt / queueOrder=stable → pure createdAt (no registered-first).
+  const wantsRegisteredCreatedAtOrder =
+    sortBy === 'registeredCreatedAt' || query.queueOrder === 'registeredThenPending'
+  const wantsStableOrder =
+    !wantsRegisteredCreatedAtOrder &&
+    (sortBy === 'createdAt' || query.queueOrder === 'stable')
   const useActivitySort =
-    !wantsStableOrder && (sortBy === 'activity' || built.agentQueueExcludeArchived)
+    !wantsStableOrder &&
+    !wantsRegisteredCreatedAtOrder &&
+    (sortBy === 'activity' || built.agentQueueExcludeArchived)
 
-  if (needsDispositionFilter || useActivitySort || (wantsStableOrder && built.agentQueueExcludeArchived)) {
+  if (
+    needsDispositionFilter ||
+    useActivitySort ||
+    (wantsStableOrder && built.agentQueueExcludeArchived) ||
+    wantsRegisteredCreatedAtOrder
+  ) {
     const pageResult = needsDispositionFilter
-      ? await getFilteredDispositionClientsPage(built, skip, take)
-      : wantsStableOrder
-        ? await getStableOrderedClientsPage(built, skip, take)
-        : await getActivitySortedClientsPage(built, skip, take)
+      ? await getFilteredDispositionClientsPage(
+          built,
+          skip,
+          take,
+          wantsRegisteredCreatedAtOrder ? 'registeredCreatedAt' : 'activity'
+        )
+      : wantsRegisteredCreatedAtOrder
+        ? await getRegisteredCreatedAtOrderedClientsPage(built, skip, take)
+        : wantsStableOrder
+          ? await getStableOrderedClientsPage(built, skip, take)
+          : await getActivitySortedClientsPage(built, skip, take)
     const { clients, total } = pageResult
 
     let pipelineCounts: Record<string, number> | undefined

@@ -817,6 +817,10 @@ export type ActivityQueueSortable = {
   _count: { callLogs: number }
 }
 
+export type RegisteredCreatedAtQueueSortable = ActivityQueueSortable & {
+  createdAt: string | Date
+}
+
 function hasActivityRecord(c: ActivityQueueSortable): boolean {
   return !!(c.lastDisposition || c._count.callLogs > 0)
 }
@@ -828,6 +832,11 @@ function isActivityPending(c: ActivityQueueSortable): boolean {
 function lastCalledAtMs(c: ActivityQueueSortable): number | null {
   if (!c.lastCalledAt) return null
   const d = c.lastCalledAt instanceof Date ? c.lastCalledAt : new Date(c.lastCalledAt)
+  return d.getTime()
+}
+
+function createdAtMs(c: { createdAt: string | Date }): number {
+  const d = c.createdAt instanceof Date ? c.createdAt : new Date(c.createdAt)
   return d.getTime()
 }
 
@@ -973,4 +982,53 @@ export function sortClientsByActivityQueue<T extends ActivityQueueSortable>(clie
 
     return a.ruc.localeCompare(b.ruc, 'es')
   })
+}
+
+/**
+ * MyLeads queue: registered first, then pending; within each group by company createdAt asc.
+ * Uses the same pending detection as the activity queue (disposition / call logs).
+ */
+export function sortClientsByRegisteredCreatedAtQueue<
+  T extends RegisteredCreatedAtQueueSortable,
+>(clients: T[]): T[] {
+  return [...clients].sort((a, b) => {
+    const aPending = isActivityPending(a)
+    const bPending = isActivityPending(b)
+    if (aPending !== bPending) return aPending ? 1 : -1
+
+    const byCreated = createdAtMs(a) - createdAtMs(b)
+    if (byCreated !== 0) return byCreated
+    return a.ruc.localeCompare(b.ruc, 'es')
+  })
+}
+
+/** Sort company ids: registered first (createdAt asc), pending last (createdAt asc). */
+export async function sortCompanyIdsByRegisteredCreatedAtQueue(
+  rows: { id: string; ruc: string; globalCallLogCount: number; createdAt: Date }[],
+  dispositionAgentId?: string,
+  dispositionPerAssignedAgent = false,
+  preloadedLastByCompany?: LastDispositionMap
+): Promise<{ ids: string[]; lastByCompany: LastDispositionMap }> {
+  if (rows.length === 0) return { ids: [], lastByCompany: new Map() }
+  const companyIds = rows.map((r) => r.id)
+  const lastByCompany =
+    preloadedLastByCompany ??
+    (dispositionPerAssignedAgent
+      ? await getLastDispositionByCompanyIdsPerAssignment(companyIds)
+      : await getLastDispositionByCompanyIds(companyIds, dispositionAgentId))
+  const sortable: (RegisteredCreatedAtQueueSortable & { id: string })[] = rows.map((r) => {
+    const last = lastByCompany.get(r.id)
+    return {
+      id: r.id,
+      ruc: r.ruc,
+      createdAt: r.createdAt,
+      lastDisposition: last?.disposition ?? null,
+      lastCalledAt: last?.lastCalledAt ?? null,
+      _count: { callLogs: r.globalCallLogCount },
+    }
+  })
+  return {
+    ids: sortClientsByRegisteredCreatedAtQueue(sortable).map((r) => r.id),
+    lastByCompany,
+  }
 }

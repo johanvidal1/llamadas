@@ -841,33 +841,33 @@ export default function MyLeads() {
   })
 
   // Load clients for current batch (server-side filter) — used for detail view navigation.
-  // sortBy=createdAt: stable order (no activity/registered-on-top reorder) so save-without-next
-  // does not jump the company to 1/N.
+  // sortBy=registeredCreatedAt: registered first, then pending; within groups by createdAt asc.
+  // Pin-by-id after Guardar resultado keeps index on the saved company if order shifts.
   const { data: clientsData, isLoading: loadingList } = useQuery({
     queryKey: ['clients', 'my-leads', 'nav', selectedBatchId],
     queryFn: () =>
       getClients({
         limit: 500,
         batchId: selectedBatchId || undefined,
-        sortBy: 'createdAt',
+        sortBy: 'registeredCreatedAt',
       }),
   })
 
   // List view: server-side disposition / pending filters.
-  // sortBy=createdAt matches Detalle nav (stable oldest-first, not activity queue).
+  // Same registered-first + createdAt queue as Detalle / Tarjetas.
   const { data: listData, isLoading: loadingListView } = useQuery({
     queryKey: ['clients', 'my-leads', 'list', selectedBatchId, listCola, listDrilldown],
     queryFn: () =>
       getClients({
         limit: 500,
         batchId: selectedBatchId || undefined,
-        sortBy: 'createdAt',
+        sortBy: 'registeredCreatedAt',
         ...getListApiParams(listCola, listDrilldown),
       }),
     enabled: viewMode === 'list',
   })
 
-  // Paginated + filtered list (for grid view) — same stable order as Lista/Detalle
+  // Paginated + filtered list (for grid view) — same queue order as Lista/Detalle
   const { data: gridData, isLoading: loadingGrid, isFetching: fetchingGrid } = useQuery({
     queryKey: ['clients', 'my-leads', 'grid', gridSearch, gridStatus, gridPage, selectedBatchId],
     queryFn: () =>
@@ -877,7 +877,7 @@ export default function MyLeads() {
         batchId: selectedBatchId || undefined,
         page: gridPage,
         limit: 30,
-        sortBy: 'createdAt',
+        sortBy: 'registeredCreatedAt',
       }),
     enabled: viewMode === 'grid',
   })
@@ -1918,7 +1918,7 @@ export default function MyLeads() {
             getClients({
               limit: 500,
               batchId: selectedBatchId || undefined,
-              sortBy: 'createdAt',
+              sortBy: 'registeredCreatedAt',
             }),
         })
         const freshRaw: ClientSummary[] = fresh?.clients ?? []
