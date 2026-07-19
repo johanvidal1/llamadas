@@ -849,6 +849,9 @@ export default function MyLeads() {
   const lastSyncedContactKey = useRef<string | null>(null)
   const contactTabRefs = useRef<(HTMLButtonElement | null)[]>([])
   const detailFormScrollRef = useRef<HTMLDivElement | null>(null)
+  const listRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map())
+  const listHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [highlightedListCompanyId, setHighlightedListCompanyId] = useState<string | null>(null)
   const historialScrollRef = useRef<HTMLDivElement | null>(null)
   const agendadosScrollRef = useRef<HTMLDivElement | null>(null)
   const preserveDetailScrollRef = useRef(false)
@@ -1494,6 +1497,18 @@ export default function MyLeads() {
     [goTo]
   )
 
+  const scrollToListCompany = useCallback((companyId: string) => {
+    const row = listRowRefs.current.get(companyId)
+    if (!row) return
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (listHighlightTimerRef.current) clearTimeout(listHighlightTimerRef.current)
+    setHighlightedListCompanyId(companyId)
+    listHighlightTimerRef.current = setTimeout(() => {
+      setHighlightedListCompanyId(null)
+      listHighlightTimerRef.current = null
+    }, 1400)
+  }, [])
+
   const returnToList = useCallback(() => {
     setReturnToView(null)
     switchView('list')
@@ -1664,6 +1679,7 @@ export default function MyLeads() {
   useEffect(() => {
     return () => {
       if (saveNoticeTimerRef.current) clearTimeout(saveNoticeTimerRef.current)
+      if (listHighlightTimerRef.current) clearTimeout(listHighlightTimerRef.current)
     }
   }, [])
 
@@ -2385,10 +2401,11 @@ export default function MyLeads() {
       {/* ══════════════════════ DETAIL VIEW ══════════════════════════ */}
       {viewMode === 'detail' && (
         <div className="flex flex-col lg:flex-row flex-1 overflow-hidden min-h-0">
-          {/* ── Left: Form (scrollable) ── */}
+          {/* ── Left: Form scroll + pinned action footer ── */}
+          <div className="flex flex-col flex-1 min-h-0 bg-gray-50">
           <div
             ref={detailFormScrollRef}
-            className="flex-1 overflow-y-auto [scrollbar-gutter:stable] bg-gray-50 p-3 lg:p-4 min-h-0"
+            className="flex-1 overflow-y-auto [scrollbar-gutter:stable] p-3 lg:p-4 min-h-0"
           >
             {/* Loading state */}
             {loadingList && (
@@ -2628,44 +2645,6 @@ export default function MyLeads() {
                     </div>
                   </div>
 
-                  <div className="sticky bottom-0 z-10 border-t border-gray-200 bg-gray-50/95 px-3 py-3 backdrop-blur-sm lg:px-4">
-                    <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
-                      <button onClick={() => saveMutation.mutate(false)} disabled={saveMutation.isPending || !canSaveCallResult}
-                        title="Guardar resultado (Ctrl+Enter)"
-                        className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
-                        <Save size={15} />
-                        {saveMutation.isPending ? 'Guardando...' : latestLogSnapshot ? 'Guardar actualización' : 'Guardar resultado'}
-                      </button>
-                      <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || isLast || !canSaveCallResult}
-                        className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
-                        Guardar y siguiente empresa <ChevronRight size={15} />
-                      </button>
-                      <button
-                        onClick={() => saveMutation.mutate('nextPending')}
-                        disabled={saveMutation.isPending || !canSaveCallResult || !nextPendingTarget}
-                        title="Guarda y salta a la próxima empresa sin registro en este lote (Ctrl+Shift+Enter)"
-                        className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] border-2 border-indigo-500 text-indigo-700 hover:bg-indigo-50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none"
-                      >
-                        Guardar y siguiente pendiente <ChevronRight size={15} />
-                      </button>
-                      <div className="flex gap-2 sm:ml-auto">
-                        <DetailRecordNav
-                          variant="footer"
-                          onFirstRegistered={navigateWithSave(goToFirstRegistered)}
-                          onPrev={navigateWithSave(goPrev)}
-                          onNext={navigateWithSave(goNext)}
-                          onFirstEmpty={navigateWithSave(goToFirstEmpty)}
-                          isFirst={isFirst}
-                          isLast={isLast}
-                          atFirstRegistered={atFirstRegistered}
-                          atFirstEmpty={atFirstEmpty}
-                          noRegistered={!firstRegisteredTarget}
-                          noEmpty={!firstEmptyTarget}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
                   {/* Líneas móviles */}
                   <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
                     <div className="bg-gray-100 border-b border-gray-200 px-4 py-2">
@@ -2707,6 +2686,47 @@ export default function MyLeads() {
                 ) : null}
               </div>
             )}
+          </div>
+
+          {!loadingList && clients.length > 0 && !isInitialDetailLoad && displayDetail && (
+            <div className="shrink-0 border-t border-gray-200 bg-white px-3 py-3 lg:px-4">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
+                <button onClick={() => saveMutation.mutate(false)} disabled={saveMutation.isPending || !canSaveCallResult}
+                  title="Guardar resultado (Ctrl+Enter)"
+                  className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
+                  <Save size={15} />
+                  {saveMutation.isPending ? 'Guardando...' : latestLogSnapshot ? 'Guardar actualización' : 'Guardar resultado'}
+                </button>
+                <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || isLast || !canSaveCallResult}
+                  className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
+                  Guardar y siguiente empresa <ChevronRight size={15} />
+                </button>
+                <button
+                  onClick={() => saveMutation.mutate('nextPending')}
+                  disabled={saveMutation.isPending || !canSaveCallResult || !nextPendingTarget}
+                  title="Guarda y salta a la próxima empresa sin registro en este lote (Ctrl+Shift+Enter)"
+                  className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] border-2 border-indigo-500 text-indigo-700 hover:bg-indigo-50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none"
+                >
+                  Guardar y siguiente pendiente <ChevronRight size={15} />
+                </button>
+                <div className="flex gap-2 sm:ml-auto">
+                  <DetailRecordNav
+                    variant="footer"
+                    onFirstRegistered={navigateWithSave(goToFirstRegistered)}
+                    onPrev={navigateWithSave(goPrev)}
+                    onNext={navigateWithSave(goNext)}
+                    onFirstEmpty={navigateWithSave(goToFirstEmpty)}
+                    isFirst={isFirst}
+                    isLast={isLast}
+                    atFirstRegistered={atFirstRegistered}
+                    atFirstEmpty={atFirstEmpty}
+                    noRegistered={!firstRegisteredTarget}
+                    noEmpty={!firstEmptyTarget}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
           </div>
 
           {/* ── Right panel: Agendados + Historial ── */}
@@ -3176,9 +3196,6 @@ export default function MyLeads() {
         }
         const lastRegisteredClient =
           lastRegisteredListIdx >= 0 ? listFiltered[lastRegisteredListIdx] : null
-        const lastRegisteredNavIdx = lastRegisteredClient
-          ? (queueIndexById.get(lastRegisteredClient.id) ?? -1)
-          : -1
         const listColCount = selectedBatchId ? 8 : 9
         return (
           <div className="flex-1 overflow-y-auto p-4 lg:p-5 space-y-4">
@@ -3296,14 +3313,16 @@ export default function MyLeads() {
                   })}
                   <button
                     type="button"
-                    disabled={lastRegisteredNavIdx < 0}
+                    disabled={!lastRegisteredClient}
                     title={
-                      lastRegisteredNavIdx < 0
+                      !lastRegisteredClient
                         ? 'No hay empresas registradas en esta lista'
-                        : 'Abrir la última empresa registrada de la lista filtrada'
+                        : 'Ir al último registrado en esta lista'
                     }
                     aria-label="Última registrada"
-                    onClick={() => openDetailFromList(lastRegisteredNavIdx)}
+                    onClick={() => {
+                      if (lastRegisteredClient) scrollToListCompany(lastRegisteredClient.id)
+                    }}
                     className="ml-auto shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     Última registrada
@@ -3375,8 +3394,17 @@ export default function MyLeads() {
                             </tr>
                           )}
                           <tr
+                            ref={(el) => {
+                              if (el) listRowRefs.current.set(c.id, el)
+                              else listRowRefs.current.delete(c.id)
+                            }}
+                            data-company-id={c.id}
                             className={`hover:bg-blue-50 cursor-pointer transition-colors ${
-                              isSelectedRow ? 'bg-blue-50 border-l-2 border-blue-500' : ''
+                              highlightedListCompanyId === c.id
+                                ? 'bg-amber-50 ring-2 ring-inset ring-amber-400'
+                                : isSelectedRow
+                                ? 'bg-blue-50 border-l-2 border-blue-500'
+                                : ''
                             }`}
                             onClick={() => openDetailFromList(realIdx)}
                           >
