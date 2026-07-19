@@ -14,6 +14,7 @@ export const RELEASES: ReleaseNotes[] = [
     date: '2026-07-19',
     dateLabel: '19 de julio de 2026',
     items: [
+      'En Mis Clientes (Detalle), el header muestra el termómetro de pendientes del lote en lugar de las flechas de navegación; el contador de posición es más legible. La navegación entre empresas sigue disponible en la barra inferior.',
       'Cola de Mis Clientes más estable: primero los registrados, pendientes al final.',
       'Tras guardar un resultado, la empresa permanece anclada y las notas siguen visibles.',
       '«Última registrada» lleva a la fila en la lista, con resalte breve para ubicarla.',

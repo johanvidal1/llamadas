@@ -74,13 +74,14 @@ function buildBatchStats(
  * - Almost (<0.2, pending>0): teal-500
  * - Done   (pending===0): emerald-500
  */
-type QueueTone = {
+export type QueueTone = {
   fill: string
   track: string
   metric: string
 }
 
-function queueTone(pending: number, total: number): QueueTone {
+/** Light surfaces (filter dropdown / list). */
+export function queueTone(pending: number, total: number): QueueTone {
   if (pending === 0) {
     return {
       fill: 'bg-emerald-500',
@@ -108,6 +109,56 @@ function queueTone(pending: number, total: number): QueueTone {
     track: 'bg-blue-100',
     metric: 'text-blue-700',
   }
+}
+
+/** Dark blue detail header — same urgency ladder, readable on bg-blue-800. */
+export function queueToneHeader(pending: number, total: number): QueueTone {
+  if (pending === 0) {
+    return {
+      fill: 'bg-emerald-400',
+      track: 'bg-white/20',
+      metric: 'text-emerald-200',
+    }
+  }
+  const ratio = total > 0 ? pending / total : 1
+  if (ratio < 0.2) {
+    return {
+      fill: 'bg-teal-300',
+      track: 'bg-white/20',
+      metric: 'text-teal-100',
+    }
+  }
+  if (ratio <= 0.5) {
+    return {
+      fill: 'bg-sky-300',
+      track: 'bg-white/20',
+      metric: 'text-sky-100',
+    }
+  }
+  return {
+    fill: 'bg-blue-300',
+    track: 'bg-white/20',
+    metric: 'text-blue-100',
+  }
+}
+
+export type BatchPendingCounts = {
+  pending: number
+  total: number
+  done: number
+}
+
+/** Pending counts for selected batch (`''` = all clients). */
+export function getBatchPendingCounts(
+  clients: ClientForPending[],
+  batchId: string
+): BatchPendingCounts {
+  const scoped = batchId
+    ? clients.filter((c) => c.importBatch?.id === batchId)
+    : clients
+  const pending = scoped.filter(isCompanyPendingForBatchPicker).length
+  const total = scoped.length
+  return { pending, total, done: Math.max(0, total - pending) }
 }
 
 function ProgressBar({
@@ -141,6 +192,52 @@ function ProgressBar({
 function metricLabel(pending: number, total: number) {
   if (total <= 0) return '0 pendientes'
   return `${pending} pendientes · ${total} total`
+}
+
+/**
+ * Compact lote progress meter for the Detalle header (replaces nav arrows slot).
+ * Bar width = % done; label shows remaining pendientes.
+ */
+export function BatchPendingThermometer({
+  pending,
+  total,
+  done,
+  className = '',
+}: BatchPendingCounts & { className?: string }) {
+  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
+  const tone = queueToneHeader(pending, total)
+  const label =
+    total <= 0 ? 'Sin empresas' : pending === 0 ? 'Lote completo' : `${pending} pend.`
+
+  return (
+    <div
+      className={`flex items-center gap-2 min-w-[7.5rem] max-w-[11rem] ${className}`}
+      title={
+        total > 0
+          ? `${done} de ${total} registradas (${pct}%) · ${pending} pendientes`
+          : 'Sin empresas en el lote'
+      }
+    >
+      <div className="flex-1 min-w-[3.5rem]">
+        <div
+          className={`h-1.5 w-full rounded-full overflow-hidden ${tone.track}`}
+          role="progressbar"
+          aria-valuenow={pct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`${pct}% del lote completado`}
+        >
+          <div
+            className={`h-full rounded-full transition-[width] duration-200 ${tone.fill}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+      <span className={`text-xs font-semibold tabular-nums whitespace-nowrap shrink-0 ${tone.metric}`}>
+        {label}
+      </span>
+    </div>
+  )
 }
 
 export function BatchPendingPicker({

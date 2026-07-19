@@ -33,7 +33,11 @@ import CallModal from '../components/CallModal'
 import CompleteCallbackModal, { type CompleteConfirm } from '../components/CompleteCallbackModal'
 import DispositionSelector from '../components/DispositionSelector'
 import { ColaFilterDropdown } from '../components/ColaFilterDropdown'
-import { BatchPendingPicker } from '../components/BatchPendingPicker'
+import {
+  BatchPendingPicker,
+  BatchPendingThermometer,
+  getBatchPendingCounts,
+} from '../components/BatchPendingPicker'
 import { DuplicateRucBanner } from '../components/DuplicateRucBanner'
 import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -252,7 +256,6 @@ class SaveCancelled extends Error {
 }
 
 function DetailRecordNav({
-  variant,
   onFirstRegistered,
   onPrev,
   onNext,
@@ -264,7 +267,6 @@ function DetailRecordNav({
   noRegistered,
   noEmpty,
 }: {
-  variant: 'header' | 'footer'
   onFirstRegistered: () => void
   onPrev: () => void
   onNext: () => void
@@ -276,14 +278,12 @@ function DetailRecordNav({
   noRegistered: boolean
   noEmpty: boolean
 }) {
-  const isHeader = variant === 'header'
-  const btnBase = isHeader
-    ? 'flex items-center justify-center p-1.5 bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed rounded transition-colors'
-    : 'flex items-center justify-center p-2.5 min-h-[44px] min-w-[44px] border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
-  const iconSize = isHeader ? 16 : 15
+  const btnBase =
+    'flex items-center justify-center p-2.5 min-h-[44px] min-w-[44px] border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
+  const iconSize = 15
 
   return (
-    <div className={`flex items-center gap-1 ${isHeader ? '' : 'flex-1 sm:flex-none'}`}>
+    <div className="flex items-center gap-1 flex-1 sm:flex-none">
       <button
         type="button"
         onClick={onFirstRegistered}
@@ -928,6 +928,11 @@ export default function MyLeads() {
   const hiddenNavCount = isAdmin ? 0 : rawNavClients.length - clients.length
   const total = clients.length
   const currentClient = clients[currentIndex]
+
+  const headerBatchPending = useMemo(
+    () => getBatchPendingCounts(allClients, selectedBatchId),
+    [allClients, selectedBatchId]
+  )
 
   // Load detail for current client — placeholderData keeps previous record visible during nav
   const { data: clientDetail, isFetching: fetchingDetail } = useQuery({
@@ -2281,7 +2286,7 @@ export default function MyLeads() {
               )}
             </button>
           )}
-          {/* ── View toggle (fixed position; nav slot always to the right) ── */}
+          {/* ── View toggle ── */}
           <div className="flex bg-blue-700 rounded-lg p-0.5 gap-0.5 shrink-0">
             <button
               onClick={() => {
@@ -2337,57 +2342,29 @@ export default function MyLeads() {
             </button>
           </div>
 
-          {/* ── Nav slot (reserved width so toggle does not shift) ── */}
-          <div className="flex items-center justify-end gap-2 min-w-[12rem] shrink-0">
-            {viewMode === 'detail' ? (
-              <>
-                <span
-                  className="text-blue-300 text-xs tabular-nums whitespace-nowrap"
-                  title={isAdmin ? COLA_ALL_ADMIN_TITLE : COLA_ALL_AGENT_TITLE}
-                >
-                  {currentIndex + 1} / {total}
-                  {hiddenNavCount > 0 && (
-                    <span className="text-blue-400/70" title="Empresas archivadas ocultas de la cola">
-                      {' '}({hiddenNavCount} ocultas)
-                    </span>
-                  )}
-                </span>
-                <DetailRecordNav
-                  variant="header"
-                  onFirstRegistered={navigateWithSave(goToFirstRegistered)}
-                  onPrev={navigateWithSave(goPrev)}
-                  onNext={navigateWithSave(goNext)}
-                  onFirstEmpty={navigateWithSave(goToFirstEmpty)}
-                  isFirst={isFirst}
-                  isLast={isLast}
-                  atFirstRegistered={atFirstRegistered}
-                  atFirstEmpty={atFirstEmpty}
-                  noRegistered={!firstRegisteredTarget}
-                  noEmpty={!firstEmptyTarget}
-                />
-              </>
-            ) : (
-              <div
-                className="invisible flex items-center gap-2 pointer-events-none"
-                aria-hidden="true"
+          {/* Detalle: position counter + lote pending thermometer (nav arrows live in footer) */}
+          {viewMode === 'detail' && (
+            <div className="flex items-center justify-end gap-2.5 shrink-0">
+              <span
+                className="inline-flex items-baseline gap-1 px-2.5 py-1 rounded-md bg-blue-700/90 border border-blue-500/70 text-white text-sm font-semibold tabular-nums whitespace-nowrap shadow-sm"
+                title={isAdmin ? COLA_ALL_ADMIN_TITLE : COLA_ALL_AGENT_TITLE}
               >
-                <span className="text-xs tabular-nums whitespace-nowrap">999 / 999</span>
-                <DetailRecordNav
-                  variant="header"
-                  onFirstRegistered={() => {}}
-                  onPrev={() => {}}
-                  onNext={() => {}}
-                  onFirstEmpty={() => {}}
-                  isFirst
-                  isLast
-                  atFirstRegistered
-                  atFirstEmpty
-                  noRegistered
-                  noEmpty
-                />
-              </div>
-            )}
-          </div>
+                {currentIndex + 1}
+                <span className="text-blue-200 font-medium">/</span>
+                {total}
+                {hiddenNavCount > 0 && (
+                  <span className="text-blue-200/80 text-xs font-medium ml-0.5" title="Empresas archivadas ocultas de la cola">
+                    ({hiddenNavCount} ocultas)
+                  </span>
+                )}
+              </span>
+              <BatchPendingThermometer
+                pending={headerBatchPending.pending}
+                total={headerBatchPending.total}
+                done={headerBatchPending.done}
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -2704,7 +2681,6 @@ export default function MyLeads() {
                 </button>
                 <div className="flex gap-2 sm:ml-auto">
                   <DetailRecordNav
-                    variant="footer"
                     onFirstRegistered={navigateWithSave(goToFirstRegistered)}
                     onPrev={navigateWithSave(goPrev)}
                     onNext={navigateWithSave(goNext)}
