@@ -25,6 +25,7 @@ import {
   AlignJustify,
   Copy,
   CheckCircle2,
+  Sparkles,
   X,
 } from 'lucide-react'
 import { dedupeMobileLinesByNumber } from '../lib/mobileLine'
@@ -683,6 +684,7 @@ function listChipColorClasses(value: string): string {
 }
 
 const AGENDADOS_SPLIT_STORAGE_KEY = 'myLeads-agendadosSplitPct'
+const ULTIMA_REGISTRADA_NUEVO_KEY = 'myLeadsUltimaRegistradaNuevoSeen'
 const AGENDADOS_SPLIT_DEFAULT = 38
 const AGENDADOS_SPLIT_MIN = 20
 const AGENDADOS_SPLIT_MAX = 75
@@ -841,6 +843,13 @@ export default function MyLeads() {
   const listRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map())
   const listHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [highlightedListCompanyId, setHighlightedListCompanyId] = useState<string | null>(null)
+  const [showUltimaRegistradaNuevo, setShowUltimaRegistradaNuevo] = useState(() => {
+    try {
+      return localStorage.getItem(ULTIMA_REGISTRADA_NUEVO_KEY) !== '1'
+    } catch {
+      return true
+    }
+  })
   const historialScrollRef = useRef<HTMLDivElement | null>(null)
   const agendadosScrollRef = useRef<HTMLDivElement | null>(null)
   const preserveDetailScrollRef = useRef(false)
@@ -3304,11 +3313,26 @@ export default function MyLeads() {
                     }
                     aria-label="Última registrada"
                     onClick={() => {
-                      if (lastRegisteredClient) scrollToListCompany(lastRegisteredClient.id)
+                      if (!lastRegisteredClient) return
+                      scrollToListCompany(lastRegisteredClient.id)
+                      if (showUltimaRegistradaNuevo) {
+                        setShowUltimaRegistradaNuevo(false)
+                        try {
+                          localStorage.setItem(ULTIMA_REGISTRADA_NUEVO_KEY, '1')
+                        } catch {
+                          /* ignore quota / private mode */
+                        }
+                      }
                     }}
-                    className="ml-auto shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="ml-auto shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-blue-300 bg-blue-50 text-blue-800 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
+                    <Sparkles size={14} className="shrink-0" aria-hidden />
                     Última registrada
+                    {showUltimaRegistradaNuevo && (
+                      <span className="text-[10px] font-semibold leading-none px-1.5 py-0.5 rounded bg-blue-600 text-white">
+                        Nuevo
+                      </span>
+                    )}
                   </button>
                 </div>
               </div>
@@ -3355,9 +3379,9 @@ export default function MyLeads() {
                         : ''
                       const aclaracion = c.lastAclaracion || (c.lastDisposition ? getAclaracionForDisposition(c.lastDisposition) : '')
                       const isSelectedRow = navIdx === currentIndex
-                      // Pending = no lastDisposition (sky emphasis). Registered = normal text;
-                      // DispositionBadge carries meaning — no green row/chip (conflicts with funnel greens).
-                      const isPendingRow = !c.lastDisposition
+                      // Pending = no disposition / call logs. Registered = darker text so
+                      // "Sin razón social" does not look pending; DispositionBadge carries meaning.
+                      const isPendingRow = !listCompanyIsRegistered(c)
                       return (
                           <tr
                             key={c.id}
@@ -3375,12 +3399,18 @@ export default function MyLeads() {
                             }`}
                             onClick={() => openDetailFromList(realIdx)}
                           >
-                            <td className="px-4 py-2.5 text-gray-400 text-xs">{realIdx >= 0 ? realIdx + 1 : '—'}</td>
+                            <td className={`px-4 py-2.5 text-xs ${isPendingRow ? 'text-gray-400' : 'text-gray-900'}`}>{realIdx >= 0 ? realIdx + 1 : '—'}</td>
                             <td className={`px-4 py-2.5 font-mono text-xs ${isPendingRow ? 'text-gray-400' : 'text-gray-600'}`}>{c.ruc}</td>
                             <td className="px-4 py-2.5">
-                              <p className={`text-sm ${isPendingRow ? 'text-gray-400 font-normal' : 'text-gray-900 font-medium'}`}>{c.razonSocial || <span className="text-gray-400 italic text-xs">Sin razón social</span>}</p>
+                              <p className={`text-sm ${isPendingRow ? 'text-gray-400 font-normal' : 'text-gray-900 font-medium'}`}>
+                                {c.razonSocial || (
+                                  <span className={`italic text-xs ${isPendingRow ? 'text-gray-400 font-normal' : 'text-gray-900 font-medium'}`}>
+                                    Sin razón social
+                                  </span>
+                                )}
+                              </p>
                               {c.contacts?.[0] && (
-                                <p className="text-xs text-gray-400">{c.contacts[0].nombre}</p>
+                                <p className={`text-xs ${isPendingRow ? 'text-gray-400' : 'text-gray-700'}`}>{c.contacts[0].nombre}</p>
                               )}
                             </td>
                             <td className="px-4 py-2.5 text-gray-600 font-mono text-xs">
