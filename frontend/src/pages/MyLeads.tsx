@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, Fragment } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getClients, getClient, logCall, updateCall, updateClient, updateContact, getCallbacks, updateCallback, downloadImportExport } from '../api/client'
@@ -541,17 +541,6 @@ function listCompanyIsRegistered(c: ClientSummary): boolean {
     (c.callLogCount ?? 0) > 0 ||
     (c.contacts ?? []).some((ct) => (ct._count?.callLogs ?? 0) > 0)
   )
-}
-
-function listCreatedAtDayKey(createdAt: string | undefined): string | null {
-  if (!createdAt) return null
-  const d = new Date(createdAt)
-  if (Number.isNaN(d.getTime())) return null
-  return format(d, 'yyyy-MM-dd')
-}
-
-function listCreatedAtDayLabel(createdAt: string): string {
-  return format(new Date(createdAt), 'd MMM yyyy', { locale: es })
 }
 
 const COLA_ALL_AGENT_TITLE =
@@ -2247,11 +2236,6 @@ export default function MyLeads() {
             </button>
           )}
 
-          {viewMode === 'detail' && detail && (
-            <div className="flex items-center gap-2 shrink-0">
-              <StatusBadge status={detail.status} />
-            </div>
-          )}
           {viewMode === 'grid' && (
             <span className="text-blue-300 text-xs shrink-0">{gridData?.total ?? 0} clientes</span>
           )}
@@ -3196,7 +3180,6 @@ export default function MyLeads() {
         }
         const lastRegisteredClient =
           lastRegisteredListIdx >= 0 ? listFiltered[lastRegisteredListIdx] : null
-        const listColCount = selectedBatchId ? 8 : 9
         return (
           <div className="flex-1 overflow-y-auto p-4 lg:p-5 space-y-4">
             {/* Filters — row 1: search, cola, lote */}
@@ -3356,7 +3339,7 @@ export default function MyLeads() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {listFiltered.map((c, rowIdx) => {
+                    {listFiltered.map((c) => {
                       const realIdx = queueIndexById.get(c.id) ?? -1
                       const navIdx = realIdx
                       const nextCb = callbackList
@@ -3375,25 +3358,9 @@ export default function MyLeads() {
                       // Pending = no lastDisposition (sky emphasis). Registered = normal text;
                       // DispositionBadge carries meaning — no green row/chip (conflicts with funnel greens).
                       const isPendingRow = !c.lastDisposition
-                      const dayKey = listCreatedAtDayKey(c.createdAt)
-                      const prevDayKey =
-                        rowIdx > 0 ? listCreatedAtDayKey(listFiltered[rowIdx - 1].createdAt) : null
-                      const showDayHeader = !!dayKey && dayKey !== prevDayKey
                       return (
-                        <Fragment key={c.id}>
-                          {showDayHeader && c.createdAt && (
-                            <tr className="bg-gray-50">
-                              <td
-                                colSpan={listColCount}
-                                className="sticky top-0 z-[1] px-4 py-1 bg-gray-50 border-y border-gray-100"
-                              >
-                                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
-                                  {listCreatedAtDayLabel(c.createdAt)}
-                                </span>
-                              </td>
-                            </tr>
-                          )}
                           <tr
+                            key={c.id}
                             ref={(el) => {
                               if (el) listRowRefs.current.set(c.id, el)
                               else listRowRefs.current.delete(c.id)
@@ -3461,7 +3428,6 @@ export default function MyLeads() {
                               <span className="text-xs text-blue-500 hover:underline">Ver detalle →</span>
                             </td>
                           </tr>
-                        </Fragment>
                       )
                     })}
                   </tbody>
