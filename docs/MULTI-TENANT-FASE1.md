@@ -317,6 +317,8 @@ Deploy del middleware + login scoped + filtros en queries (PRs 2–3).
 
 **Hotfix ALS (post–PR5):** binding ALS hasta fin de response + fail-closed Prisma/SQL (ver § Aplicar PR3). Evita fuga intermitente Optick↔otro tenant en dashboard.
 
+**Cache in-memory dashboard/reports:** las claves de `dashboardStatsCache` / `reportsCache` en `backend/src/routes/dashboard.ts` incluyen `tenantId`. Sin eso, un admin vacío en otro slug podía envenenar el cache compartido del proceso API (~45s / 5min). «Actualizar» en Dashboard envía `refresh=true` para bypassear.
+
 ### Aplicar PR1 en staging (Ubuntu)
 
 Tras `git push origin staging`:

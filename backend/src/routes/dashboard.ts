@@ -56,9 +56,14 @@ function parseReportsSections(sectionsParam?: string): ReportsSection[] {
   return parsed.length > 0 ? parsed : [...REPORTS_SECTIONS]
 }
 
-function reportsCacheKey(section: ReportsSection | 'agent-runs', filterAgentId?: string, agentId?: string) {
-  if (section === 'agent-runs') return `reports:agent-runs:${agentId ?? ''}`
-  return `reports:${section}:${filterAgentId ?? 'all'}`
+function reportsCacheKey(
+  tenantId: string,
+  section: ReportsSection | 'agent-runs',
+  filterAgentId?: string,
+  agentId?: string
+) {
+  if (section === 'agent-runs') return `reports:${tenantId}:agent-runs:${agentId ?? ''}`
+  return `reports:${tenantId}:${section}:${filterAgentId ?? 'all'}`
 }
 
 function getCachedReports<T>(cacheKey: string, bypassCache: boolean): T | null {
@@ -80,8 +85,15 @@ const DASHBOARD_STATS_CACHE_TTL_MS = 45_000
 type DashboardStatsCacheEntry = { data: unknown; expiresAt: number }
 const dashboardStatsCache = new Map<string, DashboardStatsCacheEntry>()
 
-function dashboardStatsCacheKey(isAdmin: boolean, agentId: string, batchId?: string) {
-  return isAdmin ? 'dashboard:stats:admin' : `dashboard:stats:agent:${agentId}:${batchId ?? 'all'}`
+function dashboardStatsCacheKey(
+  tenantId: string,
+  isAdmin: boolean,
+  agentId: string,
+  batchId?: string
+) {
+  return isAdmin
+    ? `dashboard:${tenantId}:stats:admin`
+    : `dashboard:${tenantId}:stats:agent:${agentId}:${batchId ?? 'all'}`
 }
 
 function getCachedDashboardStats<T>(cacheKey: string, bypassCache: boolean): T | null {
@@ -309,10 +321,15 @@ async function enrichRecentCallsWithNextCallback<
 
 // GET /api/dashboard/stats
 router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
+  const tenantId = req.tenant?.id
+  if (!tenantId) {
+    res.status(401).json({ error: 'Tenant no resuelto' })
+    return
+  }
   const isAdmin = req.user!.role === 'ADMIN'
   const { batchId } = req.query as Record<string, string>
   const bypassCache = req.query.refresh === 'true' || req.get('x-refresh') === 'true'
-  const cacheKey = dashboardStatsCacheKey(isAdmin, req.user!.id, batchId)
+  const cacheKey = dashboardStatsCacheKey(tenantId, isAdmin, req.user!.id, batchId)
 
   const cached = getCachedDashboardStats<Record<string, unknown>>(cacheKey, bypassCache)
   if (cached) {
@@ -939,10 +956,15 @@ router.get('/reports/batch/:batchId/breakdown', requireAdmin, async (req: AuthRe
 
 // GET /api/dashboard/reports/agent/:agentId/runs
 router.get('/reports/agent/:agentId/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const tenantId = req.tenant?.id
+  if (!tenantId) {
+    res.status(401).json({ error: 'Tenant no resuelto' })
+    return
+  }
   const { agentId } = req.params
   const { refresh } = req.query as Record<string, string>
   const bypassCache = refresh === 'true' || req.get('x-refresh') === 'true'
-  const cacheKey = reportsCacheKey('agent-runs', undefined, agentId)
+  const cacheKey = reportsCacheKey(tenantId, 'agent-runs', undefined, agentId)
 
   const cached = getCachedReports<{ assignmentRuns: BatchAssignmentRun[] }>(cacheKey, bypassCache)
   if (cached) {
@@ -967,6 +989,11 @@ router.get('/reports/agent/:agentId/runs', requireAdmin, async (req: AuthRequest
 
 // GET /api/dashboard/reports
 router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const tenantId = req.tenant?.id
+  if (!tenantId) {
+    res.status(401).json({ error: 'Tenant no resuelto' })
+    return
+  }
   const { agentId: filterAgentId, refresh, sections: sectionsParam } = req.query as Record<string, string>
   const bypassCache = refresh === 'true' || req.get('x-refresh') === 'true'
   const sections = parseReportsSections(sectionsParam)
@@ -975,7 +1002,7 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
   const sectionsToBuild: ReportsSection[] = []
 
   for (const section of sections) {
-    const cacheKey = reportsCacheKey(section, filterAgentId || undefined)
+    const cacheKey = reportsCacheKey(tenantId, section, filterAgentId || undefined)
     const cached = getCachedReports<Record<string, unknown>>(cacheKey, bypassCache)
     if (cached) {
       Object.assign(result, cached)
@@ -999,7 +1026,7 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
       } else if (section === 'batches') {
         sectionData.batchProgress = built.batchProgress
       }
-      const cacheKey = reportsCacheKey(section, filterAgentId || undefined)
+      const cacheKey = reportsCacheKey(tenantId, section, filterAgentId || undefined)
       setCachedReports(cacheKey, sectionData)
       Object.assign(result, sectionData)
     }

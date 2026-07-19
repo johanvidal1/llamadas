@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getDashboardStats, getMyBatches } from '../api/client'
@@ -71,15 +71,28 @@ export default function Dashboard() {
     enabled: !isAdmin,
   })
 
-  const { data: stats, isLoading, isFetching: isFetchingStats, refetch: refetchStats } = useQuery({
+  const bypassCacheRef = useRef(false)
+
+  const {
+    data: stats,
+    isLoading,
+    isFetching: isFetchingStats,
+    isError: isStatsError,
+    refetch: refetchStats,
+  } = useQuery({
     queryKey: ['dashboard', 'stats', selectedBatchId],
-    queryFn: () => getDashboardStats(selectedBatchId),
+    queryFn: () => {
+      const refresh = bypassCacheRef.current
+      bypassCacheRef.current = false
+      return getDashboardStats(selectedBatchId, { refresh })
+    },
   })
 
   const isRefreshing = isFetchingStats
 
   const handleRefresh = () => {
-    refetchStats()
+    bypassCacheRef.current = true
+    void refetchStats()
   }
 
   if (isLoading) {
@@ -120,6 +133,10 @@ export default function Dashboard() {
           Actualizar
         </button>
       </div>
+
+      {isStatsError && !stats ? (
+        <p className="text-sm text-red-600">No se pudieron cargar las estadísticas. Prueba Actualizar.</p>
+      ) : null}
 
       {/* Batch filter chips (agent only) */}
       {!isAdmin && myBatches && myBatches.length > 1 && (

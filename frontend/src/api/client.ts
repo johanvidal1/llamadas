@@ -522,9 +522,15 @@ export type DashboardStats = {
   todayCallbacks?: number
 }
 
-export const getDashboardStats = (batchId?: string) =>
+export const getDashboardStats = (batchId?: string, options?: { refresh?: boolean }) =>
   api
-    .get<DashboardStats>('/dashboard/stats', { params: batchId ? { batchId } : undefined })
+    .get<DashboardStats>('/dashboard/stats', {
+      params: {
+        ...(batchId ? { batchId } : {}),
+        ...(options?.refresh ? { refresh: 'true' } : {}),
+      },
+      ...(options?.refresh ? { headers: { 'x-refresh': 'true' } } : {}),
+    })
     .then((r) => r.data)
 export const getAgentStats = () => api.get('/dashboard/agents-stats').then((r) => r.data)
 export type DailyActivityPoint = {
