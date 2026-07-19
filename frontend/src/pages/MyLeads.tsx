@@ -1504,7 +1504,7 @@ export default function MyLeads() {
     listHighlightTimerRef.current = setTimeout(() => {
       setHighlightedListCompanyId(null)
       listHighlightTimerRef.current = null
-    }, 1400)
+    }, 3400)
   }, [])
 
   const returnToList = useCallback(() => {
@@ -3365,7 +3365,6 @@ export default function MyLeads() {
                   <tbody className="divide-y divide-gray-100">
                     {listFiltered.map((c) => {
                       const realIdx = queueIndexById.get(c.id) ?? -1
-                      const navIdx = realIdx
                       const nextCb = callbackList
                         .filter((cb) => cb.company.id === c.id)
                         .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())[0]
@@ -3378,7 +3377,6 @@ export default function MyLeads() {
                           : 'text-blue-700 bg-blue-50 border border-blue-200'
                         : ''
                       const aclaracion = c.lastAclaracion || (c.lastDisposition ? getAclaracionForDisposition(c.lastDisposition) : '')
-                      const isSelectedRow = navIdx === currentIndex
                       // Pending = no disposition / call logs. Registered = darker text so
                       // "Sin razón social" does not look pending; DispositionBadge carries meaning.
                       const isPendingRow = !listCompanyIsRegistered(c)
@@ -3393,8 +3391,6 @@ export default function MyLeads() {
                             className={`hover:bg-blue-50 cursor-pointer transition-colors ${
                               highlightedListCompanyId === c.id
                                 ? 'bg-amber-50 ring-2 ring-inset ring-amber-400'
-                                : isSelectedRow
-                                ? 'bg-blue-50 border-l-2 border-blue-500'
                                 : ''
                             }`}
                             onClick={() => openDetailFromList(realIdx)}
