@@ -424,6 +424,20 @@ async function buildClientsFilterContext(
   }
 }
 
+function filterAgentQueueVisibleIds(
+  orderedIds: string[],
+  lastByCompany: LastDispositionMap
+): string[] {
+  return orderedIds.filter((id) => {
+    const last = lastByCompany.get(id)
+    const disposition = last?.disposition ?? null
+    const callLogCount = last?.callLogCount ?? 0
+    if (isHiddenFromAgentQueue(disposition)) return false
+    if (isDepuradoNoContesta(disposition, callLogCount)) return false
+    return true
+  })
+}
+
 async function getActivitySortedClientsPage(
   ctx: ClientsFilterContext,
   skip: number,
@@ -436,17 +450,47 @@ async function getActivitySortedClientsPage(
     ctx.dispositionPerAssignedAgent,
     ctx.preloadedLastByCompany
   )
-  let filteredIds = sortedIds
-  if (ctx.agentQueueExcludeArchived) {
-    filteredIds = sortedIds.filter((id) => {
-      const last = allLastByCompany.get(id)
-      const disposition = last?.disposition ?? null
-      const callLogCount = last?.callLogCount ?? 0
-      if (isHiddenFromAgentQueue(disposition)) return false
-      if (isDepuradoNoContesta(disposition, callLogCount)) return false
-      return true
-    })
-  }
+  const filteredIds = ctx.agentQueueExcludeArchived
+    ? filterAgentQueueVisibleIds(sortedIds, allLastByCompany)
+    : sortedIds
+  const total = filteredIds.length
+  const pageIds = filteredIds.slice(skip, skip + take)
+  const pageLastByCompany = new Map(
+    pageIds.map((id) => [id, allLastByCompany.get(id)!])
+  )
+  const companies = await fetchCompaniesByIdsInOrder(
+    pageIds,
+    ctx.contactWhere,
+    ctx.callLogAgentId
+  )
+  const clients = await enrichWithLastDisposition(
+    companies,
+    ctx.dispositionAgentId,
+    pageLastByCompany,
+    ctx.calledAtRange,
+    ctx.dispositionPerAssignedAgent
+  )
+  return { clients, total, lastByCompany: allLastByCompany }
+}
+
+/** Stable createdAt order for detail nav — keeps agent archive filters without activity reorder. */
+async function getStableOrderedClientsPage(
+  ctx: ClientsFilterContext,
+  skip: number,
+  take: number
+) {
+  const lightweight = await fetchLightweightCompanies(ctx.where)
+  const orderedIds = lightweight.map((r) => r.id)
+  const allLastByCompany =
+    ctx.preloadedLastByCompany ??
+    (await loadLastDispositionByCompanyIds(
+      orderedIds,
+      ctx.dispositionAgentId,
+      ctx.dispositionPerAssignedAgent
+    ))
+  const filteredIds = ctx.agentQueueExcludeArchived
+    ? filterAgentQueueVisibleIds(orderedIds, allLastByCompany)
+    : orderedIds
   const total = filteredIds.length
   const pageIds = filteredIds.slice(skip, skip + take)
   const pageLastByCompany = new Map(
@@ -764,10 +808,17 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     built.agentScopedNoContesta ||
     built.agentScopedNoContestaDepurado
 
-  if (needsDispositionFilter || sortBy === 'activity' || built.agentQueueExcludeArchived) {
+  // Detail nav: sortBy=createdAt / queueOrder=stable skips activity reorder (registered-on-top).
+  const wantsStableOrder = sortBy === 'createdAt' || query.queueOrder === 'stable'
+  const useActivitySort =
+    !wantsStableOrder && (sortBy === 'activity' || built.agentQueueExcludeArchived)
+
+  if (needsDispositionFilter || useActivitySort || (wantsStableOrder && built.agentQueueExcludeArchived)) {
     const pageResult = needsDispositionFilter
       ? await getFilteredDispositionClientsPage(built, skip, take)
-      : await getActivitySortedClientsPage(built, skip, take)
+      : wantsStableOrder
+        ? await getStableOrderedClientsPage(built, skip, take)
+        : await getActivitySortedClientsPage(built, skip, take)
     const { clients, total } = pageResult
 
     let pipelineCounts: Record<string, number> | undefined

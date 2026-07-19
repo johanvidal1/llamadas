@@ -838,10 +838,17 @@ export default function MyLeads() {
     queryFn: () => getClients({ limit: 500 }),
   })
 
-  // Load clients for current batch (server-side filter) — used for detail view navigation
+  // Load clients for current batch (server-side filter) — used for detail view navigation.
+  // sortBy=createdAt: stable order (no activity/registered-on-top reorder) so save-without-next
+  // does not jump the company to 1/N.
   const { data: clientsData, isLoading: loadingList } = useQuery({
     queryKey: ['clients', 'my-leads', 'nav', selectedBatchId],
-    queryFn: () => getClients({ limit: 500, batchId: selectedBatchId || undefined }),
+    queryFn: () =>
+      getClients({
+        limit: 500,
+        batchId: selectedBatchId || undefined,
+        sortBy: 'createdAt',
+      }),
   })
 
   // List view: server-side disposition / pending filters
@@ -1643,6 +1650,7 @@ export default function MyLeads() {
         razonSocialChanged: false,
         noOp: false,
         movedToDepuradoNoContesta: false,
+        companyId: null as string | null,
       }
       if (!currentClient) return emptyResult
 
@@ -1800,6 +1808,7 @@ export default function MyLeads() {
           razonSocialChanged,
           noOp: true,
           movedToDepuradoNoContesta: false,
+          companyId: currentClient.id,
         }
       }
 
@@ -1824,6 +1833,7 @@ export default function MyLeads() {
         razonSocialChanged,
         noOp: false,
         movedToDepuradoNoContesta,
+        companyId: currentClient.id,
       }
     },
     onSuccess: async (result) => {
@@ -1853,6 +1863,7 @@ export default function MyLeads() {
         showSaveNotice('Sin cambios que guardar', 'info')
       }
       const stayOnRecord = result.autoNext === false
+      const savedCompanyId = result.companyId
       if (stayOnRecord) {
         savedDetailScrollRef.current = {
           form: detailFormScrollRef.current?.scrollTop ?? 0,
@@ -1862,24 +1873,65 @@ export default function MyLeads() {
         preserveDetailScrollRef.current = true
       }
       await Promise.all([
-        qc.invalidateQueries({ queryKey: ['client-detail', currentClient?.id] }),
+        qc.invalidateQueries({ queryKey: ['client-detail', savedCompanyId ?? currentClient?.id] }),
         qc.invalidateQueries({ queryKey: ['callbacks'] }),
         qc.invalidateQueries({ queryKey: ['clients'] }),
         qc.invalidateQueries({ queryKey: ['dashboard'] }),
       ])
       if (result.autoNext === 'nextPending') await goToNextPending()
       else if (result.autoNext) await goNext()
-      else if (stayOnRecord && savedDetailScrollRef.current) {
-        const saved = savedDetailScrollRef.current
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (detailFormScrollRef.current) detailFormScrollRef.current.scrollTop = saved.form
-            if (historialScrollRef.current) historialScrollRef.current.scrollTop = saved.historial
-            if (agendadosScrollRef.current) agendadosScrollRef.current.scrollTop = saved.agendados
-            preserveDetailScrollRef.current = false
-            savedDetailScrollRef.current = null
-          })
+      else if (stayOnRecord && savedCompanyId) {
+        // Re-pin by company id so a reorder (or filter change) cannot leave us on the wrong record.
+        const fresh = await qc.fetchQuery({
+          queryKey: ['clients', 'my-leads', 'nav', selectedBatchId],
+          queryFn: () =>
+            getClients({
+              limit: 500,
+              batchId: selectedBatchId || undefined,
+              sortBy: 'createdAt',
+            }),
         })
+        const freshRaw: ClientSummary[] = fresh?.clients ?? []
+        const freshVisible = isAdmin
+          ? freshRaw
+          : freshRaw.filter((c) => !isHiddenFromAgentNav(c.lastDisposition, c.callLogCount))
+        const pinnedIdx = freshVisible.findIndex((c) => c.id === savedCompanyId)
+        if (pinnedIdx >= 0) {
+          if (pinnedIdx !== currentIndex) setCurrentIndex(pinnedIdx)
+        } else {
+          const companyHasLog = (c: ClientSummary) =>
+            (c.callLogCount ?? 0) > 0 ||
+            (c.contacts ?? []).some((ct) => (ct._count?.callLogs ?? 0) > 0)
+          const from = Math.min(currentIndex, Math.max(freshVisible.length - 1, 0))
+          let nextPending = freshVisible.findIndex((c, i) => i >= from && !companyHasLog(c))
+          if (nextPending < 0) {
+            nextPending = freshVisible.findIndex((c) => !companyHasLog(c))
+          }
+          if (nextPending >= 0) {
+            toast('Empresa fuera de la cola visible; pasando a la siguiente pendiente', {
+              icon: 'ℹ️',
+            })
+            setCurrentIndex(nextPending)
+          } else if (freshVisible.length > 0) {
+            toast('Empresa fuera de la cola visible', { icon: 'ℹ️' })
+            setCurrentIndex(Math.min(currentIndex, freshVisible.length - 1))
+          } else {
+            toast('Empresa fuera de la cola visible; no quedan empresas', { icon: 'ℹ️' })
+            setCurrentIndex(0)
+          }
+        }
+        if (savedDetailScrollRef.current) {
+          const saved = savedDetailScrollRef.current
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              if (detailFormScrollRef.current) detailFormScrollRef.current.scrollTop = saved.form
+              if (historialScrollRef.current) historialScrollRef.current.scrollTop = saved.historial
+              if (agendadosScrollRef.current) agendadosScrollRef.current.scrollTop = saved.agendados
+              preserveDetailScrollRef.current = false
+              savedDetailScrollRef.current = null
+            })
+          })
+        }
       }
     },
 

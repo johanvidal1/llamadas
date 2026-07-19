@@ -185,6 +185,7 @@ export type GetClientsParams = {
   registeredFrom?: string
   registeredTo?: string
   sortBy?: string
+  queueOrder?: string
   includePipeline?: boolean
 }
 
