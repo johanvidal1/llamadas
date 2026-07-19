@@ -853,19 +853,21 @@ export default function MyLeads() {
       }),
   })
 
-  // List view: server-side disposition / pending filters
+  // List view: server-side disposition / pending filters.
+  // sortBy=createdAt matches Detalle nav (stable oldest-first, not activity queue).
   const { data: listData, isLoading: loadingListView } = useQuery({
     queryKey: ['clients', 'my-leads', 'list', selectedBatchId, listCola, listDrilldown],
     queryFn: () =>
       getClients({
         limit: 500,
         batchId: selectedBatchId || undefined,
+        sortBy: 'createdAt',
         ...getListApiParams(listCola, listDrilldown),
       }),
     enabled: viewMode === 'list',
   })
 
-  // Paginated + filtered list (for grid view)
+  // Paginated + filtered list (for grid view) — same stable order as Lista/Detalle
   const { data: gridData, isLoading: loadingGrid, isFetching: fetchingGrid } = useQuery({
     queryKey: ['clients', 'my-leads', 'grid', gridSearch, gridStatus, gridPage, selectedBatchId],
     queryFn: () =>
@@ -875,6 +877,7 @@ export default function MyLeads() {
         batchId: selectedBatchId || undefined,
         page: gridPage,
         limit: 30,
+        sortBy: 'createdAt',
       }),
     enabled: viewMode === 'grid',
   })
@@ -3134,17 +3137,13 @@ export default function MyLeads() {
 
       {/* ══════════════════════ LIST VIEW ══════════════════════════ */}
       {viewMode === 'list' && (() => {
+        // Map id → index in Detalle nav `clients` (same createdAt order as list API).
         const queueIndexById = new Map(clients.map((c, i) => [c.id, i]))
         const listFiltered = listClients.filter((c) => {
           const q = listSearch.toLowerCase()
           const matchSearch = !q || c.ruc.toLowerCase().includes(q) || (c.razonSocial ?? '').toLowerCase().includes(q) || c.contacts.some((ct) => ct.nombre.toLowerCase().includes(q) || (ct.telefono ?? '').includes(q))
           return matchSearch
         })
-        const listSorted = [...listFiltered].sort(
-          (a, b) =>
-            (queueIndexById.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
-            (queueIndexById.get(b.id) ?? Number.MAX_SAFE_INTEGER)
-        )
         return (
           <div className="flex-1 overflow-y-auto p-4 lg:p-5 space-y-4">
             {/* Filters — row 1: search, cola, lote */}
@@ -3288,7 +3287,7 @@ export default function MyLeads() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {listSorted.map((c) => {
+                    {listFiltered.map((c) => {
                       const realIdx = queueIndexById.get(c.id) ?? -1
                       const navIdx = realIdx
                       const nextCb = callbackList
