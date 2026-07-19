@@ -806,6 +806,8 @@ export default function MyLeads() {
   const [schedTime, setSchedTime] = useState('')
   const [editingCallLogId, setEditingCallLogId] = useState<string | null>(null)
   const pendingCallLogIdRef = useRef<string | null>(null)
+  /** After Guardar resultado: skip prefill clear while client-detail refetch catches up. */
+  const stayAfterSaveRef = useRef(false)
   const pendingContactIdRef = useRef<string | null>(null)
   const pendingContactIdxRef = useRef<number | null>(null)
   const needsContactResolveRef = useRef(false)
@@ -1138,8 +1140,8 @@ export default function MyLeads() {
     let pinnedLogId: string | null = null
     if (pendingCallLogIdRef.current) {
       const pinnedLog = detail.callLogs.find((l) => l.id === pendingCallLogIdRef.current)
-      pendingCallLogIdRef.current = null
       if (pinnedLog) {
+        pendingCallLogIdRef.current = null
         pinnedLogId = pinnedLog.id
         if (pinnedLog.contact?.id) {
           const cIdx = displayContacts.findIndex((c) => c.id === pinnedLog.contact!.id)
@@ -1148,12 +1150,17 @@ export default function MyLeads() {
             setActiveContactIdx(cIdx)
           }
         }
+      } else if (!stayAfterSaveRef.current) {
+        // Stale pin without a stay-after-save race: drop it.
+        pendingCallLogIdRef.current = null
       }
+      // else: keep pending id until refetch includes the just-saved log
     }
 
     const idx = Math.min(contactIdx, Math.max(0, displayContacts.length - 1))
     const contact = displayContacts[idx]
     if (!contact?.id || contact.id.startsWith('summary-')) {
+      if (stayAfterSaveRef.current) return
       setLatestLogSnapshot(null)
       setEditingCallLogId(null)
       clearEditableCallFields()
@@ -1186,6 +1193,10 @@ export default function MyLeads() {
       setSchedDate(snap.schedDate)
       setSchedTime(snap.schedTime)
       setEditingCallLogId(targetLog.id)
+      stayAfterSaveRef.current = false
+    } else if (stayAfterSaveRef.current) {
+      // Keep disposition/notes/agenda visible while client-detail refetch catches up.
+      return
     } else {
       setLatestLogSnapshot(null)
       setEditingCallLogId(null)
@@ -1422,6 +1433,7 @@ export default function MyLeads() {
   const navigateToCompany = useCallback(
     async (clientIdx: number) => {
       await saveActiveContactIfDirty()
+      stayAfterSaveRef.current = false
       const resolvedIdx = resolveContactIdxForCompany(clientIdx)
       const contactId = contactIdAt(clientIdx, resolvedIdx)
       needsContactResolveRef.current = true
@@ -1557,6 +1569,7 @@ export default function MyLeads() {
     pendingContactIdRef.current = null
     pendingContactIdxRef.current = null
     pendingCallLogIdRef.current = null
+    stayAfterSaveRef.current = false
     setEditingCallLogId(null)
     needsContactResolveRef.current = true
     setGridPage(1)
@@ -1651,6 +1664,7 @@ export default function MyLeads() {
         noOp: false,
         movedToDepuradoNoContesta: false,
         companyId: null as string | null,
+        savedCallLogId: null as string | null,
       }
       if (!currentClient) return emptyResult
 
@@ -1691,6 +1705,7 @@ export default function MyLeads() {
           : undefined
 
       let callLogSaved = false
+      let savedCallLogId: string | null = null
 
       const ownPendingForCompany = callbackList.filter(
         (cb) => cb.company.id === currentClient.id && cb.agent.id === user?.id
@@ -1780,9 +1795,10 @@ export default function MyLeads() {
         }
 
         if (rescheduleOnly) {
-          await updateCall(editingCallLogId!, callPayload)
+          const updated = await updateCall(editingCallLogId!, callPayload)
+          savedCallLogId = (updated as { id?: string })?.id ?? editingCallLogId
         } else {
-          await logCall({
+          const created = await logCall({
             clientId: currentClient.id,
             contactId,
             disposition: disposition || 'VOLVER_A_LLAMAR',
@@ -1792,6 +1808,7 @@ export default function MyLeads() {
               : {}),
             ...(mantenerAgenda ? { linkPendingCallback: true } : {}),
           })
+          savedCallLogId = (created as { id?: string })?.id ?? null
         }
         callLogSaved = true
       }
@@ -1809,6 +1826,7 @@ export default function MyLeads() {
           noOp: true,
           movedToDepuradoNoContesta: false,
           companyId: currentClient.id,
+          savedCallLogId: null,
         }
       }
 
@@ -1834,6 +1852,7 @@ export default function MyLeads() {
         noOp: false,
         movedToDepuradoNoContesta,
         companyId: currentClient.id,
+        savedCallLogId,
       }
     },
     onSuccess: async (result) => {
@@ -1844,6 +1863,14 @@ export default function MyLeads() {
           setSchedDate('')
           setSchedTime('09:00')
           setEditingCallLogId(null)
+          stayAfterSaveRef.current = false
+        } else {
+          // Stay on record: pin the just-saved log and skip prefill clears until it appears.
+          stayAfterSaveRef.current = true
+          if (result.savedCallLogId) {
+            pendingCallLogIdRef.current = result.savedCallLogId
+            setEditingCallLogId(result.savedCallLogId)
+          }
         }
         if (result.movedToDepuradoNoContesta) {
           showSaveNotice(
