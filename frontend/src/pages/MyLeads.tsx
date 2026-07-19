@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, Fragment } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getClients, getClient, logCall, updateCall, updateClient, updateContact, getCallbacks, updateCallback, downloadImportExport } from '../api/client'
@@ -59,6 +59,8 @@ interface ClientSummary {
   ruc: string
   razonSocial?: string
   status: string
+  /** Company lote antiquity (import time); used for Lista day separators. */
+  createdAt?: string
   lastDisposition?: string | null
   lastAclaracion?: string | null
   callLogCount?: number
@@ -531,6 +533,26 @@ const LIST_COLA_OPTIONS = [
 ] as const
 
 type ListCola = (typeof LIST_COLA_OPTIONS)[number]['value']
+
+/** Registered in list sense: has disposition or any call log (matches queue hybrid). */
+function listCompanyIsRegistered(c: ClientSummary): boolean {
+  return (
+    !!c.lastDisposition ||
+    (c.callLogCount ?? 0) > 0 ||
+    (c.contacts ?? []).some((ct) => (ct._count?.callLogs ?? 0) > 0)
+  )
+}
+
+function listCreatedAtDayKey(createdAt: string | undefined): string | null {
+  if (!createdAt) return null
+  const d = new Date(createdAt)
+  if (Number.isNaN(d.getTime())) return null
+  return format(d, 'yyyy-MM-dd')
+}
+
+function listCreatedAtDayLabel(createdAt: string): string {
+  return format(new Date(createdAt), 'd MMM yyyy', { locale: es })
+}
 
 const COLA_ALL_AGENT_TITLE =
   'Cola activa: pendientes, no contesta (<3 intentos), volver a llamar, embudo y venta cerrada. Excluye no contesta depurado, no interesado, cliente actual, RUC suspendido y sin llegada al decisor.'
@@ -3144,6 +3166,20 @@ export default function MyLeads() {
           const matchSearch = !q || c.ruc.toLowerCase().includes(q) || (c.razonSocial ?? '').toLowerCase().includes(q) || c.contacts.some((ct) => ct.nombre.toLowerCase().includes(q) || (ct.telefono ?? '').includes(q))
           return matchSearch
         })
+        // Last registered in filtered list order (registered-first hybrid → end of registered block).
+        let lastRegisteredListIdx = -1
+        for (let i = listFiltered.length - 1; i >= 0; i--) {
+          if (listCompanyIsRegistered(listFiltered[i])) {
+            lastRegisteredListIdx = i
+            break
+          }
+        }
+        const lastRegisteredClient =
+          lastRegisteredListIdx >= 0 ? listFiltered[lastRegisteredListIdx] : null
+        const lastRegisteredNavIdx = lastRegisteredClient
+          ? (queueIndexById.get(lastRegisteredClient.id) ?? -1)
+          : -1
+        const listColCount = selectedBatchId ? 8 : 9
         return (
           <div className="flex-1 overflow-y-auto p-4 lg:p-5 space-y-4">
             {/* Filters — row 1: search, cola, lote */}
@@ -3213,10 +3249,10 @@ export default function MyLeads() {
                 </div>
               </div>
 
-              {/* Row 2: Embudo comercial */}
+              {/* Row 2: Embudo comercial + Última registrada */}
               <div className="w-full">
                 <p className="text-xs font-medium text-gray-500 mb-1.5">Embudo comercial</p>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     title={getColaOptionTitle('ALL', isAdmin)}
@@ -3258,6 +3294,20 @@ export default function MyLeads() {
                       </button>
                     )
                   })}
+                  <button
+                    type="button"
+                    disabled={lastRegisteredNavIdx < 0}
+                    title={
+                      lastRegisteredNavIdx < 0
+                        ? 'No hay empresas registradas en esta lista'
+                        : 'Abrir la última empresa registrada de la lista filtrada'
+                    }
+                    aria-label="Última registrada"
+                    onClick={() => openDetailFromList(lastRegisteredNavIdx)}
+                    className="ml-auto shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Última registrada
+                  </button>
                 </div>
               </div>
             </div>
@@ -3287,7 +3337,7 @@ export default function MyLeads() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {listFiltered.map((c) => {
+                    {listFiltered.map((c, rowIdx) => {
                       const realIdx = queueIndexById.get(c.id) ?? -1
                       const navIdx = realIdx
                       const nextCb = callbackList
@@ -3306,67 +3356,84 @@ export default function MyLeads() {
                       // Pending = no lastDisposition (sky emphasis). Registered = normal text;
                       // DispositionBadge carries meaning — no green row/chip (conflicts with funnel greens).
                       const isPendingRow = !c.lastDisposition
+                      const dayKey = listCreatedAtDayKey(c.createdAt)
+                      const prevDayKey =
+                        rowIdx > 0 ? listCreatedAtDayKey(listFiltered[rowIdx - 1].createdAt) : null
+                      const showDayHeader = !!dayKey && dayKey !== prevDayKey
                       return (
-                        <tr
-                          key={c.id}
-                          className={`hover:bg-blue-50 cursor-pointer transition-colors ${
-                            isSelectedRow ? 'bg-blue-50 border-l-2 border-blue-500' : ''
-                          }`}
-                          onClick={() => openDetailFromList(realIdx)}
-                        >
-                          <td className="px-4 py-2.5 text-gray-400 text-xs">{realIdx >= 0 ? realIdx + 1 : '—'}</td>
-                          <td className={`px-4 py-2.5 font-mono text-xs ${isPendingRow ? 'text-gray-400' : 'text-gray-600'}`}>{c.ruc}</td>
-                          <td className="px-4 py-2.5">
-                            <p className={`text-sm ${isPendingRow ? 'text-gray-400 font-normal' : 'text-gray-900 font-medium'}`}>{c.razonSocial || <span className="text-gray-400 italic text-xs">Sin razón social</span>}</p>
-                            {c.contacts?.[0] && (
-                              <p className="text-xs text-gray-400">{c.contacts[0].nombre}</p>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 text-gray-600 font-mono text-xs">
-                            {c.contacts?.[0]?.telefono ? (
-                              <a href={`tel:${c.contacts[0].telefono}`} className="hover:text-blue-600" onClick={(e) => e.stopPropagation()}>
-                                {c.contacts[0].telefono}
-                              </a>
-                            ) : '—'}
-                          </td>
-                          {!selectedBatchId && (
-                            <td className="px-4 py-2.5 text-xs text-gray-500">
-                              {c.importBatch
-                                ? c.importBatch.filename.replace(/\.[^.]+$/, '').slice(0, 18)
-                                : '—'}
-                            </td>
+                        <Fragment key={c.id}>
+                          {showDayHeader && c.createdAt && (
+                            <tr className="bg-gray-50">
+                              <td
+                                colSpan={listColCount}
+                                className="sticky top-0 z-[1] px-4 py-1 bg-gray-50 border-y border-gray-100"
+                              >
+                                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+                                  {listCreatedAtDayLabel(c.createdAt)}
+                                </span>
+                              </td>
+                            </tr>
                           )}
-                          <td className="px-4 py-2.5">
-                            {c.lastDisposition ? (
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <DispositionBadge disposition={c.lastDisposition} />
-                                {aclaracion ? (
-                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
-                                    {aclaracion}
-                                  </span>
-                                ) : null}
-                              </div>
-                            ) : (
-                              <StatusBadge status="PENDING" />
+                          <tr
+                            className={`hover:bg-blue-50 cursor-pointer transition-colors ${
+                              isSelectedRow ? 'bg-blue-50 border-l-2 border-blue-500' : ''
+                            }`}
+                            onClick={() => openDetailFromList(realIdx)}
+                          >
+                            <td className="px-4 py-2.5 text-gray-400 text-xs">{realIdx >= 0 ? realIdx + 1 : '—'}</td>
+                            <td className={`px-4 py-2.5 font-mono text-xs ${isPendingRow ? 'text-gray-400' : 'text-gray-600'}`}>{c.ruc}</td>
+                            <td className="px-4 py-2.5">
+                              <p className={`text-sm ${isPendingRow ? 'text-gray-400 font-normal' : 'text-gray-900 font-medium'}`}>{c.razonSocial || <span className="text-gray-400 italic text-xs">Sin razón social</span>}</p>
+                              {c.contacts?.[0] && (
+                                <p className="text-xs text-gray-400">{c.contacts[0].nombre}</p>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 text-gray-600 font-mono text-xs">
+                              {c.contacts?.[0]?.telefono ? (
+                                <a href={`tel:${c.contacts[0].telefono}`} className="hover:text-blue-600" onClick={(e) => e.stopPropagation()}>
+                                  {c.contacts[0].telefono}
+                                </a>
+                              ) : '—'}
+                            </td>
+                            {!selectedBatchId && (
+                              <td className="px-4 py-2.5 text-xs text-gray-500">
+                                {c.importBatch
+                                  ? c.importBatch.filename.replace(/\.[^.]+$/, '').slice(0, 18)
+                                  : '—'}
+                              </td>
                             )}
-                          </td>
-                          <td className="px-4 py-2.5">
-                            {cbDate ? (
-                              <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${cbColor}`}>
-                                <CalendarClock size={11} />
-                                {format(cbDate, 'dd/MM HH:mm', { locale: es })}
-                              </span>
-                            ) : (
-                              <span className="text-xs text-gray-300">—</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 text-center text-gray-500">
-                            {c.callLogCount ?? c._count?.callLogs ?? 0}
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            <span className="text-xs text-blue-500 hover:underline">Ver detalle →</span>
-                          </td>
-                        </tr>
+                            <td className="px-4 py-2.5">
+                              {c.lastDisposition ? (
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <DispositionBadge disposition={c.lastDisposition} />
+                                  {aclaracion ? (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
+                                      {aclaracion}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              ) : (
+                                <StatusBadge status="PENDING" />
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5">
+                              {cbDate ? (
+                                <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${cbColor}`}>
+                                  <CalendarClock size={11} />
+                                  {format(cbDate, 'dd/MM HH:mm', { locale: es })}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-gray-300">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 text-center text-gray-500">
+                              {c.callLogCount ?? c._count?.callLogs ?? 0}
+                            </td>
+                            <td className="px-4 py-2.5 text-right">
+                              <span className="text-xs text-blue-500 hover:underline">Ver detalle →</span>
+                            </td>
+                          </tr>
+                        </Fragment>
                       )
                     })}
                   </tbody>
