@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "release-notes": "node scripts/add-release-notes.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.45.0",

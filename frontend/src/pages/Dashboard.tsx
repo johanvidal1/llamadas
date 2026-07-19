@@ -23,12 +23,11 @@ import {
   AGENT_PIPELINE_QUEUE,
   buildPipelineClientsUrl,
 } from '../config/companyPipeline'
-import {
-  CURRENT_RELEASE,
-  RELEASE_NOTES_DISMISS_KEY,
-} from '../content/releaseNotes'
+import { RELEASES } from '../content/releaseNotes'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
+
+const RELEASE_HISTORY_PREVIEW = 5
 
 function StatCard({
   label,
@@ -62,22 +61,7 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [selectedBatchId, setSelectedBatchId] = useState<string | undefined>(undefined)
   const [recordModal, setRecordModal] = useState<{ clientId: string } | null>(null)
-  const [releaseDismissed, setReleaseDismissed] = useState(() => {
-    try {
-      return localStorage.getItem(RELEASE_NOTES_DISMISS_KEY(CURRENT_RELEASE.date)) === '1'
-    } catch {
-      return false
-    }
-  })
-
-  const dismissReleaseNotes = () => {
-    try {
-      localStorage.setItem(RELEASE_NOTES_DISMISS_KEY(CURRENT_RELEASE.date), '1')
-    } catch {
-      /* ignore quota / private mode */
-    }
-    setReleaseDismissed(true)
-  }
+  const [showFullReleaseHistory, setShowFullReleaseHistory] = useState(false)
 
   const goToMyLeadsFilter = (filter: string) => {
     const params = new URLSearchParams()
@@ -404,35 +388,45 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {isAdmin && !releaseDismissed && (
+      {isAdmin && RELEASES.length > 0 && (
         <div className="card p-6">
-          <div className="flex items-start justify-between gap-4 mb-4">
-            <div className="flex items-start gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
-                <Sparkles size={18} className="text-blue-600" />
-              </div>
-              <div className="min-w-0">
-                <h2 className="font-semibold text-gray-900">Novedades del sistema</h2>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Última actualización: {CURRENT_RELEASE.dateLabel}
-                </p>
-              </div>
+          <div className="flex items-start gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
+              <Sparkles size={18} className="text-blue-600" />
             </div>
+            <div className="min-w-0">
+              <h2 className="font-semibold text-gray-900">Novedades del sistema</h2>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Última actualización: {RELEASES[0].dateLabel}
+              </p>
+            </div>
+          </div>
+          <div className="space-y-5">
+            {(showFullReleaseHistory || RELEASES.length <= RELEASE_HISTORY_PREVIEW
+              ? RELEASES
+              : RELEASES.slice(0, RELEASE_HISTORY_PREVIEW)
+            ).map((release) => (
+              <section key={release.date}>
+                <h3 className="text-sm font-medium text-gray-800 mb-2">{release.dateLabel}</h3>
+                <ul className="space-y-2.5 list-disc list-outside pl-5 text-sm text-gray-600">
+                  {release.items.map((item) => (
+                    <li key={item} className="leading-relaxed">
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+          {RELEASES.length > RELEASE_HISTORY_PREVIEW && !showFullReleaseHistory && (
             <button
               type="button"
-              onClick={dismissReleaseNotes}
-              className="shrink-0 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 bg-white hover:bg-gray-50 transition-colors"
+              onClick={() => setShowFullReleaseHistory(true)}
+              className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline"
             >
-              Entendido
+              Ver historial
             </button>
-          </div>
-          <ul className="space-y-2.5 list-disc list-outside pl-5 text-sm text-gray-600">
-            {CURRENT_RELEASE.items.map((item) => (
-              <li key={item} className="leading-relaxed">
-                {item}
-              </li>
-            ))}
-          </ul>
+          )}
         </div>
       )}
 
