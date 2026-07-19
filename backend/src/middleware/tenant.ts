@@ -10,9 +10,36 @@ import type { AuthRequest } from './auth'
 export type { TenantContext }
 
 /**
+ * Resolve when the HTTP response has finished (or the connection closed).
+ * Used so runWithTenant's returned Promise keeps ALS active for the full request.
+ */
+function waitForResponseEnd(res: Response): Promise<void> {
+  return new Promise((resolve) => {
+    if (res.writableEnded || res.closed) {
+      resolve()
+      return
+    }
+    let settled = false
+    const done = () => {
+      if (settled) return
+      settled = true
+      res.off('finish', done)
+      res.off('close', done)
+      resolve()
+    }
+    res.on('finish', done)
+    res.on('close', done)
+  })
+}
+
+/**
  * Resolve tenant from Host / X-Forwarded-Host before auth and business routes.
  * Sets req.tenant and AsyncLocalStorage for Prisma tenant scoping.
  * Skip /api/health by mounting health before this middleware.
+ *
+ * ALS must stay active until the response ends: a naive
+ * `runWithTenant(() => { next() })` exits the store when next() returns,
+ * so async handlers lose tenantId mid-request (intermittent cross-tenant leakage).
  */
 export async function resolveTenant(
   req: AuthRequest,
@@ -49,8 +76,10 @@ export async function resolveTenant(
   }
 
   req.tenant = tenant
-  // Bind ALS for the rest of the request (Prisma extension reads this).
-  runWithTenant(tenant.id, () => {
+  // Keep ALS until finish/close: returning a Promise from run() holds the store
+  // for async route handlers (see Node AsyncLocalStorage.run docs).
+  await runWithTenant(tenant.id, () => {
     next()
+    return waitForResponseEnd(res)
   })
 }

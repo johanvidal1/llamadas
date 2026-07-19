@@ -1,6 +1,10 @@
 import { Prisma, PrismaClient } from '@prisma/client'
 import { TENANT_SCOPED_TABLES } from './tenant'
-import { getTenantIdFromContext } from './tenantContext'
+import {
+  allowUnscopedTenantAccess,
+  getTenantIdFromContext,
+  requireTenantIdFromContext,
+} from './tenantContext'
 
 const globalForPrisma = globalThis as unknown as {
   prisma: ReturnType<typeof createPrismaClient> | undefined
@@ -198,10 +202,15 @@ function createPrismaClient() {
             return query(args)
           }
 
-          const tenantId = getTenantIdFromContext()
-          // No ALS (seed/scripts/startup): pass through; callers must set tenantId explicitly.
+          // Fail-closed on HTTP: missing ALS must not run unfiltered scoped queries
+          // (that caused intermittent Optick data on other tenants). Scripts/seed:
+          // use runWithTenant, getPrismaBase(), or ALLOW_UNSCOPED_PRISMA=1.
+          let tenantId = getTenantIdFromContext()
           if (!tenantId) {
-            return query(args)
+            if (allowUnscopedTenantAccess()) {
+              return query(args)
+            }
+            tenantId = requireTenantIdFromContext()
           }
 
           const a = args as Record<string, unknown>

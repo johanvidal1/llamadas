@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from './lib/prisma'
 import { ensureArchivedAgent } from './lib/archivedAgent'
 import { OPTICK_TENANT_ID, OPTICK_TENANT_NAME, OPTICK_TENANT_SLUG } from './lib/tenant'
+import { runWithTenant } from './lib/tenantContext'
 
 async function ensureOptickTenant() {
   await prisma.tenant.upsert({
@@ -108,7 +109,7 @@ async function main() {
   console.log('✅ Agente comodín (Agente borrado) verificado')
 }
 
-main()
+runWithTenant(OPTICK_TENANT_ID, () => main())
   .catch((e) => {
     console.error('❌ Error en seed:', e)
     process.exit(1)

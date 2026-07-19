@@ -3,7 +3,11 @@
  * Host → slug → Tenant; Optick aliases keep pruebacrm/crm/localhost on slug `crm`.
  */
 import { Prisma } from '@prisma/client'
-import { getTenantIdFromContext } from './tenantContext'
+import {
+  allowUnscopedTenantAccess,
+  getTenantIdFromContext,
+  requireTenantIdFromContext,
+} from './tenantContext'
 
 export const OPTICK_TENANT_ID = 'clopticktenantcrm0001'
 export const OPTICK_TENANT_SLUG = 'crm'
@@ -66,11 +70,16 @@ export function tenantWhere(tenantId: string): { tenantId: string } {
 
 /**
  * Tenant id for `$queryRaw` / `$executeRaw` (Prisma extension does not wrap raw SQL).
- * Request path: ALS from resolveTenant. Scripts/jobs without ALS: Optick fallback.
+ * Request path: requires ALS from resolveTenant (no silent Optick fallback).
+ * Scripts without ALS: pass explicit id, use runWithTenant, or ALLOW_UNSCOPED_PRISMA=1
+ * (then Optick fallback).
  */
 export function resolveTenantIdForSql(explicit?: string): string {
   if (explicit) return explicit
-  return getTenantIdFromContext() ?? OPTICK_TENANT_ID
+  const fromAls = getTenantIdFromContext()
+  if (fromAls) return fromAls
+  if (allowUnscopedTenantAccess()) return OPTICK_TENANT_ID
+  return requireTenantIdFromContext()
 }
 
 const SQL_ALIAS_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/

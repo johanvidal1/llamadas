@@ -313,7 +313,9 @@ Deploy del middleware + login scoped + filtros en queries (PRs 2–3).
 - [x] Onboarding de cliente (MVP plataforma) — `POST/GET /api/platform/tenants` + UI `/platform/tenants` + runbook [`TENANT-ONBOARDING.md`](./TENANT-ONBOARDING.md) (staging only; no cliente de pago aún)
 - [ ] Cliente real de pago (post-MVP UI; smoke staging primero)
 
-**Residual PR3 — cerrado (antes de PR5):** `$queryRaw` en reportes/métricas **no** pasa por la extensión Prisma. Mitigación: `resolveTenantIdForSql()` + `sqlAndTenant(alias)` inyectan `AND …."tenantId" = $id` desde ALS (fallback Optick en scripts). Cubierto: `reportCharts`, `reportTrends`, `callActivity`, `companyDisposition`, `dailyAgentMetrics`, `agentReset`.
+**Residual PR3 — cerrado (antes de PR5):** `$queryRaw` en reportes/métricas **no** pasa por la extensión Prisma. Mitigación: `resolveTenantIdForSql()` + `sqlAndTenant(alias)` inyectan `AND …."tenantId" = $id` desde ALS. Sin ALS en HTTP → throw; scripts: id explícito, `runWithTenant`, o `ALLOW_UNSCOPED_PRISMA=1` (fallback Optick). Cubierto: `reportCharts`, `reportTrends`, `callActivity`, `companyDisposition`, `dailyAgentMetrics`, `agentReset`.
+
+**Hotfix ALS (post–PR5):** binding ALS hasta fin de response + fail-closed Prisma/SQL (ver § Aplicar PR3). Evita fuga intermitente Optick↔otro tenant en dashboard.
 
 ### Aplicar PR1 en staging (Ubuntu)
 
@@ -357,9 +359,11 @@ bash /opt/llamadas/scripts/deploy-staging.sh
 
 Verificar: `GET /api/health` OK; login Optick; listados autenticados (clientes / my-leads) siguen con datos.
 
-Implementación: `resolveTenant` → `runWithTenant(req.tenant.id)`; extensión Prisma inyecta `tenantId` en `where`/`data` para `TENANT_SCOPED_TABLES`. Creates con `OPTICK_TENANT_ID` hardcodeado se sobrescriben con el tenant del request. `/api/health` sin tenant; `/api/contact` (formulario) no toca tablas scoped.
+Implementación: `resolveTenant` → `runWithTenant(req.tenant.id)` **hasta `res` finish/close** (el `run()` debe devolver una Promise para que ALS no se pierda en handlers async); extensión Prisma inyecta `tenantId` en `where`/`data` para `TENANT_SCOPED_TABLES`. Sin ALS en modelo scoped → **rechazo** (`Tenant context missing`), no passthrough. Scripts: `runWithTenant` / `getPrismaBase()` / `ALLOW_UNSCOPED_PRISMA=1`. Creates con `OPTICK_TENANT_ID` hardcodeado se sobrescriben con el tenant del request. `/api/health` sin tenant; `/api/contact` (formulario) no toca tablas scoped.
 
-**Residual `$queryRaw` — cerrado:** `sqlAndTenant` / `resolveTenantIdForSql` en `lib/tenant.ts`; inyectado en reportes/métricas/disposition/call activity/agent reset. Sin ALS (scripts) cae a Optick.
+**Residual `$queryRaw` — cerrado:** `sqlAndTenant` / `resolveTenantIdForSql` en `lib/tenant.ts`; inyectado en reportes/métricas/disposition/call activity/agent reset. Sin ALS en request path → throw (no fallback Optick); scripts con `ALLOW_UNSCOPED_PRISMA=1` o `runWithTenant` / id explícito.
+
+**Smoke post-fix ALS (prod/staging):** en `crm` y en el slug del otro tenant, refrescar dashboard varias veces: números distintos (no ambos ~Optick ni ambos 0 por fuga). En el tenant no-Optick, dashboard y registros/listas deben ser coherentes (no dashboard lleno + listas vacías). Log API no debe mostrar `Tenant context missing` en tráfico normal. Local: `npx ts-node --transpile-only scripts/verify-tenant-context.ts`.
 
 **No** desplegar en prod (`main`) hasta cerrar checklist §6.
 

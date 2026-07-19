@@ -60,7 +60,7 @@ Respuesta `201`:
 
 ### ALS / Prisma (importante)
 
-El middleware deja ALS = Optick. La extensión Prisma **siempre** estampa `tenantId` del ALS en creates scoped; `runWithTenant` / `exit` anidados no son fiables en este path.
+El middleware deja ALS = Optick **hasta finish/close del response**. La extensión Prisma **siempre** estampa `tenantId` del ALS en creates scoped; sin ALS rechaza queries scoped (fail-closed). `runWithTenant` / `exit` anidados no son fiables para crear users de *otro* tenant en el mismo request.
 
 Patrón correcto en `POST /api/platform/tenants`:
 
