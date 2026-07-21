@@ -14,6 +14,7 @@ import { isSuperAdminOrOwner } from '../lib/userPermissions'
 import { countUnassignedCompanies } from '../lib/assignmentOrder'
 import { isValidMobileLineNumber, mobileDigits } from '../lib/mobileLine'
 import { OPTICK_TENANT_ID } from '../lib/tenant'
+import { runWithTenant } from '../lib/tenantContext'
 
 function parseFechaConsulta(raw?: string): Date | null {
   if (!raw) return null
@@ -446,162 +447,173 @@ router.patch('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
 })
 
 // POST /api/imports
+// Multer parses the upload on stream callbacks that leave the resolveTenant ALS
+// store (Node async_hooks). Re-enter runWithTenant for the full handler so Prisma
+// scoped queries (including interactive $transaction) keep tenant context.
 router.post(
   '/',
   requireAdmin,
   upload.single('file'),
   async (req: AuthRequest, res: Response) => {
-    if (!req.file) {
-      res.status(400).json({ error: 'Archivo requerido' })
+    const tenantId = req.tenant?.id
+    if (!tenantId) {
+      res.status(400).json({ error: 'Tenant no resuelto' })
       return
     }
 
-    const buffer = req.file.buffer
-    const filename = req.file.originalname
-    const fileSizeBytes = req.file.size || buffer.length
-    const confirmDuplicate = parseConfirmDuplicate(req.body?.confirmDuplicate)
-    const displayNameRaw = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : ''
-    const displayName = displayNameRaw || null
-
-    if (!confirmDuplicate) {
-      const duplicate = await findDuplicateBatch(filename, fileSizeBytes)
-      if (duplicate) {
-        res.status(409).json({
-          error: 'duplicate_file_warning',
-          severity: duplicate.severity,
-          existingBatch: duplicate.existingBatch,
-        })
+    await runWithTenant(tenantId, async () => {
+      if (!req.file) {
+        res.status(400).json({ error: 'Archivo requerido' })
         return
       }
-    }
 
-    let parseResult: ParseResult
+      const buffer = req.file.buffer
+      const filename = req.file.originalname
+      const fileSizeBytes = req.file.size || buffer.length
+      const confirmDuplicate = parseConfirmDuplicate(req.body?.confirmDuplicate)
+      const displayNameRaw = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : ''
+      const displayName = displayNameRaw || null
 
-    try {
-      if (filename.match(/\.csv$/i)) {
-        parseResult = await parseCsv(buffer)
-      } else {
-        parseResult = await parseExcel(buffer)
+      if (!confirmDuplicate) {
+        const duplicate = await findDuplicateBatch(filename, fileSizeBytes)
+        if (duplicate) {
+          res.status(409).json({
+            error: 'duplicate_file_warning',
+            severity: duplicate.severity,
+            existingBatch: duplicate.existingBatch,
+          })
+          return
+        }
       }
-    } catch (err) {
-      if (err instanceof MissingContactosSheetError) {
+
+      let parseResult: ParseResult
+
+      try {
+        if (filename.match(/\.csv$/i)) {
+          parseResult = await parseCsv(buffer)
+        } else {
+          parseResult = await parseExcel(buffer)
+        }
+      } catch (err) {
+        if (err instanceof MissingContactosSheetError) {
+          res.status(400).json({
+            error: err.message,
+            availableSheets: err.availableSheets,
+          })
+          return
+        }
+        throw err
+      }
+
+      const parsed = parseResult.companies
+      const { sourceRowCount, mobileLines } = parseResult
+
+      if (parsed.length === 0) {
         res.status(400).json({
-          error: err.message,
-          availableSheets: err.availableSheets,
+          error: 'No se encontraron registros válidos. Asegúrate de que el archivo tenga las columnas: ruc, nombre, telefono, etc.',
         })
         return
       }
-      throw err
-    }
 
-    const parsed = parseResult.companies
-    const { sourceRowCount, mobileLines } = parseResult
+      const withoutContacts = parsed.filter((c) => c.contacts.length === 0).length
+      const withoutPhone = parsed.filter(
+        (c) => c.contacts.length === 0 || !c.contacts.some((ct) => ct.telefono)
+      ).length
 
-    if (parsed.length === 0) {
-      res.status(400).json({
-        error: 'No se encontraron registros válidos. Asegúrate de que el archivo tenga las columnas: ruc, nombre, telefono, etc.',
-      })
-      return
-    }
-
-    const withoutContacts = parsed.filter((c) => c.contacts.length === 0).length
-    const withoutPhone = parsed.filter(
-      (c) => c.contacts.length === 0 || !c.contacts.some((ct) => ct.telefono)
-    ).length
-
-    const batch = await prisma.$transaction(
-      async (tx) => {
-        const created = await tx.importBatch.create({
-          data: {
-            tenantId: OPTICK_TENANT_ID,
-            filename,
-            displayName,
-            fileSizeBytes,
-            sourceRowCount,
-            totalRecords: parsed.length,
-            importedById: req.user!.id,
-          },
-        })
-
-        const rucToCompanyId = new Map<string, string>()
-        for (const company of parsed) {
-          const { contacts, name: _name, phone: _phone, email: _email, ...companyFields } = company
-          const createdCompany = await tx.company.create({
+      const batch = await prisma.$transaction(
+        async (tx) => {
+          const created = await tx.importBatch.create({
             data: {
               tenantId: OPTICK_TENANT_ID,
-              ruc: companyFields.ruc,
-              razonSocial: companyFields.razonSocial ?? null,
-              importStatus: companyFields.estado ?? null,
-              fechaConsulta: parseFechaConsulta(companyFields.fechaConsulta),
-              plan: companyFields.plan ?? null,
-              notes: companyFields.notes ?? null,
-              importBatchId: created.id,
-              contacts:
-                contacts.length > 0 ? { create: toContactCreate(contacts) } : undefined,
+              filename,
+              displayName,
+              fileSizeBytes,
+              sourceRowCount,
+              totalRecords: parsed.length,
+              importedById: req.user!.id,
             },
           })
-          rucToCompanyId.set(companyFields.ruc, createdCompany.id)
-        }
 
-        if (mobileLines.length > 0) {
-          await tx.mobileLine.deleteMany({ where: { importBatchId: created.id } })
-
-          const mobileLineData = mobileLines
-            .map((line) => {
-              const companyId = rucToCompanyId.get(line.ruc)
-              if (!companyId) return null
-              return {
+          const rucToCompanyId = new Map<string, string>()
+          for (const company of parsed) {
+            const { contacts, name: _name, phone: _phone, email: _email, ...companyFields } = company
+            const createdCompany = await tx.company.create({
+              data: {
                 tenantId: OPTICK_TENANT_ID,
-                companyId,
-                ruc: line.ruc,
-                numeroTelefono: line.numeroTelefono ?? null,
-                estadoLinea: line.estadoLinea ?? null,
-                plan: line.plan ?? null,
-                estado: line.estado ?? null,
+                ruc: companyFields.ruc,
+                razonSocial: companyFields.razonSocial ?? null,
+                importStatus: companyFields.estado ?? null,
+                fechaConsulta: parseFechaConsulta(companyFields.fechaConsulta),
+                plan: companyFields.plan ?? null,
+                notes: companyFields.notes ?? null,
                 importBatchId: created.id,
-              }
+                contacts:
+                  contacts.length > 0 ? { create: toContactCreate(contacts) } : undefined,
+              },
             })
-            .filter((row): row is NonNullable<typeof row> => row !== null)
-            .filter((row) => isValidMobileLineNumber(row.numeroTelefono))
-
-          const seenMobileKeys = new Set<string>()
-          const dedupedMobileLineData = mobileLineData.filter((row) => {
-            const key = `${row.companyId}:${mobileDigits(row.numeroTelefono)}`
-            if (seenMobileKeys.has(key)) return false
-            seenMobileKeys.add(key)
-            return true
-          })
-
-          if (dedupedMobileLineData.length > 0) {
-            await tx.mobileLine.createMany({ data: dedupedMobileLineData })
+            rucToCompanyId.set(companyFields.ruc, createdCompany.id)
           }
-        }
 
-        return created
-      },
-      { timeout: 120_000, maxWait: 10_000 }
-    )
+          if (mobileLines.length > 0) {
+            await tx.mobileLine.deleteMany({ where: { importBatchId: created.id } })
 
-    try {
-      const storagePath = await saveImportOriginalFile(batch.id, buffer, filename)
-      await prisma.importBatch.update({
-        where: { id: batch.id },
-        data: { storagePath },
+            const mobileLineData = mobileLines
+              .map((line) => {
+                const companyId = rucToCompanyId.get(line.ruc)
+                if (!companyId) return null
+                return {
+                  tenantId: OPTICK_TENANT_ID,
+                  companyId,
+                  ruc: line.ruc,
+                  numeroTelefono: line.numeroTelefono ?? null,
+                  estadoLinea: line.estadoLinea ?? null,
+                  plan: line.plan ?? null,
+                  estado: line.estado ?? null,
+                  importBatchId: created.id,
+                }
+              })
+              .filter((row): row is NonNullable<typeof row> => row !== null)
+              .filter((row) => isValidMobileLineNumber(row.numeroTelefono))
+
+            const seenMobileKeys = new Set<string>()
+            const dedupedMobileLineData = mobileLineData.filter((row) => {
+              const key = `${row.companyId}:${mobileDigits(row.numeroTelefono)}`
+              if (seenMobileKeys.has(key)) return false
+              seenMobileKeys.add(key)
+              return true
+            })
+
+            if (dedupedMobileLineData.length > 0) {
+              await tx.mobileLine.createMany({ data: dedupedMobileLineData })
+            }
+          }
+
+          return created
+        },
+        { timeout: 120_000, maxWait: 10_000 }
+      )
+
+      try {
+        const storagePath = await saveImportOriginalFile(batch.id, buffer, filename)
+        await prisma.importBatch.update({
+          where: { id: batch.id },
+          data: { storagePath },
+        })
+      } catch (err) {
+        console.error('Failed to save import original file:', err)
+      }
+
+      res.status(201).json({
+        id: batch.id,
+        filename: batch.filename,
+        displayName: batch.displayName,
+        totalRecords: batch.totalRecords,
+        sourceRowCount: batch.sourceRowCount,
+        imported: parsed.length,
+        withoutContacts,
+        withoutPhone,
+        mobileLineCount: mobileLines.length,
       })
-    } catch (err) {
-      console.error('Failed to save import original file:', err)
-    }
-
-    res.status(201).json({
-      id: batch.id,
-      filename: batch.filename,
-      displayName: batch.displayName,
-      totalRecords: batch.totalRecords,
-      sourceRowCount: batch.sourceRowCount,
-      imported: parsed.length,
-      withoutContacts,
-      withoutPhone,
-      mobileLineCount: mobileLines.length,
     })
   }
 )
