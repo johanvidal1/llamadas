@@ -136,3 +136,17 @@ export async function requireAdmin(
   }
   next()
 }
+
+/** Fail-closed: only the system owner may mutate platform release notes. */
+export async function requireSystemOwner(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  if (!(await authenticateRequest(req, res))) return
+  if (req.user?.isSystemOwner !== true) {
+    res.status(403).json({ error: 'Solo el propietario del sistema puede realizar esta acción' })
+    return
+  }
+  next()
+}

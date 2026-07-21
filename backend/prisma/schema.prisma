@@ -339,3 +339,20 @@ model Callback {
   @@index([tenantId])
   @@index([agentId, scheduledAt])
 }
+
+// Platform Optick product news (Novedades del sistema) — global, not per-tenant.
+// Intentionally omitted from TENANT_SCOPED_TABLES so all tenants' admins see the same notes.
+model ReleaseNote {
+  id          String   @id @default(cuid())
+  /// ISO date key YYYY-MM-DD (unique).
+  date        String   @unique
+  /// Spanish long-form label shown in the Dashboard.
+  dateLabel   String
+  /// Bullet strings (JSON array of strings).
+  items       Json
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([date])
+}

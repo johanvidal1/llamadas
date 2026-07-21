@@ -19,6 +19,7 @@ import adminRouter from './routes/admin'
 import platformRouter from './routes/platform'
 import contactRouter from './routes/contact'
 import presenceRouter from './routes/presence'
+import releaseNotesRouter from './routes/releaseNotes'
 import { errorHandler } from './middleware/error'
 import { resolveTenant } from './middleware/tenant'
 
@@ -113,6 +114,7 @@ app.use('/api/admin', adminRouter)
 app.use('/api/platform', platformRouter)
 app.use('/api/contact', contactRouter)
 app.use('/api/presence', presenceRouter)
+app.use('/api/release-notes', releaseNotesRouter)
 
 // Global error handler (must be last)
 app.use(errorHandler)

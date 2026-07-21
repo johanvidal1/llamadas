@@ -531,6 +531,31 @@ export const getDashboardStats = (batchId?: string, options?: { refresh?: boolea
       ...(options?.refresh ? { headers: { 'x-refresh': 'true' } } : {}),
     })
     .then((r) => r.data)
+
+// ─── Release notes (Novedades del sistema) ────────────────
+export type ReleaseNote = {
+  id: string
+  date: string
+  dateLabel: string
+  items: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+export const getReleaseNotes = () =>
+  api.get<ReleaseNote[]>('/release-notes').then((r) => r.data)
+
+export const createReleaseNote = (data: { date: string; items: string[]; dateLabel?: string }) =>
+  api.post<ReleaseNote>('/release-notes', data).then((r) => r.data)
+
+export const updateReleaseNote = (
+  id: string,
+  data: { date?: string; items?: string[]; dateLabel?: string }
+) => api.patch<ReleaseNote>(`/release-notes/${id}`, data).then((r) => r.data)
+
+export const deleteReleaseNote = (id: string) =>
+  api.delete<{ ok: boolean }>(`/release-notes/${id}`).then((r) => r.data)
+
 export const getAgentStats = () => api.get('/dashboard/agents-stats').then((r) => r.data)
 export type DailyActivityPoint = {
   date: string

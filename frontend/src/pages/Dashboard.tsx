@@ -12,7 +12,6 @@ import {
   Layers,
   RefreshCw,
   ArrowRight,
-  Sparkles,
 } from 'lucide-react'
 import { RecentCallRow } from '../components/RecentCallRow'
 import ClientRecordModal from '../components/ClientRecordModal'
@@ -23,11 +22,9 @@ import {
   AGENT_PIPELINE_QUEUE,
   buildPipelineClientsUrl,
 } from '../config/companyPipeline'
-import { RELEASES } from '../content/releaseNotes'
+import ReleaseNotesPanel from '../components/ReleaseNotesPanel'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
-
-const RELEASE_HISTORY_PREVIEW = 5
 
 function StatCard({
   label,
@@ -61,7 +58,6 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [selectedBatchId, setSelectedBatchId] = useState<string | undefined>(undefined)
   const [recordModal, setRecordModal] = useState<{ clientId: string } | null>(null)
-  const [showFullReleaseHistory, setShowFullReleaseHistory] = useState(false)
 
   const goToMyLeadsFilter = (filter: string) => {
     const params = new URLSearchParams()
@@ -388,47 +384,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {isAdmin && RELEASES.length > 0 && (
-        <div className="card p-6">
-          <div className="flex items-start gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
-              <Sparkles size={18} className="text-blue-600" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="font-semibold text-gray-900">Novedades del sistema</h2>
-              <p className="text-xs text-gray-500 mt-0.5">
-                Última actualización: {RELEASES[0].dateLabel}
-              </p>
-            </div>
-          </div>
-          <div className="space-y-5">
-            {(showFullReleaseHistory || RELEASES.length <= RELEASE_HISTORY_PREVIEW
-              ? RELEASES
-              : RELEASES.slice(0, RELEASE_HISTORY_PREVIEW)
-            ).map((release) => (
-              <section key={release.date}>
-                <h3 className="text-sm font-medium text-gray-800 mb-2">{release.dateLabel}</h3>
-                <ul className="space-y-2.5 list-disc list-outside pl-5 text-sm text-gray-600">
-                  {release.items.map((item) => (
-                    <li key={item} className="leading-relaxed">
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ))}
-          </div>
-          {RELEASES.length > RELEASE_HISTORY_PREVIEW && !showFullReleaseHistory && (
-            <button
-              type="button"
-              onClick={() => setShowFullReleaseHistory(true)}
-              className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline"
-            >
-              Ver historial
-            </button>
-          )}
-        </div>
-      )}
+      {isAdmin && <ReleaseNotesPanel isSystemOwner={user?.isSystemOwner === true} />}
 
       {isAdmin && (
         <div className="flex justify-end">
