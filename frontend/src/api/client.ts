@@ -167,9 +167,7 @@ export const uploadImport = (file: File, options?: UploadImportOptions) => {
   if (options?.displayName?.trim()) {
     form.append('displayName', options.displayName.trim())
   }
-  return api.post('/imports', form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  }).then((r) => r.data)
+  return api.post('/imports', form).then((r) => r.data)
 }
 
 // ─── Clients ──────────────────────────────────────────────
