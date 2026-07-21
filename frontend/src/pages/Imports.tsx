@@ -5,7 +5,7 @@ import type { DuplicateFileWarning, ImportBatch } from '../api/client'
 import toast from 'react-hot-toast'
 import { useAuth } from '../contexts/AuthContext'
 import {
-  Upload, FileSpreadsheet, ChevronRight, ChevronDown, Clock, Users, X,
+  Upload, FileSpreadsheet, ChevronRight, ChevronDown, Clock, X,
   Phone, Mail, UserCheck, UserX, Search, Trash2, AlertTriangle, Building2, List, Ban, ShieldCheck, Download,
 } from 'lucide-react'
 import { format } from 'date-fns'
@@ -35,15 +35,13 @@ function registroLabel(count: number) {
 
 function batchMetricsText(batch: {
   sourceRowCount?: number | null
-  contactCount: number
   companyCount: number
 }) {
   const parts: string[] = []
   if (batch.sourceRowCount != null) {
     parts.push(registroLabel(batch.sourceRowCount))
   }
-  parts.push(`${batch.contactCount} contacto${batch.contactCount !== 1 ? 's' : ''}`)
-  parts.push(`${batch.companyCount} RUC${batch.companyCount !== 1 ? 's' : ''}`)
+  parts.push(`${batch.companyCount} empresa${batch.companyCount !== 1 ? 's' : ''}`)
   return parts.join(' · ')
 }
 
@@ -188,7 +186,7 @@ export default function Imports() {
 
   useEffect(() => {
     if (quincenaCollapseSeeded || quincenaGroups.length === 0) return
-    const openCount = Math.min(3, quincenaGroups.length)
+    const openCount = 1
     const collapsed = new Set(quincenaGroups.slice(openCount).map((g) => g.key))
     setCollapsedQuincenas(collapsed)
     setQuincenaCollapseSeeded(true)
@@ -450,7 +448,7 @@ export default function Imports() {
             {quincenaGroups.map((group) => {
               const collapsed = collapsedQuincenas.has(group.key)
               const loteLabel = `${group.batches.length} lote${group.batches.length !== 1 ? 's' : ''}`
-              const rucLabel = `${group.totalRucs} RUC${group.totalRucs !== 1 ? 's' : ''}`
+              const rucLabel = `${group.totalRucs} empresa${group.totalRucs !== 1 ? 's' : ''}`
               return (
                 <section key={group.key} className="space-y-2">
                   <button
@@ -511,12 +509,8 @@ export default function Imports() {
                                     </span>
                                   )}
                                   <span className="flex items-center gap-1">
-                                    <Users size={12} />
-                                    {batch.contactCount} contacto{batch.contactCount !== 1 ? 's' : ''}
-                                  </span>
-                                  <span className="flex items-center gap-1">
                                     <Building2 size={12} />
-                                    {batch.companyCount} RUC{batch.companyCount !== 1 ? 's' : ''}
+                                    {batch.companyCount} empresa{batch.companyCount !== 1 ? 's' : ''}
                                   </span>
                                   {batch.fileSizeBytes != null && (
                                     <span>{formatFileSize(batch.fileSizeBytes)}</span>
@@ -529,7 +523,7 @@ export default function Imports() {
                                 </div>
                                 <div className="mt-2.5 max-w-sm">
                                   <p className={`text-xs font-medium mb-1 ${tone.text}`}>
-                                    {usage.pct}% usado · {usage.assigned} / {usage.companyCount} RUC
+                                    {usage.pct}% usado · {usage.assigned} / {usage.companyCount} empresa
                                     {usage.companyCount !== 1 ? 's' : ''}
                                   </p>
                                   <div className={`h-1.5 rounded-full overflow-hidden ${tone.track}`}>
