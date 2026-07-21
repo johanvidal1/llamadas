@@ -1,16 +1,22 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getImports, getImport, uploadImport, deleteImport, patchImport, downloadImportExport, downloadImportOriginal } from '../api/client'
-import type { DuplicateFileWarning } from '../api/client'
+import type { DuplicateFileWarning, ImportBatch } from '../api/client'
 import toast from 'react-hot-toast'
 import { useAuth } from '../contexts/AuthContext'
 import {
-  Upload, FileSpreadsheet, ChevronRight, Clock, Users, X,
+  Upload, FileSpreadsheet, ChevronRight, ChevronDown, Clock, Users, X,
   Phone, Mail, UserCheck, UserX, Search, Trash2, AlertTriangle, Building2, List, Ban, ShieldCheck, Download,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { StatusBadge } from '../components/StatusBadge'
+import {
+  compareQuincenaKeysDesc,
+  formatQuincenaLabel,
+  getQuincenaKey,
+  type QuincenaKey,
+} from '../lib/quincena'
 
 function batchLabel(batch: { displayName?: string | null; filename: string }) {
   return batch.displayName?.trim() || batch.filename
@@ -39,6 +45,80 @@ function batchMetricsText(batch: {
   parts.push(`${batch.contactCount} contacto${batch.contactCount !== 1 ? 's' : ''}`)
   parts.push(`${batch.companyCount} RUC${batch.companyCount !== 1 ? 's' : ''}`)
   return parts.join(' · ')
+}
+
+function assignmentUsage(batch: Pick<ImportBatch, 'companyCount' | 'unassignedCompanyCount' | 'blocked'>) {
+  const companyCount = batch.companyCount ?? 0
+  const unassigned = batch.unassignedCompanyCount ?? 0
+  const assigned = Math.max(0, companyCount - unassigned)
+  const pct = companyCount > 0 ? Math.round((100 * assigned) / companyCount) : 0
+  return { assigned, companyCount, pct, blocked: !!batch.blocked }
+}
+
+function usageTone(pct: number, blocked: boolean) {
+  if (blocked) {
+    return {
+      bar: 'bg-gray-300',
+      track: 'bg-gray-100',
+      text: 'text-gray-400',
+    }
+  }
+  if (pct < 10) {
+    return {
+      bar: 'bg-gray-400',
+      track: 'bg-gray-100',
+      text: 'text-gray-500',
+    }
+  }
+  if (pct >= 80) {
+    return {
+      bar: 'bg-emerald-500',
+      track: 'bg-emerald-50',
+      text: 'text-emerald-700',
+    }
+  }
+  if (pct >= 40) {
+    return {
+      bar: 'bg-blue-500',
+      track: 'bg-blue-50',
+      text: 'text-blue-700',
+    }
+  }
+  return {
+    bar: 'bg-amber-500',
+    track: 'bg-amber-50',
+    text: 'text-amber-700',
+  }
+}
+
+type QuincenaGroup = {
+  key: QuincenaKey
+  label: string
+  batches: ImportBatch[]
+  totalRucs: number
+}
+
+function groupBatchesByQuincena(batches: ImportBatch[]): QuincenaGroup[] {
+  const map = new Map<QuincenaKey, ImportBatch[]>()
+  for (const batch of batches) {
+    const key = getQuincenaKey(new Date(batch.createdAt))
+    const list = map.get(key)
+    if (list) list.push(batch)
+    else map.set(key, [batch])
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => compareQuincenaKeysDesc(a, b))
+    .map(([key, groupBatches]) => {
+      const sorted = [...groupBatches].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      )
+      return {
+        key,
+        label: formatQuincenaLabel(key),
+        batches: sorted,
+        totalRucs: sorted.reduce((sum, b) => sum + (b.companyCount ?? 0), 0),
+      }
+    })
 }
 
 function duplicateWarningStyle(severity: DuplicateFileWarning['severity']) {
@@ -92,6 +172,8 @@ export default function Imports() {
   const [duplicateDisplayName, setDuplicateDisplayName] = useState('')
   const [exportingBatchId, setExportingBatchId] = useState<string | null>(null)
   const [downloadingOriginalId, setDownloadingOriginalId] = useState<string | null>(null)
+  const [collapsedQuincenas, setCollapsedQuincenas] = useState<Set<QuincenaKey>>(() => new Set())
+  const [quincenaCollapseSeeded, setQuincenaCollapseSeeded] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const qc = useQueryClient()
   const { user } = useAuth()
@@ -101,6 +183,25 @@ export default function Imports() {
     queryKey: ['imports'],
     queryFn: getImports,
   })
+
+  const quincenaGroups = useMemo(() => groupBatchesByQuincena(batches), [batches])
+
+  useEffect(() => {
+    if (quincenaCollapseSeeded || quincenaGroups.length === 0) return
+    const openCount = Math.min(3, quincenaGroups.length)
+    const collapsed = new Set(quincenaGroups.slice(openCount).map((g) => g.key))
+    setCollapsedQuincenas(collapsed)
+    setQuincenaCollapseSeeded(true)
+  }, [quincenaGroups, quincenaCollapseSeeded])
+
+  const toggleQuincena = (key: QuincenaKey) => {
+    setCollapsedQuincenas((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   const { data: batchDetail, isLoading: loadingDetail } = useQuery({
     queryKey: ['import', selectedBatchId],
@@ -345,140 +446,182 @@ export default function Imports() {
             <p>No hay importaciones todavía</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {batches.map(
-              (batch: {
-                id: string
-                filename: string
-                displayName?: string | null
-                fileSizeBytes?: number | null
-                sourceRowCount?: number | null
-                totalRecords: number
-                companyCount: number
-                contactCount: number
-                blocked?: boolean
-                hasOriginalFile?: boolean
-                hasUpdates?: boolean
-                createdAt: string
-                importedBy: { name: string }
-              }) => (
-                <div key={batch.id}
-                  className="card p-5 flex items-center justify-between hover:shadow-md hover:border-blue-200 transition-all">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                      <FileSpreadsheet size={20} className="text-green-600" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium text-gray-900">{batchLabel(batch)}</p>
-                        {batch.blocked && (
-                          <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-red-100 text-red-700">
-                            Bloqueado
-                          </span>
-                        )}
-                      </div>
-                      {batch.displayName?.trim() && batch.displayName.trim() !== batch.filename && (
-                        <p className="text-xs text-gray-400 truncate max-w-md">{batch.filename}</p>
-                      )}
-                      <div className="flex items-center gap-3 text-xs text-gray-400 mt-0.5">
-                        {batch.sourceRowCount != null && (
-                          <span className="flex items-center gap-1">
-                            <List size={12} />
-                            {registroLabel(batch.sourceRowCount)}
-                          </span>
-                        )}
-                        <span className="flex items-center gap-1">
-                          <Users size={12} />
-                          {batch.contactCount} contacto{batch.contactCount !== 1 ? 's' : ''}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Building2 size={12} />
-                          {batch.companyCount} RUC{batch.companyCount !== 1 ? 's' : ''}
-                        </span>
-                        {batch.fileSizeBytes != null && (
-                          <span>{formatFileSize(batch.fileSizeBytes)}</span>
-                        )}
-                        <span className="flex items-center gap-1">
-                          <Clock size={12} />
-                          {format(new Date(batch.createdAt), "d MMM yyyy 'a las' HH:mm", { locale: es })}
-                        </span>
-                        <span>por {batch.importedBy.name}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {canDownloadOriginal && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleDownloadOriginal(batch.id)
-                        }}
-                        disabled={!batch.hasOriginalFile || downloadingOriginalId === batch.id}
-                        className="p-2 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                        title={
-                          batch.hasOriginalFile
-                            ? 'Descargar Excel original importado'
-                            : 'Archivo original no disponible'
-                        }
-                      >
-                        <FileSpreadsheet size={16} />
-                      </button>
+          <div className="space-y-6">
+            {quincenaGroups.map((group) => {
+              const collapsed = collapsedQuincenas.has(group.key)
+              const loteLabel = `${group.batches.length} lote${group.batches.length !== 1 ? 's' : ''}`
+              const rucLabel = `${group.totalRucs} RUC${group.totalRucs !== 1 ? 's' : ''}`
+              return (
+                <section key={group.key} className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleQuincena(group.key)}
+                    className="sticky top-0 z-10 w-full flex items-center gap-2 px-1 py-2 bg-gray-50/95 backdrop-blur-sm border-b border-gray-200 text-left hover:bg-gray-100/80 transition-colors rounded-t-lg"
+                  >
+                    {collapsed ? (
+                      <ChevronRight size={16} className="text-gray-400 shrink-0" />
+                    ) : (
+                      <ChevronDown size={16} className="text-gray-400 shrink-0" />
                     )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleExportBatch(batch.id)
-                      }}
-                      disabled={exportingBatchId === batch.id}
-                      className={`p-2 rounded-lg transition-colors disabled:opacity-40 ${
-                        batch.hasUpdates
-                          ? 'hover:bg-green-50 text-gray-400 hover:text-green-600'
-                          : 'text-gray-300 hover:bg-gray-50 hover:text-gray-400'
-                      }`}
-                      title={
-                        batch.hasUpdates
-                          ? 'Descargar Excel actualizado'
-                          : 'Descargar Excel actualizado (sin actividad de campaña registrada)'
-                      }
-                    >
-                      <Download size={16} />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setConfirmBlock({
-                          id: batch.id,
-                          label: batchLabel(batch),
-                          blocked: !batch.blocked,
-                        })
-                      }}
-                      className={`p-2 rounded-lg transition-colors ${
-                        batch.blocked
-                          ? 'hover:bg-green-50 text-red-500 hover:text-green-600'
-                          : 'hover:bg-amber-50 text-gray-400 hover:text-amber-600'
-                      }`}
-                      title={batch.blocked ? 'Desbloquear lote' : 'Bloquear lote'}
-                    >
-                      {batch.blocked ? <ShieldCheck size={16} /> : <Ban size={16} />}
-                    </button>
-                    <button
-                      onClick={() => { setSelectedBatchId(batch.id); setDrawerSearch('') }}
-                      className="p-2 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"
-                      title="Ver detalle"
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setConfirmDelete({ id: batch.id, label: batchLabel(batch) }) }}
-                      className="p-2 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
-                      title="Eliminar importación"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </div>
+                    <span className="font-semibold text-gray-800 text-sm">{group.label}</span>
+                    <span className="text-xs text-gray-400">·</span>
+                    <span className="text-xs text-gray-500">{loteLabel}</span>
+                    <span className="text-xs text-gray-400">·</span>
+                    <span className="text-xs text-gray-500">{rucLabel}</span>
+                  </button>
+
+                  {!collapsed && (
+                    <div className="space-y-2">
+                      {group.batches.map((batch) => {
+                        const usage = assignmentUsage(batch)
+                        const tone = usageTone(usage.pct, usage.blocked)
+                        return (
+                          <div
+                            key={batch.id}
+                            className={`card p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between hover:shadow-md hover:border-blue-200 transition-all ${
+                              batch.blocked ? 'opacity-80' : ''
+                            }`}
+                          >
+                            <div className="flex items-start gap-3 min-w-0 flex-1">
+                              <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                                batch.blocked ? 'bg-gray-100' : 'bg-green-100'
+                              }`}>
+                                <FileSpreadsheet
+                                  size={20}
+                                  className={batch.blocked ? 'text-gray-400' : 'text-green-600'}
+                                />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="font-medium text-gray-900 truncate">{batchLabel(batch)}</p>
+                                  {batch.blocked && (
+                                    <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-red-100 text-red-700">
+                                      Bloqueado
+                                    </span>
+                                  )}
+                                </div>
+                                {batch.displayName?.trim() && batch.displayName.trim() !== batch.filename && (
+                                  <p className="text-xs text-gray-400 truncate max-w-md">{batch.filename}</p>
+                                )}
+                                <div className="flex items-center gap-3 text-xs text-gray-400 mt-1 flex-wrap">
+                                  {batch.sourceRowCount != null && (
+                                    <span className="flex items-center gap-1">
+                                      <List size={12} />
+                                      {registroLabel(batch.sourceRowCount)}
+                                    </span>
+                                  )}
+                                  <span className="flex items-center gap-1">
+                                    <Users size={12} />
+                                    {batch.contactCount} contacto{batch.contactCount !== 1 ? 's' : ''}
+                                  </span>
+                                  <span className="flex items-center gap-1">
+                                    <Building2 size={12} />
+                                    {batch.companyCount} RUC{batch.companyCount !== 1 ? 's' : ''}
+                                  </span>
+                                  {batch.fileSizeBytes != null && (
+                                    <span>{formatFileSize(batch.fileSizeBytes)}</span>
+                                  )}
+                                  <span className="flex items-center gap-1">
+                                    <Clock size={12} />
+                                    {format(new Date(batch.createdAt), "d MMM yyyy 'a las' HH:mm", { locale: es })}
+                                  </span>
+                                  <span>por {batch.importedBy.name}</span>
+                                </div>
+                                <div className="mt-2.5 max-w-sm">
+                                  <p className={`text-xs font-medium mb-1 ${tone.text}`}>
+                                    {usage.pct}% usado · {usage.assigned} / {usage.companyCount} RUC
+                                    {usage.companyCount !== 1 ? 's' : ''}
+                                  </p>
+                                  <div className={`h-1.5 rounded-full overflow-hidden ${tone.track}`}>
+                                    <div
+                                      className={`h-full rounded-full transition-all ${tone.bar}`}
+                                      style={{ width: `${Math.min(100, usage.pct)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 sm:gap-2 shrink-0 self-end sm:self-center">
+                              {canDownloadOriginal && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleDownloadOriginal(batch.id)
+                                  }}
+                                  disabled={!batch.hasOriginalFile || downloadingOriginalId === batch.id}
+                                  className="p-2 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title={
+                                    batch.hasOriginalFile
+                                      ? 'Descargar Excel original importado'
+                                      : 'Archivo original no disponible'
+                                  }
+                                >
+                                  <FileSpreadsheet size={16} />
+                                </button>
+                              )}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleExportBatch(batch.id)
+                                }}
+                                disabled={exportingBatchId === batch.id}
+                                className={`p-2 rounded-lg transition-colors disabled:opacity-40 ${
+                                  batch.hasUpdates
+                                    ? 'hover:bg-green-50 text-gray-400 hover:text-green-600'
+                                    : 'text-gray-300 hover:bg-gray-50 hover:text-gray-400'
+                                }`}
+                                title={
+                                  batch.hasUpdates
+                                    ? 'Descargar Excel actualizado'
+                                    : 'Descargar Excel actualizado (sin actividad de campaña registrada)'
+                                }
+                              >
+                                <Download size={16} />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setConfirmBlock({
+                                    id: batch.id,
+                                    label: batchLabel(batch),
+                                    blocked: !batch.blocked,
+                                  })
+                                }}
+                                className={`p-2 rounded-lg transition-colors ${
+                                  batch.blocked
+                                    ? 'hover:bg-green-50 text-red-500 hover:text-green-600'
+                                    : 'hover:bg-amber-50 text-gray-400 hover:text-amber-600'
+                                }`}
+                                title={batch.blocked ? 'Desbloquear lote' : 'Bloquear lote'}
+                              >
+                                {batch.blocked ? <ShieldCheck size={16} /> : <Ban size={16} />}
+                              </button>
+                              <button
+                                onClick={() => { setSelectedBatchId(batch.id); setDrawerSearch('') }}
+                                className="p-2 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"
+                                title="Ver detalle"
+                              >
+                                <ChevronRight size={16} />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setConfirmDelete({ id: batch.id, label: batchLabel(batch) })
+                                }}
+                                className="p-2 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
+                                title="Eliminar importación"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </section>
               )
-            )}
+            })}
           </div>
         )}
       </div>
