@@ -82,12 +82,13 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
 
   const ticket = await prisma.supportTicket.create({
     data: {
+      tenantId: req.tenant!.id,
       subject: data.subject,
       body: data.body,
       priority: data.priority ?? 'NORMAL',
-      context: data.context
-        ? (data.context as Prisma.InputJsonValue)
-        : undefined,
+      ...(data.context
+        ? { context: data.context as Prisma.InputJsonValue }
+        : {}),
       createdById: req.user!.id,
       elevatedByAdminId,
     },
