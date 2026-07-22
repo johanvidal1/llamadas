@@ -1,7 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
-import { getSupportTickets, patchSupportTicket, type SupportTicket } from '../api/client'
+import {
+  api,
+  getSupportTickets,
+  patchSupportTicket,
+  type SupportTicket,
+  type SupportTicketAttachment,
+} from '../api/client'
 import CreateSupportTicketModal from '../components/CreateSupportTicketModal'
 
 const STATUS_LABELS: Record<string, string> = {
@@ -14,6 +20,62 @@ const STATUS_STYLES: Record<string, string> = {
   OPEN: 'bg-blue-100 text-blue-800',
   PENDING: 'bg-amber-100 text-amber-800',
   CLOSED: 'bg-gray-100 text-gray-600',
+}
+
+function readStructured(ctx: Record<string, unknown> | null | undefined) {
+  if (!ctx) return null
+  const whatHappened = typeof ctx.whatHappened === 'string' ? ctx.whatHappened : null
+  const whatExpected = typeof ctx.whatExpected === 'string' ? ctx.whatExpected : null
+  const stepsToReproduce =
+    typeof ctx.stepsToReproduce === 'string' ? ctx.stepsToReproduce : null
+  if (!whatHappened && !whatExpected && !stepsToReproduce) return null
+  return { whatHappened, whatExpected, stepsToReproduce }
+}
+
+function TicketAttachmentThumb({
+  ticketId,
+  attachment,
+}: {
+  ticketId: string
+  attachment: SupportTicketAttachment
+}) {
+  const [url, setUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    let objectUrl: string | null = null
+    void api
+      .get(`/support-tickets/${ticketId}/attachments/${attachment.id}`, {
+        responseType: 'blob',
+      })
+      .then((r) => {
+        objectUrl = URL.createObjectURL(r.data as Blob)
+        if (!cancelled) setUrl(objectUrl)
+      })
+      .catch(() => {
+        if (!cancelled) setUrl(null)
+      })
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [ticketId, attachment.id])
+
+  if (!url) {
+    return (
+      <div className="w-20 h-20 rounded-lg border border-gray-200 bg-gray-100 animate-pulse" />
+    )
+  }
+
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="block">
+      <img
+        src={url}
+        alt={attachment.originalName || 'Adjunto'}
+        className="w-20 h-20 rounded-lg object-cover border border-gray-200 hover:opacity-90"
+      />
+    </a>
+  )
 }
 
 export default function SupportTickets() {
@@ -96,6 +158,8 @@ export default function SupportTickets() {
       <div className="space-y-2">
         {tickets.map((t) => {
           const expanded = expandedId === t.id
+          const structured = readStructured(t.context)
+          const attachments = t.attachments ?? []
           return (
             <div
               key={t.id}
@@ -121,7 +185,50 @@ export default function SupportTickets() {
 
               {expanded && (
                 <div className="border-t border-gray-100 px-4 py-3 space-y-3 bg-gray-50/50">
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{t.body}</p>
+                  {structured ? (
+                    <div className="space-y-3 text-sm text-gray-700">
+                      {structured.whatHappened && (
+                        <div>
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                            ¿Qué ocurrió?
+                          </p>
+                          <p className="mt-1 whitespace-pre-wrap">{structured.whatHappened}</p>
+                        </div>
+                      )}
+                      {structured.whatExpected && (
+                        <div>
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                            ¿Qué esperabas?
+                          </p>
+                          <p className="mt-1 whitespace-pre-wrap">{structured.whatExpected}</p>
+                        </div>
+                      )}
+                      {structured.stepsToReproduce && (
+                        <div>
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                            Pasos a reproducir
+                          </p>
+                          <p className="mt-1 whitespace-pre-wrap">{structured.stepsToReproduce}</p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{t.body}</p>
+                  )}
+
+                  {attachments.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                        Imágenes
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {attachments.map((a) => (
+                          <TicketAttachmentThumb key={a.id} ticketId={t.id} attachment={a} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {t.elevatedByAdmin && (
                     <p className="text-xs text-gray-500">
                       Autorizado por: {t.elevatedByAdmin.name} ({t.elevatedByAdmin.email})
@@ -129,7 +236,7 @@ export default function SupportTickets() {
                   )}
                   {t.context && typeof t.context === 'object' && (
                     <details className="text-xs text-gray-500">
-                      <summary className="cursor-pointer">Contexto</summary>
+                      <summary className="cursor-pointer">Contexto técnico</summary>
                       <pre className="mt-1 overflow-auto bg-white border border-gray-200 rounded p-2 text-[11px]">
                         {JSON.stringify(t.context, null, 2)}
                       </pre>

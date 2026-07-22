@@ -57,8 +57,9 @@ model Tenant {
   userSessions       UserSession[]
   agentResetLogs     AgentResetLog[]
   assignmentReleases AssignmentRelease[]
-  mobileLines        MobileLine[]
-  supportTickets     SupportTicket[]
+  mobileLines                MobileLine[]
+  supportTickets             SupportTicket[]
+  supportTicketAttachments   SupportTicketAttachment[]
 }
 
 model User {
@@ -369,15 +370,33 @@ model SupportTicket {
   elevatedByAdminId String?
   elevatedByAdmin   User?    @relation("SupportTicketElevatedBy", fields: [elevatedByAdminId], references: [id])
   adminNote         String?
-  /// Client context: url, view, batchId, companyRuc, userAgent, etc.
+  /// Client context: url, view, structured fields, userAgent, etc.
   context           Json?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+  attachments       SupportTicketAttachment[]
 
   @@index([tenantId])
   @@index([tenantId, status])
   @@index([createdById])
   @@index([createdAt])
+}
+
+model SupportTicketAttachment {
+  id           String        @id @default(cuid())
+  tenantId     String
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+  ticketId     String
+  ticket       SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  /// Relative path under process cwd, e.g. uploads/support/{ticketId}/{id}.webp
+  path         String
+  mimeType     String
+  size         Int
+  originalName String?
+  createdAt    DateTime      @default(now())
+
+  @@index([tenantId])
+  @@index([ticketId])
 }
 
 // Platform Optick product news (Novedades del sistema) — global, not per-tenant.

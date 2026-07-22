@@ -70,9 +70,13 @@ export type ElevateAdminResult = {
   admin: { id: string; name: string; email: string }
 }
 
-export const elevateAdmin = (email: string, password: string) =>
+/** Prefer password-only; optional email keeps the legacy path. */
+export const elevateAdmin = (password: string, email?: string) =>
   api
-    .post<ElevateAdminResult>('/auth/elevate-admin', { email, password })
+    .post<ElevateAdminResult>('/auth/elevate-admin', {
+      password,
+      ...(email ? { email } : {}),
+    })
     .then((r) => r.data)
 
 // ─── Billing / cobranza (tenant ADMIN banner) ─────────────────────────────────
@@ -1066,6 +1070,14 @@ export const patchPlatformTenant = (id: string, data: PatchPlatformTenantPayload
 export type SupportTicketStatus = 'OPEN' | 'PENDING' | 'CLOSED'
 export type SupportTicketPriority = 'LOW' | 'NORMAL' | 'HIGH'
 
+export type SupportTicketAttachment = {
+  id: string
+  mimeType: string
+  size: number
+  originalName: string | null
+  createdAt: string
+}
+
 export type SupportTicket = {
   id: string
   subject: string
@@ -1080,6 +1092,7 @@ export type SupportTicket = {
   elevatedByAdminId: string | null
   createdBy: { id: string; name: string; email: string; role: string }
   elevatedByAdmin: { id: string; name: string; email: string } | null
+  attachments?: SupportTicketAttachment[]
 }
 
 export const getSupportTickets = (params?: { status?: string }) =>
@@ -1089,10 +1102,25 @@ export const getSupportTickets = (params?: { status?: string }) =>
 
 export const createSupportTicket = (data: {
   subject: string
-  body: string
+  whatHappened: string
+  whatExpected: string
+  stepsToReproduce: string
   priority?: SupportTicketPriority
   context?: Record<string, unknown>
-}) => api.post<SupportTicket>('/support-tickets', data).then((r) => r.data)
+  images?: File[]
+}) => {
+  const form = new FormData()
+  form.append('subject', data.subject)
+  form.append('whatHappened', data.whatHappened)
+  form.append('whatExpected', data.whatExpected)
+  form.append('stepsToReproduce', data.stepsToReproduce)
+  if (data.priority) form.append('priority', data.priority)
+  if (data.context) form.append('context', JSON.stringify(data.context))
+  for (const file of data.images ?? []) {
+    form.append('images', file)
+  }
+  return api.post<SupportTicket>('/support-tickets', form).then((r) => r.data)
+}
 
 export const patchSupportTicket = (
   id: string,

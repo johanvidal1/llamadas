@@ -3209,8 +3209,7 @@ export default function MyLeads() {
 
       <AdminElevationModal
         open={elevationModalOpen}
-        title="Autorizar cola depurada"
-        description="Para ver «No contesta — depurado» se requiere el email y contraseña de un administrador activo de este espacio."
+        passwordHint="Para ver «No contesta — depurado» se requiere la contraseña de un administrador activo de este espacio."
         onClose={() => {
           setElevationModalOpen(false)
           setPendingElevatedCola(null)

@@ -52,6 +52,7 @@ export const TENANT_SCOPED_TABLES = [
   'AssignmentRelease',
   'MobileLine',
   'SupportTicket',
+  'SupportTicketAttachment',
 ] as const
 
 export type TenantContext = {
