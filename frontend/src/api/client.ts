@@ -1,5 +1,9 @@
 import axios from 'axios'
 import { filenameFromContentDisposition, saveBlobWithPicker } from '../lib/downloadFile'
+import {
+  clearStoredElevation,
+  getStoredElevation,
+} from '../lib/adminElevation'
 
 // Ubuntu multi-tenant: dejar VITE_API_URL vacío → BASE_URL = '/api' (same-origin).
 // Si se fija (legado Render / API en otro origen), axios usa `${VITE_API_URL}/api`.
@@ -18,6 +22,10 @@ api.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
+  const elevation = getStoredElevation()
+  if (elevation?.token) {
+    config.headers['X-Admin-Elevation'] = elevation.token
+  }
   return config
 })
 
@@ -25,13 +33,24 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     const isLoginRequest = err.config?.url?.includes('/auth/login')
-    if (err.response?.status === 401 && !isLoginRequest) {
+    const isElevateRequest = err.config?.url?.includes('/auth/elevate-admin')
+    if (err.response?.status === 403) {
+      const code = err.response?.data?.code as string | undefined
+      if (code === 'ADMIN_ELEVATION_REQUIRED' || code === 'ADMIN_ELEVATION_EXPIRED') {
+        clearStoredElevation()
+      }
+    }
+    if (err.response?.status === 401 && !isLoginRequest && !isElevateRequest) {
       const code = err.response?.data?.code as string | undefined
       if (code === 'SESSION_REVOKED') {
         sessionStorage.setItem('sessionRevoked', '1')
       }
+      if (code === 'ADMIN_ELEVATION_INVALID') {
+        return Promise.reject(err)
+      }
       localStorage.removeItem('token')
       localStorage.removeItem('user')
+      clearStoredElevation()
       window.location.href = '/login'
     }
     return Promise.reject(err)
@@ -43,6 +62,18 @@ export const login = (email: string, password: string) =>
   api.post('/auth/login', { email, password }).then((r) => r.data)
 
 export const getMe = () => api.get('/auth/me').then((r) => r.data)
+
+export type ElevateAdminResult = {
+  elevationToken: string
+  expiresAt: number
+  expiresInMs: number
+  admin: { id: string; name: string; email: string }
+}
+
+export const elevateAdmin = (email: string, password: string) =>
+  api
+    .post<ElevateAdminResult>('/auth/elevate-admin', { email, password })
+    .then((r) => r.data)
 
 // ─── Billing / cobranza (tenant ADMIN banner) ─────────────────────────────────
 export type BillingPhase = 'OK' | 'DUE_SOON' | 'DUE' | 'GRACE' | 'OVERDUE'
@@ -1030,3 +1061,44 @@ export const patchPlatformTenantStatus = (id: string, status: 'ACTIVE' | 'SUSPEN
 
 export const patchPlatformTenant = (id: string, data: PatchPlatformTenantPayload) =>
   api.patch<PlatformTenant>(`/platform/tenants/${id}`, data).then((r) => r.data)
+
+// ─── Support tickets ──────────────────────────────────────────────────────────
+export type SupportTicketStatus = 'OPEN' | 'PENDING' | 'CLOSED'
+export type SupportTicketPriority = 'LOW' | 'NORMAL' | 'HIGH'
+
+export type SupportTicket = {
+  id: string
+  subject: string
+  body: string
+  status: SupportTicketStatus | string
+  priority: string | null
+  adminNote: string | null
+  context: Record<string, unknown> | null
+  createdAt: string
+  updatedAt: string
+  createdById: string
+  elevatedByAdminId: string | null
+  createdBy: { id: string; name: string; email: string; role: string }
+  elevatedByAdmin: { id: string; name: string; email: string } | null
+}
+
+export const getSupportTickets = (params?: { status?: string }) =>
+  api
+    .get<{ tickets: SupportTicket[] }>('/support-tickets', { params })
+    .then((r) => r.data)
+
+export const createSupportTicket = (data: {
+  subject: string
+  body: string
+  priority?: SupportTicketPriority
+  context?: Record<string, unknown>
+}) => api.post<SupportTicket>('/support-tickets', data).then((r) => r.data)
+
+export const patchSupportTicket = (
+  id: string,
+  data: {
+    status?: SupportTicketStatus
+    adminNote?: string | null
+    priority?: SupportTicketPriority | null
+  }
+) => api.patch<SupportTicket>(`/support-tickets/${id}`, data).then((r) => r.data)

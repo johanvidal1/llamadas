@@ -1,5 +1,6 @@
 import { Router, Response } from 'express'
 import { z } from 'zod'
+import { resolveAdminElevation } from '../lib/adminElevation'
 import { prisma } from '../lib/prisma'
 import { buildCalledAtRange } from '../lib/callActivity'
 import { requireAuth, AuthRequest } from '../middleware/auth'
@@ -340,9 +341,12 @@ async function buildClientsFilterContext(
   const filterParam = query.filter
   const effectiveDisposition =
     disposition || (filterParam && filterParam !== 'PENDING' ? filterParam : undefined)
-  // Admin-only cola: agents must not query No contesta — depurado.
+  // Agents may query No contesta — depurado only with valid admin elevation.
   if (isAgent && effectiveDisposition === 'NO_CONTESTA_DEPURADO') {
-    return { deniedDepurado: true as const, take, page }
+    const elevation = await resolveAdminElevation(req)
+    if (!elevation) {
+      return { deniedDepurado: true as const, take, page }
+    }
   }
   const calledAtRange = buildCalledAtRange(registeredFrom, registeredTo)
   const agentScopedPending = status === 'PENDING' || filterParam === 'PENDING'
@@ -737,7 +741,9 @@ router.get('/pipeline-summary', requireAuth, async (req: AuthRequest, res: Respo
 
   if ('deniedDepurado' in built) {
     res.status(403).json({
-      error: 'Filtro No contesta — depurado solo disponible para administradores',
+      error:
+        'Se requiere autorización de administrador para ver No contesta — depurado',
+      code: 'ADMIN_ELEVATION_REQUIRED',
     })
     return
   }
@@ -780,7 +786,9 @@ router.get('/day-summary', requireAuth, async (req: AuthRequest, res: Response) 
 
   if ('deniedDepurado' in built) {
     res.status(403).json({
-      error: 'Filtro No contesta — depurado solo disponible para administradores',
+      error:
+        'Se requiere autorización de administrador para ver No contesta — depurado',
+      code: 'ADMIN_ELEVATION_REQUIRED',
     })
     return
   }
@@ -855,7 +863,9 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const built = await buildClientsFilterContext(req, query)
   if ('deniedDepurado' in built) {
     res.status(403).json({
-      error: 'Filtro No contesta — depurado solo disponible para administradores',
+      error:
+        'Se requiere autorización de administrador para ver No contesta — depurado',
+      code: 'ADMIN_ELEVATION_REQUIRED',
     })
     return
   }

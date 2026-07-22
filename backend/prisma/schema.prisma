@@ -58,6 +58,7 @@ model Tenant {
   agentResetLogs     AgentResetLog[]
   assignmentReleases AssignmentRelease[]
   mobileLines        MobileLine[]
+  supportTickets     SupportTicket[]
 }
 
 model User {
@@ -86,6 +87,8 @@ model User {
   assignmentReleases     AssignmentRelease[] @relation("AssignmentReleaseBy")
   dailyAgentMetrics      DailyAgentMetrics[]
   agentResetsPerformed   AgentResetLog[]     @relation("AgentResetBy")
+  supportTicketsCreated  SupportTicket[]     @relation("SupportTicketCreatedBy")
+  supportTicketsElevated SupportTicket[]     @relation("SupportTicketElevatedBy")
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -350,6 +353,31 @@ model Callback {
 
   @@index([tenantId])
   @@index([agentId, scheduledAt])
+}
+
+/// In-app support tickets (Odoo-lite MVP). Status: OPEN | PENDING | CLOSED.
+model SupportTicket {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id])
+  subject           String
+  body              String
+  status            String   @default("OPEN")
+  priority          String?
+  createdById       String
+  createdBy         User     @relation("SupportTicketCreatedBy", fields: [createdById], references: [id])
+  elevatedByAdminId String?
+  elevatedByAdmin   User?    @relation("SupportTicketElevatedBy", fields: [elevatedByAdminId], references: [id])
+  adminNote         String?
+  /// Client context: url, view, batchId, companyRuc, userAgent, etc.
+  context           Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([createdById])
+  @@index([createdAt])
 }
 
 // Platform Optick product news (Novedades del sistema) — global, not per-tenant.

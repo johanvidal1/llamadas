@@ -3,12 +3,21 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { z } from 'zod'
 import { computeBillingStatus } from '../lib/billing'
+import {
+  ELEVATION_TTL_MS,
+  signAdminElevationToken,
+} from '../lib/adminElevation'
 import { prisma } from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
 
 const loginSchema = z.object({
+  email: z.string().email('Email inválido'),
+  password: z.string().min(1, 'Contraseña requerida'),
+})
+
+const elevateSchema = z.object({
   email: z.string().email('Email inválido'),
   password: z.string().min(1, 'Contraseña requerida'),
 })
@@ -63,6 +72,59 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
       isSuperAdmin: user.isSuperAdmin,
       isSystemOwner: user.isSystemOwner,
     },
+  })
+})
+
+/**
+ * POST /api/auth/elevate-admin
+ * Authenticated user provides ACTIVE ADMIN credentials of the same tenant.
+ * Returns a short-lived elevation token for depurado cola / agent support tickets.
+ */
+router.post('/elevate-admin', requireAuth, async (req: AuthRequest, res: Response) => {
+  const { email, password } = elevateSchema.parse(req.body)
+
+  if (!req.tenant || !req.user) {
+    res.status(400).json({ error: 'Tenant no resuelto' })
+    return
+  }
+
+  const admin = await prisma.user.findFirst({
+    where: {
+      email: email.toLowerCase(),
+      tenantId: req.tenant.id,
+      role: 'ADMIN',
+      active: true,
+    },
+  })
+  if (!admin) {
+    res.status(401).json({
+      error: 'Credenciales de administrador incorrectas',
+      code: 'ADMIN_ELEVATION_INVALID',
+    })
+    return
+  }
+
+  const valid = await bcrypt.compare(password, admin.password)
+  if (!valid) {
+    res.status(401).json({
+      error: 'Credenciales de administrador incorrectas',
+      code: 'ADMIN_ELEVATION_INVALID',
+    })
+    return
+  }
+
+  const expiresAt = Date.now() + ELEVATION_TTL_MS
+  const elevationToken = signAdminElevationToken({
+    agentId: req.user.id,
+    adminId: admin.id,
+    tenantId: req.tenant.id,
+  })
+
+  res.json({
+    elevationToken,
+    expiresAt,
+    expiresInMs: ELEVATION_TTL_MS,
+    admin: { id: admin.id, name: admin.name, email: admin.email },
   })
 })
 

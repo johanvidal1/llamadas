@@ -21,6 +21,7 @@ import billingRouter from './routes/billing'
 import contactRouter from './routes/contact'
 import presenceRouter from './routes/presence'
 import releaseNotesRouter from './routes/releaseNotes'
+import supportTicketsRouter from './routes/supportTickets'
 import { errorHandler } from './middleware/error'
 import { resolveTenant } from './middleware/tenant'
 
@@ -117,6 +118,7 @@ app.use('/api/billing', billingRouter)
 app.use('/api/contact', contactRouter)
 app.use('/api/presence', presenceRouter)
 app.use('/api/release-notes', releaseNotesRouter)
+app.use('/api/support-tickets', supportTicketsRouter)
 
 // Global error handler (must be last)
 app.use(errorHandler)

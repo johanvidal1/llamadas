@@ -15,6 +15,7 @@ import BatchDetail from './pages/BatchDetail'
 import CallHistory from './pages/CallHistory'
 import Contacto from './pages/Contacto'
 import PlatformTenants from './pages/PlatformTenants'
+import SupportTickets from './pages/SupportTickets'
 
 function ProtectedRoute({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
   const { user, isAdmin, isLoading } = useAuth()
@@ -96,6 +97,14 @@ export default function App() {
             element={
               <ProtectedRoute adminOnly>
                 <Agents />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="soporte"
+            element={
+              <ProtectedRoute adminOnly>
+                <SupportTickets />
               </ProtectedRoute>
             }
           />

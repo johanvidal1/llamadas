@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { login as apiLogin } from '../api/client'
+import { clearStoredElevation } from '../lib/adminElevation'
 
 interface User {
   id: string
@@ -48,6 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = () => {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
+    clearStoredElevation()
     setUser(null)
   }
 

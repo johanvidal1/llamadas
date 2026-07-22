@@ -33,6 +33,8 @@ import CallModal from '../components/CallModal'
 import CompleteCallbackModal, { type CompleteConfirm } from '../components/CompleteCallbackModal'
 import DispositionSelector from '../components/DispositionSelector'
 import { ColaFilterDropdown } from '../components/ColaFilterDropdown'
+import AdminElevationModal from '../components/AdminElevationModal'
+import { hasValidElevation } from '../lib/adminElevation'
 import {
   BatchPendingPicker,
   BatchPendingThermometer,
@@ -720,9 +722,7 @@ export default function MyLeads() {
   const initialContactId = searchParams.get('contactId') ?? ''
   const hasListDeepLink = initialFilter !== '' && VALID_LIST_FILTERS.has(initialFilter)
   const initialListFilters = parseListFiltersFromUrl(initialFilter)
-  // Agents cannot open No contesta — depurado (URL or deep link).
-  const safeInitialCola: ListCola =
-    !isAdmin && initialListFilters.cola === 'NO_CONTESTA_DEPURADO' ? 'ALL' : initialListFilters.cola
+  const safeInitialCola: ListCola = initialListFilters.cola
   const initialFromDashboard = searchParams.get('from') === 'dashboard'
 
   // ── View toggle (persisted)
@@ -742,18 +742,10 @@ export default function MyLeads() {
   // ── List view state
   const [listSearch, setListSearch] = useState('')
   const [listCola, setListCola] = useState<ListCola>(safeInitialCola)
-  const [listDrilldown, setListDrilldown] = useState<string | null>(
-    safeInitialCola === 'ALL' && initialListFilters.cola === 'NO_CONTESTA_DEPURADO'
-      ? null
-      : initialListFilters.drilldown
-  )
-  const listColaOptions = useMemo(
-    () =>
-      isAdmin
-        ? [...LIST_COLA_OPTIONS]
-        : LIST_COLA_OPTIONS.filter((o) => o.value !== 'NO_CONTESTA_DEPURADO'),
-    [isAdmin]
-  )
+  const [listDrilldown, setListDrilldown] = useState<string | null>(initialListFilters.drilldown)
+  const [elevationModalOpen, setElevationModalOpen] = useState(false)
+  const [pendingElevatedCola, setPendingElevatedCola] = useState<ListCola | null>(null)
+  const listColaOptions = useMemo(() => [...LIST_COLA_OPTIONS], [])
 
   // ── Grid view state
   const [gridSearch, setGridSearch] = useState('')
@@ -892,7 +884,11 @@ export default function MyLeads() {
 
   // List view: server-side disposition / pending filters.
   // Same registered-first + createdAt queue as Detalle / Tarjetas.
-  const { data: listData, isLoading: loadingListView } = useQuery({
+  const {
+    data: listData,
+    isLoading: loadingListView,
+    error: listViewError,
+  } = useQuery({
     queryKey: ['clients', 'my-leads', 'list', selectedBatchId, listCola, listDrilldown],
     queryFn: () =>
       getClients({
@@ -902,6 +898,11 @@ export default function MyLeads() {
         ...getListApiParams(listCola, listDrilldown),
       }),
     enabled: viewMode === 'list',
+    retry: (failureCount, err) => {
+      const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code
+      if (code === 'ADMIN_ELEVATION_REQUIRED') return false
+      return failureCount < 2
+    },
   })
 
   // Paginated + filtered list (for grid view) — same queue order as Lista/Detalle
@@ -1643,11 +1644,9 @@ export default function MyLeads() {
 
   const applyListFilters = useCallback(
     (cola: ListCola, drilldown: string | null) => {
-      const nextCola =
-        !isAdmin && cola === 'NO_CONTESTA_DEPURADO' ? ('ALL' as ListCola) : cola
-      setListCola(nextCola)
+      setListCola(cola)
       setListDrilldown(drilldown)
-      const urlFilter = listFiltersToUrl(nextCola, drilldown)
+      const urlFilter = listFiltersToUrl(cola, drilldown)
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev)
@@ -1658,17 +1657,47 @@ export default function MyLeads() {
         { replace: true }
       )
     },
-    [isAdmin, setSearchParams]
+    [setSearchParams]
   )
 
-  // Strip admin-only depurado cola from URL/state for agents (deep links / stale params).
+  const requestListCola = useCallback(
+    (cola: ListCola) => {
+      if (
+        !isAdmin &&
+        cola === 'NO_CONTESTA_DEPURADO' &&
+        !hasValidElevation()
+      ) {
+        setPendingElevatedCola(cola)
+        setElevationModalOpen(true)
+        return
+      }
+      applyListFilters(cola, null)
+    },
+    [isAdmin, applyListFilters]
+  )
+
+  // If elevation expired mid-session while viewing depurado, re-prompt.
+  useEffect(() => {
+    const code = (listViewError as { response?: { data?: { code?: string } } })?.response?.data
+      ?.code
+    if (code !== 'ADMIN_ELEVATION_REQUIRED') return
+    if (isAdmin) return
+    if (listCola !== 'NO_CONTESTA_DEPURADO') return
+    setPendingElevatedCola('NO_CONTESTA_DEPURADO')
+    setElevationModalOpen(true)
+    applyListFilters('ALL', null)
+    toast.error('La autorización de administrador expiró. Vuelve a autorizar.')
+  }, [listViewError, isAdmin, listCola, applyListFilters])
+
+  // Deep-link to depurado as agent without elevation → prompt.
   useEffect(() => {
     if (isAdmin) return
-    const filterParam = searchParams.get('filter')
-    if (filterParam === 'NO_CONTESTA_DEPURADO' || listCola === 'NO_CONTESTA_DEPURADO') {
-      applyListFilters('ALL', null)
-    }
-  }, [isAdmin, searchParams, listCola, applyListFilters])
+    if (listCola !== 'NO_CONTESTA_DEPURADO') return
+    if (hasValidElevation()) return
+    setPendingElevatedCola('NO_CONTESTA_DEPURADO')
+    setElevationModalOpen(true)
+    applyListFilters('ALL', null)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- mount only
 
   const goToClientById = (
     clientId: string,
@@ -2249,7 +2278,14 @@ export default function MyLeads() {
       {/* ══════════════════════ SHARED TOP BAR ══════════════════════ */}
       <div className="bg-blue-800 text-white px-3 lg:px-6 py-3 flex flex-wrap lg:flex-nowrap items-center justify-between shrink-0 gap-2 lg:gap-4">
         <div className="flex items-center gap-2 lg:gap-4 min-w-0 text-sm flex-wrap">
-          <span className="font-semibold truncate shrink-0">Migración de Operador</span>
+          <div className="min-w-0 shrink-0 max-w-[11rem] sm:max-w-[14rem]">
+            <span className="font-semibold truncate block">Migración de Operador</span>
+            {user?.name ? (
+              <span className="text-blue-200 text-xs truncate block leading-tight mt-0.5">
+                {user.name}
+              </span>
+            ) : null}
+          </div>
 
           {/* Batch selector */}
           {batches.length > 0 && (
@@ -3171,6 +3207,23 @@ export default function MyLeads() {
         isPending={completeMutation.isPending}
       />
 
+      <AdminElevationModal
+        open={elevationModalOpen}
+        title="Autorizar cola depurada"
+        description="Para ver «No contesta — depurado» se requiere el email y contraseña de un administrador activo de este espacio."
+        onClose={() => {
+          setElevationModalOpen(false)
+          setPendingElevatedCola(null)
+        }}
+        onSuccess={() => {
+          const cola = pendingElevatedCola ?? 'NO_CONTESTA_DEPURADO'
+          setElevationModalOpen(false)
+          setPendingElevatedCola(null)
+          applyListFilters(cola, null)
+          toast.success('Autorización concedida')
+        }}
+      />
+
       {/* ══════════════════════ LIST VIEW ══════════════════════════ */}
       {viewMode === 'list' && (() => {
         // Map id → index in Detalle nav `clients` (same createdAt order as list API).
@@ -3215,7 +3268,7 @@ export default function MyLeads() {
                     isAdmin={isAdmin}
                     options={listColaOptions}
                     getDescription={getColaOptionTitle}
-                    onChange={(cola) => applyListFilters(cola, null)}
+                    onChange={(cola) => requestListCola(cola)}
                   />
                 </div>
                 {batches.length > 0 && (
