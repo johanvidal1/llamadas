@@ -20,6 +20,7 @@ import {
   Building2,
 } from 'lucide-react'
 import OptickBrand from './OptickBrand'
+import BillingBanner from './BillingBanner'
 
 const adminNav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', end: true },
@@ -252,6 +253,8 @@ export default function Layout() {
           </button>
           <span className="text-white text-sm font-semibold truncate">Llamadas CRM</span>
         </header>
+
+        {isAdmin && <BillingBanner />}
 
         <main ref={mainRef} className="flex-1 overflow-auto min-h-0 pb-[env(safe-area-inset-bottom)]">
           <Outlet />

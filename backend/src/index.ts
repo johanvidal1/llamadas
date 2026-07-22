@@ -17,6 +17,7 @@ import callbacksRouter from './routes/callbacks'
 import dashboardRouter from './routes/dashboard'
 import adminRouter from './routes/admin'
 import platformRouter from './routes/platform'
+import billingRouter from './routes/billing'
 import contactRouter from './routes/contact'
 import presenceRouter from './routes/presence'
 import releaseNotesRouter from './routes/releaseNotes'
@@ -112,6 +113,7 @@ app.use('/api/callbacks', callbacksRouter)
 app.use('/api/dashboard', dashboardRouter)
 app.use('/api/admin', adminRouter)
 app.use('/api/platform', platformRouter)
+app.use('/api/billing', billingRouter)
 app.use('/api/contact', contactRouter)
 app.use('/api/presence', presenceRouter)
 app.use('/api/release-notes', releaseNotesRouter)

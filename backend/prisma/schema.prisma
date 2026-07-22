@@ -30,6 +30,18 @@ model Tenant {
   name      String
   slug      String   @unique
   status    String   @default("ACTIVE")
+  /// Cobranza Optick: aviso a ADMIN del tenant (no AGENT). Optick seed = false.
+  billingEnabled Boolean @default(false)
+  /// Día de vencimiento mensual (1–28). Default 1.
+  billingDay     Int     @default(1)
+  /// Días de gracia tras el vencimiento. Grace = billingDay+3 … billingDay+graceDays.
+  graceDays      Int     @default(7)
+  /// Fin del período cubierto (date-only; comparar YMD en APP_TIMEZONE).
+  paidThrough    DateTime?
+  /// WhatsApp / email / texto para CTA del banner (cobranza Optick).
+  billingContact String?
+  /// Notas internas del dueño (no se muestran en el banner).
+  billingNotes   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -2,6 +2,7 @@ import { Router, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { z } from 'zod'
+import { computeBillingStatus } from '../lib/billing'
 import { prisma } from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
@@ -83,7 +84,27 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     res.status(404).json({ error: 'Usuario no encontrado' })
     return
   }
-  res.json(user)
+
+  let billing = null
+  if (req.tenant && user.role === 'ADMIN') {
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: req.tenant.id },
+      select: {
+        id: true,
+        slug: true,
+        billingEnabled: true,
+        billingDay: true,
+        graceDays: true,
+        paidThrough: true,
+        billingContact: true,
+      },
+    })
+    if (tenant) {
+      billing = computeBillingStatus(tenant)
+    }
+  }
+
+  res.json({ ...user, billing })
 })
 
 export default router

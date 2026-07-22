@@ -44,6 +44,27 @@ export const login = (email: string, password: string) =>
 
 export const getMe = () => api.get('/auth/me').then((r) => r.data)
 
+// ─── Billing / cobranza (tenant ADMIN banner) ─────────────────────────────────
+export type BillingPhase = 'OK' | 'DUE_SOON' | 'DUE' | 'GRACE' | 'OVERDUE'
+
+export type BillingStatus = {
+  showBanner: boolean
+  phase: BillingPhase
+  severity: 'none' | 'amber' | 'orange' | 'red'
+  message: string
+  detail: string | null
+  billingContact: string | null
+  billingDay: number
+  graceDays: number
+  billingEnabled: boolean
+  paidThrough: string | null
+  today: string
+  timezone: string
+}
+
+export const getBillingStatus = () =>
+  api.get<BillingStatus>('/billing/status').then((r) => r.data)
+
 // ─── Contact (public, no auth required) ───────────────────
 export type ContactFormPayload = {
   nombre: string
@@ -963,6 +984,13 @@ export type PlatformTenant = {
   slug: string
   status: string
   createdAt: string
+  billingEnabled: boolean
+  billingDay: number
+  graceDays: number
+  paidThrough: string | null
+  billingContact: string | null
+  billingNotes: string | null
+  billingPhase?: BillingPhase
 }
 
 export type CreatePlatformTenantPayload = {
@@ -979,6 +1007,16 @@ export type CreatePlatformTenantResult = {
   url: string
 }
 
+export type PatchPlatformTenantPayload = {
+  status?: 'ACTIVE' | 'SUSPENDED'
+  billingEnabled?: boolean
+  billingDay?: number
+  graceDays?: number
+  paidThrough?: string | null
+  billingContact?: string | null
+  billingNotes?: string | null
+}
+
 export const listPlatformTenants = () =>
   api.get<PlatformTenant[]>('/platform/tenants').then((r) => r.data)
 
@@ -989,3 +1027,6 @@ export const patchPlatformTenantStatus = (id: string, status: 'ACTIVE' | 'SUSPEN
   api
     .patch<PlatformTenant>(`/platform/tenants/${id}`, { status })
     .then((r) => r.data)
+
+export const patchPlatformTenant = (id: string, data: PatchPlatformTenantPayload) =>
+  api.patch<PlatformTenant>(`/platform/tenants/${id}`, data).then((r) => r.data)
