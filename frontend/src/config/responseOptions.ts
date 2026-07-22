@@ -151,7 +151,7 @@ export function isHiddenFromAgentQueue(lastDisposition?: string | null): boolean
   return agentQueueHiddenSet.has(lastDisposition)
 }
 
-export const MAX_NO_ANSWER_ATTEMPTS = 3
+export const MAX_NO_ANSWER_ATTEMPTS = 2
 
 export function isNoContestaDisposition(disposition?: string | null): boolean {
   return disposition === 'NO_CONTESTA' || disposition === 'NO_ANSWER'

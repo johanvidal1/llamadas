@@ -113,7 +113,7 @@ export const COMPANY_PIPELINE_KEYS = [
 
 export type CompanyPipelineKey = (typeof COMPANY_PIPELINE_KEYS)[number]
 
-export const MAX_NO_ANSWER_ATTEMPTS = 3
+export const MAX_NO_ANSWER_ATTEMPTS = 2
 
 export function isNoContestaDisposition(disposition: string | null | undefined): boolean {
   return disposition === 'NO_CONTESTA' || disposition === 'NO_ANSWER'

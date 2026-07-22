@@ -545,7 +545,7 @@ function listCompanyIsRegistered(c: ClientSummary): boolean {
 }
 
 const COLA_ALL_AGENT_TITLE =
-  'Cola activa: pendientes, no contesta (<3 intentos), volver a llamar, embudo y venta cerrada. Excluye no contesta depurado, no interesado, cliente actual, RUC suspendido y sin llegada al decisor.'
+  'Cola activa: pendientes, no contesta (<2 intentos), volver a llamar, embudo y venta cerrada. Excluye no contesta depurado, no interesado, cliente actual, RUC suspendido y sin llegada al decisor.'
 const COLA_ALL_ADMIN_TITLE = 'Todas las empresas asignadas.'
 
 const COLA_OPTION_TITLES: Record<
@@ -559,12 +559,12 @@ const COLA_OPTION_TITLES: Record<
   PENDING: { agent: 'Sin respuesta registrada aún.' },
   VOLVER_A_LLAMAR: { agent: 'Empresas con seguimiento o callback pendiente.' },
   NO_CONTESTA: {
-    agent: 'Empresas sin contacto con menos de 3 intentos.',
-    admin: 'Empresas sin contacto con menos de 3 intentos del agente.',
+    agent: 'Empresas sin contacto con menos de 2 intentos.',
+    admin: 'Empresas sin contacto con menos de 2 intentos del agente.',
   },
   NO_CONTESTA_DEPURADO: {
-    agent: '3 o más intentos sin contacto; ya no aparece en la cola activa.',
-    admin: '3 o más intentos sin contacto del agente.',
+    agent: '2 o más intentos sin contacto; ya no aparece en la cola activa.',
+    admin: '2 o más intentos sin contacto del agente.',
   },
   OTROS: {
     agent:
@@ -720,6 +720,9 @@ export default function MyLeads() {
   const initialContactId = searchParams.get('contactId') ?? ''
   const hasListDeepLink = initialFilter !== '' && VALID_LIST_FILTERS.has(initialFilter)
   const initialListFilters = parseListFiltersFromUrl(initialFilter)
+  // Agents cannot open No contesta — depurado (URL or deep link).
+  const safeInitialCola: ListCola =
+    !isAdmin && initialListFilters.cola === 'NO_CONTESTA_DEPURADO' ? 'ALL' : initialListFilters.cola
   const initialFromDashboard = searchParams.get('from') === 'dashboard'
 
   // ── View toggle (persisted)
@@ -738,8 +741,19 @@ export default function MyLeads() {
 
   // ── List view state
   const [listSearch, setListSearch] = useState('')
-  const [listCola, setListCola] = useState<ListCola>(initialListFilters.cola)
-  const [listDrilldown, setListDrilldown] = useState<string | null>(initialListFilters.drilldown)
+  const [listCola, setListCola] = useState<ListCola>(safeInitialCola)
+  const [listDrilldown, setListDrilldown] = useState<string | null>(
+    safeInitialCola === 'ALL' && initialListFilters.cola === 'NO_CONTESTA_DEPURADO'
+      ? null
+      : initialListFilters.drilldown
+  )
+  const listColaOptions = useMemo(
+    () =>
+      isAdmin
+        ? [...LIST_COLA_OPTIONS]
+        : LIST_COLA_OPTIONS.filter((o) => o.value !== 'NO_CONTESTA_DEPURADO'),
+    [isAdmin]
+  )
 
   // ── Grid view state
   const [gridSearch, setGridSearch] = useState('')
@@ -1629,9 +1643,11 @@ export default function MyLeads() {
 
   const applyListFilters = useCallback(
     (cola: ListCola, drilldown: string | null) => {
-      setListCola(cola)
+      const nextCola =
+        !isAdmin && cola === 'NO_CONTESTA_DEPURADO' ? ('ALL' as ListCola) : cola
+      setListCola(nextCola)
       setListDrilldown(drilldown)
-      const urlFilter = listFiltersToUrl(cola, drilldown)
+      const urlFilter = listFiltersToUrl(nextCola, drilldown)
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev)
@@ -1642,8 +1658,17 @@ export default function MyLeads() {
         { replace: true }
       )
     },
-    [setSearchParams]
+    [isAdmin, setSearchParams]
   )
+
+  // Strip admin-only depurado cola from URL/state for agents (deep links / stale params).
+  useEffect(() => {
+    if (isAdmin) return
+    const filterParam = searchParams.get('filter')
+    if (filterParam === 'NO_CONTESTA_DEPURADO' || listCola === 'NO_CONTESTA_DEPURADO') {
+      applyListFilters('ALL', null)
+    }
+  }, [isAdmin, searchParams, listCola, applyListFilters])
 
   const goToClientById = (
     clientId: string,
@@ -1918,7 +1943,7 @@ export default function MyLeads() {
         }
         if (result.movedToDepuradoNoContesta) {
           showSaveNotice(
-            'Empresa movida a No contesta — depurado (3 o más intentos sin contacto).',
+            'Empresa movida a No contesta — depurado (2 o más intentos sin contacto).',
             'info'
           )
         } else {
@@ -3188,7 +3213,7 @@ export default function MyLeads() {
                     id="list-queue-filter"
                     value={listCola}
                     isAdmin={isAdmin}
-                    options={LIST_COLA_OPTIONS}
+                    options={listColaOptions}
                     getDescription={getColaOptionTitle}
                     onChange={(cola) => applyListFilters(cola, null)}
                   />

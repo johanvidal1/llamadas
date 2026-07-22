@@ -316,7 +316,11 @@ type ClientsFilterContext = {
 async function buildClientsFilterContext(
   req: AuthRequest,
   query: Record<string, string>
-): Promise<ClientsFilterContext | { empty: true; take: number; page: number; registrationCount?: number }> {
+): Promise<
+  | ClientsFilterContext
+  | { empty: true; take: number; page: number; registrationCount?: number }
+  | { deniedDepurado: true; take: number; page: number }
+> {
   const {
     status,
     disposition,
@@ -336,6 +340,10 @@ async function buildClientsFilterContext(
   const filterParam = query.filter
   const effectiveDisposition =
     disposition || (filterParam && filterParam !== 'PENDING' ? filterParam : undefined)
+  // Admin-only cola: agents must not query No contesta — depurado.
+  if (isAgent && effectiveDisposition === 'NO_CONTESTA_DEPURADO') {
+    return { deniedDepurado: true as const, take, page }
+  }
   const calledAtRange = buildCalledAtRange(registeredFrom, registeredTo)
   const agentScopedPending = status === 'PENDING' || filterParam === 'PENDING'
   const agentScopedOtros = effectiveDisposition === 'OTROS'
@@ -727,6 +735,13 @@ router.get('/pipeline-summary', requireAuth, async (req: AuthRequest, res: Respo
   const take = Math.min(Number(query.limit) || 50, MAX_CLIENTS_LIMIT)
   const page = Math.max(Number(query.page) || 1, 1)
 
+  if ('deniedDepurado' in built) {
+    res.status(403).json({
+      error: 'Filtro No contesta — depurado solo disponible para administradores',
+    })
+    return
+  }
+
   if ('empty' in built) {
     const payload = {
       pipelineCounts: emptyFunnelPipelineCounts(),
@@ -762,6 +777,13 @@ router.get('/pipeline-summary', requireAuth, async (req: AuthRequest, res: Respo
 router.get('/day-summary', requireAuth, async (req: AuthRequest, res: Response) => {
   const query = req.query as Record<string, string>
   const built = await buildClientsFilterContext(req, query)
+
+  if ('deniedDepurado' in built) {
+    res.status(403).json({
+      error: 'Filtro No contesta — depurado solo disponible para administradores',
+    })
+    return
+  }
 
   if ('empty' in built) {
     res.json({ days: [], total: 0 })
@@ -831,6 +853,12 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 
   const built = await buildClientsFilterContext(req, query)
+  if ('deniedDepurado' in built) {
+    res.status(403).json({
+      error: 'Filtro No contesta — depurado solo disponible para administradores',
+    })
+    return
+  }
   if ('empty' in built) {
     res.json({
       clients: [],
