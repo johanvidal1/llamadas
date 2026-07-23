@@ -68,78 +68,131 @@ function buildBatchStats(
 
 /**
  * Queue urgency from pending ratio (pending/total).
- * Bar width = % done; bar/metric hue = remaining work load.
- * - Heavy  (>0.5): blue-500
- * - Mid    (0.2–0.5): blue-400
- * - Almost (<0.2, pending>0): teal-500
- * - Done   (pending===0): emerald-500
+ * Bar width = % done; bar/metric hue = remaining work (continuous HSL).
+ * - ~100% pending: dark green → mid: pale green → few left: mid→intense red
+ * - pending === 0: emerald “done”
  */
 export type QueueTone = {
+  /** CSS color for bar fill */
   fill: string
+  /** CSS color for track */
   track: string
+  /** CSS color for metric text */
   metric: string
+}
+
+type Hsl = { h: number; s: number; l: number }
+
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t
+}
+
+function clamp01(t: number) {
+  return Math.max(0, Math.min(1, t))
+}
+
+function hsl({ h, s, l }: Hsl, alpha?: number) {
+  if (alpha != null) return `hsl(${h} ${s}% ${l}% / ${alpha})`
+  return `hsl(${h} ${s}% ${l}%)`
+}
+
+/**
+ * Continuous green→red narrative by how much of the queue remains.
+ * progress 0 = all pending (dark green); 1 = almost done (intense red).
+ */
+export function pendingQueueHsl(pending: number, total: number): Hsl {
+  if (pending === 0) {
+    return { h: 160, s: 84, l: 39 }
+  }
+  const ratio = total > 0 ? pending / total : 1
+  const progress = clamp01(1 - ratio)
+
+  if (progress <= 0.5) {
+    // Dark green → light/pale green
+    const u = progress / 0.5
+    return {
+      h: lerp(148, 132, u),
+      s: lerp(72, 38, u),
+      l: lerp(26, 56, u),
+    }
+  }
+
+  // Pale green → mid-red → intense red (continuous hue via yellow-orange)
+  const u = (progress - 0.5) / 0.5
+  return {
+    h: lerp(132, 2, u),
+    s: lerp(38, 84, u),
+    l: lerp(56, 44, u),
+  }
+}
+
+/** Few left in a meaningful lote — soft pulse / one-shot shake. */
+export function isLowPendingAlert(pending: number, total: number): boolean {
+  return pending > 0 && pending <= 5 && total >= 20
 }
 
 /** Light surfaces (filter dropdown / list). */
 export function queueTone(pending: number, total: number): QueueTone {
+  const c = pendingQueueHsl(pending, total)
   if (pending === 0) {
     return {
-      fill: 'bg-emerald-500',
-      track: 'bg-emerald-100',
-      metric: 'text-emerald-700',
-    }
-  }
-  const ratio = total > 0 ? pending / total : 1
-  if (ratio < 0.2) {
-    return {
-      fill: 'bg-teal-500',
-      track: 'bg-teal-100',
-      metric: 'text-teal-700',
-    }
-  }
-  if (ratio <= 0.5) {
-    return {
-      fill: 'bg-blue-400',
-      track: 'bg-blue-100',
-      metric: 'text-blue-600',
+      fill: hsl({ h: 160, s: 84, l: 39 }),
+      track: hsl({ h: 152, s: 76, l: 94 }),
+      metric: hsl({ h: 160, s: 84, l: 30 }),
     }
   }
   return {
-    fill: 'bg-blue-500',
-    track: 'bg-blue-100',
-    metric: 'text-blue-700',
+    fill: hsl(c),
+    track: hsl({ h: c.h, s: Math.min(c.s, 36), l: 94 }),
+    metric: hsl({
+      h: c.h,
+      s: Math.min(90, c.s + 8),
+      l: Math.max(22, Math.min(40, c.l - 16)),
+    }),
   }
 }
 
-/** Dark blue detail header — same urgency ladder, readable on bg-blue-800. */
+/** Dark blue detail header — same narrative, brighter for bg-blue-800. */
 export function queueToneHeader(pending: number, total: number): QueueTone {
+  const c = pendingQueueHsl(pending, total)
   if (pending === 0) {
     return {
-      fill: 'bg-emerald-400',
-      track: 'bg-white/20',
-      metric: 'text-emerald-200',
-    }
-  }
-  const ratio = total > 0 ? pending / total : 1
-  if (ratio < 0.2) {
-    return {
-      fill: 'bg-teal-300',
-      track: 'bg-white/20',
-      metric: 'text-teal-100',
-    }
-  }
-  if (ratio <= 0.5) {
-    return {
-      fill: 'bg-sky-300',
-      track: 'bg-white/20',
-      metric: 'text-sky-100',
+      fill: hsl({ h: 160, s: 70, l: 55 }),
+      track: 'rgb(255 255 255 / 0.2)',
+      metric: hsl({ h: 152, s: 70, l: 78 }),
     }
   }
   return {
-    fill: 'bg-blue-300',
-    track: 'bg-white/20',
-    metric: 'text-blue-100',
+    fill: hsl({
+      h: c.h,
+      s: Math.min(88, c.s + 6),
+      l: Math.min(68, Math.max(48, c.l + 14)),
+    }),
+    track: 'rgb(255 255 255 / 0.2)',
+    metric: hsl({
+      h: c.h,
+      s: Math.min(72, c.s + 4),
+      l: Math.min(90, Math.max(74, c.l + 30)),
+    }),
   }
+}
+
+/** One-shot shake only when crossing into ≤5 (not on first mount / remount). */
+function useLowPendingShake(pending: number, total: number) {
+  const alert = isLowPendingAlert(pending, total)
+  const prevAlert = useRef<boolean | null>(null)
+  const [shake, setShake] = useState(false)
+
+  useEffect(() => {
+    const crossedIn = alert && prevAlert.current === false
+    prevAlert.current = alert
+    if (!crossedIn) return
+    setShake(true)
+    const t = window.setTimeout(() => setShake(false), 480)
+    return () => window.clearTimeout(t)
+  }, [alert])
+
+  return { alert, shake }
 }
 
 export type BatchPendingCounts = {
@@ -172,9 +225,13 @@ function ProgressBar({
 }) {
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
   const tone = queueTone(pending, total)
+  const { alert, shake } = useLowPendingShake(pending, total)
   return (
     <div
-      className={`h-1 w-full rounded-full overflow-hidden ${tone.track}`}
+      className={`h-1 w-full rounded-full overflow-hidden transition-colors duration-300 ${
+        alert ? 'motion-safe:animate-queue-soft-pulse' : ''
+      } ${shake ? 'motion-safe:animate-queue-nudge-shake' : ''}`}
+      style={{ backgroundColor: tone.track }}
       role="progressbar"
       aria-valuenow={pct}
       aria-valuemin={0}
@@ -182,8 +239,8 @@ function ProgressBar({
       aria-label={`${pct}% completado`}
     >
       <div
-        className={`h-full rounded-full transition-[width] duration-200 ${tone.fill}`}
-        style={{ width: `${pct}%` }}
+        className="h-full rounded-full transition-[width,background-color] duration-300 ease-out"
+        style={{ width: `${pct}%`, backgroundColor: tone.fill }}
       />
     </div>
   )
@@ -206,12 +263,15 @@ export function BatchPendingThermometer({
 }: BatchPendingCounts & { className?: string }) {
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
   const tone = queueToneHeader(pending, total)
+  const { alert, shake } = useLowPendingShake(pending, total)
   const label =
     total <= 0 ? 'Sin empresas' : pending === 0 ? 'Lote completo' : `${pending} pend.`
+  const alertMotion = alert ? 'motion-safe:animate-queue-soft-pulse' : ''
+  const shakeMotion = shake ? 'motion-safe:animate-queue-nudge-shake' : ''
 
   return (
     <div
-      className={`flex items-center gap-2 min-w-[7.5rem] max-w-[11rem] ${className}`}
+      className={`flex items-center gap-2 min-w-[7.5rem] max-w-[11rem] ${shakeMotion} ${className}`}
       title={
         total > 0
           ? `${done} de ${total} registradas (${pct}%) · ${pending} pendientes`
@@ -220,7 +280,8 @@ export function BatchPendingThermometer({
     >
       <div className="flex-1 min-w-[3.5rem]">
         <div
-          className={`h-1.5 w-full rounded-full overflow-hidden ${tone.track}`}
+          className={`h-1.5 w-full rounded-full overflow-hidden transition-colors duration-300 ${alertMotion}`}
+          style={{ backgroundColor: tone.track }}
           role="progressbar"
           aria-valuenow={pct}
           aria-valuemin={0}
@@ -228,12 +289,15 @@ export function BatchPendingThermometer({
           aria-label={`${pct}% del lote completado`}
         >
           <div
-            className={`h-full rounded-full transition-[width] duration-200 ${tone.fill}`}
-            style={{ width: `${pct}%` }}
+            className="h-full rounded-full transition-[width,background-color] duration-300 ease-out"
+            style={{ width: `${pct}%`, backgroundColor: tone.fill }}
           />
         </div>
       </div>
-      <span className={`text-xs font-semibold tabular-nums whitespace-nowrap shrink-0 ${tone.metric}`}>
+      <span
+        className={`text-xs font-semibold tabular-nums whitespace-nowrap shrink-0 transition-colors duration-300 ${alertMotion}`}
+        style={{ color: tone.metric }}
+      >
         {label}
       </span>
     </div>
@@ -408,12 +472,17 @@ export function BatchPendingPicker({
         <span className="truncate min-w-0 flex-1">{selectedLabel}</span>
         {!isHeader && selectedStats.total > 0 && (
           <span
-            className={`h-1 w-8 shrink-0 rounded-full overflow-hidden ${selectedTone.track}`}
+            className={`h-1 w-8 shrink-0 rounded-full overflow-hidden transition-colors duration-300 ${
+              isLowPendingAlert(selectedStats.pending, selectedStats.total)
+                ? 'motion-safe:animate-queue-soft-pulse'
+                : ''
+            }`}
+            style={{ backgroundColor: selectedTone.track }}
             aria-hidden
           >
             <span
-              className={`block h-full rounded-full ${selectedTone.fill}`}
-              style={{ width: `${selectedDonePct}%` }}
+              className="block h-full rounded-full transition-[width,background-color] duration-300 ease-out"
+              style={{ width: `${selectedDonePct}%`, backgroundColor: selectedTone.fill }}
             />
           </span>
         )}
@@ -459,7 +528,14 @@ export function BatchPendingPicker({
             >
               <div className="flex items-center justify-between gap-2 mb-1.5">
                 <span className="text-sm font-medium text-gray-900 truncate">Todos los lotes</span>
-                <span className={`text-xs tabular-nums shrink-0 font-medium ${allTone.metric}`}>
+                <span
+                  className={`text-xs tabular-nums shrink-0 font-medium transition-colors duration-300 ${
+                    isLowPendingAlert(allPending, allTotal)
+                      ? 'motion-safe:animate-queue-soft-pulse'
+                      : ''
+                  }`}
+                  style={{ color: allTone.metric }}
+                >
                   {metricLabel(allPending, allTotal)}
                 </span>
               </div>
@@ -496,7 +572,14 @@ export function BatchPendingPicker({
                       {s.isNewest ? '★ ' : ''}
                       {s.label}
                     </span>
-                    <span className={`text-xs tabular-nums shrink-0 font-medium ${tone.metric}`}>
+                    <span
+                      className={`text-xs tabular-nums shrink-0 font-medium transition-colors duration-300 ${
+                        isLowPendingAlert(s.pending, s.total)
+                          ? 'motion-safe:animate-queue-soft-pulse'
+                          : ''
+                      }`}
+                      style={{ color: tone.metric }}
+                    >
                       {metricLabel(s.pending, s.total)}
                     </span>
                   </div>
