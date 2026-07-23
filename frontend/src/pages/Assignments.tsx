@@ -21,12 +21,19 @@ import {
   type AppUser,
 } from '../api/client'
 import toast from 'react-hot-toast'
-import { UserCheck, Users, AlertCircle, X, ChevronDown, ChevronRight, History, PackageOpen, Search, Loader2 } from 'lucide-react'
+import { UserCheck, Users, AlertCircle, X, ChevronDown, ChevronRight, History, PackageOpen, Search, Loader2, LayoutGrid, AlignJustify } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { DispositionBadge } from '../components/StatusBadge'
 import ClientRecordModal from '../components/ClientRecordModal'
 import { getResponseOption } from '../config/responseOptions'
+import { useAuth } from '../contexts/AuthContext'
+
+type AgentsViewMode = 'cards' | 'list'
+
+function agentsViewStorageKey(userId: string) {
+  return `assignments.agentsView.${userId}`
+}
 
 function batchLabel(batch: { displayName?: string | null; filename: string }) {
   return batch.displayName?.trim() || batch.filename
@@ -380,7 +387,10 @@ function AgentCompaniesSummary({
     return (
       <div className={compact || barOnly ? '' : 'mb-4'}>
         {barOnly ? (
-          <p className="text-xs text-gray-400">Sin empresas en esta asignación</p>
+          <div
+            className={`${barHeight} bg-gray-100 rounded-full overflow-hidden flex w-full`}
+            title={COMPANIES_BAR_TOOLTIP}
+          />
         ) : compact ? (
           <p className="text-xs text-gray-400">Sin empresas asignadas</p>
         ) : (
@@ -429,6 +439,7 @@ function AgentCompaniesSummary({
 }
 
 export default function Assignments() {
+  const { user } = useAuth()
   const [agentId, setAgentId] = useState('')
   const [batchId, setBatchId] = useState('')
   const [count, setCount] = useState<number | ''>('')
@@ -438,6 +449,31 @@ export default function Assignments() {
   const qc = useQueryClient()
 
   type AssignVars = Parameters<typeof createAssignment>[0] & { expectedCount?: number }
+
+  const [agentsViewMode, setAgentsViewMode] = useState<AgentsViewMode>(() => {
+    try {
+      const storedUser = user ?? (JSON.parse(localStorage.getItem('user') || 'null') as { id?: string } | null)
+      if (!storedUser?.id) return 'cards'
+      const saved = localStorage.getItem(agentsViewStorageKey(storedUser.id))
+      return saved === 'list' || saved === 'cards' ? saved : 'cards'
+    } catch {
+      return 'cards'
+    }
+  })
+  const [agentSearch, setAgentSearch] = useState('')
+
+  useEffect(() => {
+    if (!user?.id) return
+    const saved = localStorage.getItem(agentsViewStorageKey(user.id))
+    setAgentsViewMode(saved === 'list' || saved === 'cards' ? saved : 'cards')
+  }, [user?.id])
+
+  const setAgentsView = (mode: AgentsViewMode) => {
+    setAgentsViewMode(mode)
+    if (user?.id) {
+      localStorage.setItem(agentsViewStorageKey(user.id), mode)
+    }
+  }
 
   // Drawer state — agent detail
   const [drawerAgentId, setDrawerAgentId] = useState<string | null>(null)
@@ -710,6 +746,24 @@ export default function Assignments() {
   const agentsForDropdown = [...agents].sort(
     (a, b) => (a.pendingCompanies ?? 0) - (b.pendingCompanies ?? 0)
   )
+
+  const filteredAgents = useMemo(() => {
+    const needle = normalizeSearch(agentSearch)
+    if (!needle) return agents
+    return agents.filter(
+      (a: AppUser) =>
+        normalizeSearch(a.name).includes(needle) ||
+        normalizeSearch(a.email).includes(needle)
+    )
+  }, [agents, agentSearch])
+
+  const openAgentDrawer = (id: string) => {
+    setDrawerAgentId(id)
+    setExpandedRuns({})
+    setDrawerSearch('')
+    setShowArchivedRuns(false)
+    setShowConcludedRuns(false)
+  }
 
   // Count of unassigned registros (contacts) in selected batch
   const { data: unassignedData } = useQuery({
@@ -1042,19 +1096,129 @@ export default function Assignments() {
 
       {/* Agents summary */}
       <div>
-        <h2 className="font-semibold text-gray-900 mb-4">Estado de asignaciones por agente</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {agents.map((a: AppUser) => (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+          <h2 className="font-semibold text-gray-900">Estado de asignaciones por agente</h2>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <input
+                type="search"
+                value={agentSearch}
+                onChange={(e) => setAgentSearch(e.target.value)}
+                placeholder="Buscar agente…"
+                className="input pl-8 py-1.5 text-sm w-full sm:w-56"
+                aria-label="Buscar agente"
+              />
+            </div>
+            <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5 shrink-0 self-start">
+              <button
+                type="button"
+                onClick={() => setAgentsView('cards')}
+                title="Vista tarjetas"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
+                  agentsViewMode === 'cards'
+                    ? 'bg-white text-blue-700 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                <LayoutGrid size={13} /> Tarjetas
+              </button>
+              <button
+                type="button"
+                onClick={() => setAgentsView('list')}
+                title="Vista lista"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
+                  agentsViewMode === 'list'
+                    ? 'bg-white text-blue-700 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                <AlignJustify size={13} /> Lista
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {agents.length === 0 ? (
+          <div className="card p-8 text-center text-gray-400">
+            <Users size={32} className="mx-auto mb-2" />
+            <p>No hay agentes activos. Crea uno en la sección "Agentes".</p>
+          </div>
+        ) : filteredAgents.length === 0 ? (
+          <div className="card p-8 text-center text-gray-400">
+            <Search size={32} className="mx-auto mb-2" />
+            <p>Ningún agente coincide con «{agentSearch.trim()}».</p>
+          </div>
+        ) : agentsViewMode === 'list' ? (
+          <div className="card overflow-x-auto">
+            <table className="w-full text-sm text-left min-w-[720px]">
+              <thead>
+                <tr className="border-b border-gray-100 text-xs text-gray-500 uppercase tracking-wide">
+                  <th className="px-3 py-2.5 font-medium">Agente</th>
+                  <th className="px-3 py-2.5 font-medium">Email</th>
+                  <th className="px-3 py-2.5 font-medium text-right">Asignadas</th>
+                  <th className="px-3 py-2.5 font-medium text-right">Registradas</th>
+                  <th className="px-3 py-2.5 font-medium text-right">Pendientes</th>
+                  <th className="px-3 py-2.5 font-medium w-28">Progreso</th>
+                  <th className="px-3 py-2.5 font-medium text-right">Asignaciones</th>
+                  <th className="px-3 py-2.5 font-medium text-right">Llamadas</th>
+                  <th className="px-3 py-2.5 font-medium whitespace-nowrap">Última asignación</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAgents.map((a: AppUser) => {
+                  const assigned = a.assignedCompanies ?? 0
+                  const pending = a.pendingCompanies ?? 0
+                  const registered = Math.max(0, assigned - pending)
+                  return (
+                    <tr
+                      key={a.id}
+                      className="border-b border-gray-50 last:border-0 hover:bg-blue-50/60 cursor-pointer transition-colors"
+                      onClick={() => openAgentDrawer(a.id)}
+                    >
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold text-xs shrink-0">
+                            {a.name.charAt(0)}
+                          </div>
+                          <span className="font-medium text-gray-900 truncate">{a.name}</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 text-gray-500 truncate max-w-[12rem]">{a.email}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-gray-900">{assigned}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-emerald-700">{registered}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-amber-700">{pending}</td>
+                      <td className="px-3 py-2.5">
+                        <AgentCompaniesSummary
+                          assignedCompanies={assigned}
+                          pendingCompanies={pending}
+                          barOnly
+                        />
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-gray-900">
+                        {a.assignmentRunCount ?? 0}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-gray-900">
+                        {a._count.callLogs}
+                      </td>
+                      <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">
+                        {a.lastAssignmentAt
+                          ? format(new Date(a.lastAssignmentAt), 'd MMM yyyy, HH:mm', { locale: es })
+                          : '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredAgents.map((a: AppUser) => (
               <div
                 key={a.id}
                 className="card p-5 cursor-pointer hover:shadow-md hover:border-blue-200 transition-all"
-                onClick={() => {
-                  setDrawerAgentId(a.id)
-                  setExpandedRuns({})
-                  setDrawerSearch('')
-                  setShowArchivedRuns(false)
-                  setShowConcludedRuns(false)
-                }}
+                onClick={() => openAgentDrawer(a.id)}
               >
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-9 h-9 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold text-sm">
@@ -1089,13 +1253,8 @@ export default function Assignments() {
                 </div>
               </div>
             ))}
-          {agents.length === 0 && (
-            <div className="col-span-3 card p-8 text-center text-gray-400">
-              <Users size={32} className="mx-auto mb-2" />
-              <p>No hay agentes activos. Crea uno en la sección "Agentes".</p>
-            </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* ── Agent detail drawer ── */}
