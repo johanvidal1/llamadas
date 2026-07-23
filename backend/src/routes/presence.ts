@@ -10,8 +10,10 @@ import { OPTICK_TENANT_ID } from '../lib/tenant'
 
 const router = Router()
 
-const ONLINE_THRESHOLD_MS = 5 * 60 * 1000
-const RECENT_THRESHOLD_MS = 20 * 60 * 1000
+/** «En línea» = last heartbeat within this window (client: 30s visible / 120s hidden). */
+const ONLINE_THRESHOLD_MS = 60_000
+/** Yellow «reciente» briefly, then offline. */
+const RECENT_THRESHOLD_MS = 5 * 60 * 1000
 const STALE_SESSION_MS = 24 * 60 * 60 * 1000
 
 function getClientIp(req: AuthRequest): string | null {
