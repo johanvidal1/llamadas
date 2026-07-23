@@ -31,7 +31,9 @@ function buildTicketContext(): Record<string, unknown> {
 type PreviewFile = { file: File; url: string }
 
 export default function CreateSupportTicketModal({ open, onClose, onCreated }: Props) {
-  const { isAdmin } = useAuth()
+  const { user } = useAuth()
+  const canCreateWithoutElevation =
+    user?.isSystemOwner === true || user?.isSuperAdmin === true
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [subject, setSubject] = useState('')
   const [whatHappened, setWhatHappened] = useState('')
@@ -113,7 +115,7 @@ export default function CreateSupportTicketModal({ open, onClose, onCreated }: P
         context: buildTicketContext(),
         images: images.map((i) => i.file),
       })
-      setSuccessMsg('Ticket enviado. El administrador lo verá en Soporte.')
+      setSuccessMsg('Ticket enviado. El equipo Optick lo revisará.')
       setSubject('')
       setWhatHappened('')
       setWhatExpected('')
@@ -145,7 +147,7 @@ export default function CreateSupportTicketModal({ open, onClose, onCreated }: P
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!isAdmin && !hasValidElevation()) {
+    if (!canCreateWithoutElevation && !hasValidElevation()) {
       setNeedsElevation(true)
       return
     }
@@ -167,7 +169,7 @@ export default function CreateSupportTicketModal({ open, onClose, onCreated }: P
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Ticket de soporte</h2>
               <p className="text-sm text-gray-500 mt-1">
-                {isAdmin
+                {canCreateWithoutElevation
                   ? 'Describe el problema. Se incluirá el contexto de la pantalla actual.'
                   : 'Requiere autorización de un administrador. Se incluirá el contexto de la pantalla.'}
               </p>

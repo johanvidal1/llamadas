@@ -116,8 +116,10 @@ export default function SupportTickets() {
     <div className="p-4 lg:p-6 max-w-5xl mx-auto space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">Soporte</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Tickets del espacio (tenant)</p>
+          <h1 className="text-xl font-semibold text-gray-900">Tickets de plataforma</h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Inbox Optick — tickets del tenant actual
+          </p>
         </div>
         <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
           Nuevo ticket

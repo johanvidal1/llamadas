@@ -7,6 +7,7 @@ import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { resolveAdminElevation } from '../lib/adminElevation'
 import { prisma } from '../lib/prisma'
+import { isSuperAdminOrOwner } from '../lib/userPermissions'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
@@ -166,20 +167,24 @@ async function requireTicketAccess(
     select: { id: true, createdById: true },
   })
   if (!ticket) return null
-  const isAdmin = req.user!.role === 'ADMIN'
-  if (!isAdmin && ticket.createdById !== req.user!.id) return null
+  const canManage = isSuperAdminOrOwner(req.user!)
+  if (!canManage && ticket.createdById !== req.user!.id) return null
   return ticket
 }
 
-// GET /api/support-tickets — ADMIN: all tenant; AGENT: own only
+// GET /api/support-tickets — system owner / super-admin: current tenant list
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
-  const isAdmin = req.user!.role === 'ADMIN'
+  if (!isSuperAdminOrOwner(req.user!)) {
+    res.status(403).json({
+      error: 'Acceso restringido a dueño del sistema o super-admin',
+      code: 'SUPPORT_INBOX_FORBIDDEN',
+    })
+    return
+  }
+
   const status = typeof req.query.status === 'string' ? req.query.status : undefined
 
   const where: Record<string, unknown> = {}
-  if (!isAdmin) {
-    where.createdById = req.user!.id
-  }
   if (status && TICKET_STATUSES.includes(status as (typeof TICKET_STATUSES)[number])) {
     where.status = status
   }
@@ -194,7 +199,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   res.json({ tickets })
 })
 
-// POST /api/support-tickets — ADMIN free; AGENT needs valid elevation
+// POST /api/support-tickets — owner/super-admin free; AGENT needs valid elevation
 // Accepts JSON or multipart (fields + images[]).
 router.post(
   '/',
@@ -230,10 +235,13 @@ router.post(
 
     const data = createSchema.parse(bodyRaw)
     const { body, context } = resolveBodyAndContext(data)
-    const isAdmin = req.user!.role === 'ADMIN'
+    const canCreateFree = isSuperAdminOrOwner(req.user!)
+    const isAgent = req.user!.role === 'AGENT'
 
     let elevatedByAdminId: string | null = null
-    if (!isAdmin) {
+    if (canCreateFree) {
+      // Platform owner / super-admin: no elevation
+    } else if (isAgent) {
       const elevation = await resolveAdminElevation(req)
       if (!elevation) {
         res.status(403).json({
@@ -243,6 +251,12 @@ router.post(
         return
       }
       elevatedByAdminId = elevation.adminId
+    } else {
+      res.status(403).json({
+        error: 'Solo agentes (con autorización) o el dueño/super-admin pueden crear tickets',
+        code: 'SUPPORT_CREATE_FORBIDDEN',
+      })
+      return
     }
 
     for (const file of files) {
@@ -346,10 +360,13 @@ router.get(
   }
 )
 
-// PATCH /api/support-tickets/:id — ADMIN only (status / note)
+// PATCH /api/support-tickets/:id — system owner / super-admin only (status / note)
 router.patch('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
-  if (req.user!.role !== 'ADMIN') {
-    res.status(403).json({ error: 'Acceso restringido a administradores' })
+  if (!isSuperAdminOrOwner(req.user!)) {
+    res.status(403).json({
+      error: 'Acceso restringido a dueño del sistema o super-admin',
+      code: 'SUPPORT_INBOX_FORBIDDEN',
+    })
     return
   }
 

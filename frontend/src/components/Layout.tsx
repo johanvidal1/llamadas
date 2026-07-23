@@ -32,15 +32,22 @@ const adminNav = [
   { to: '/agents', icon: PhoneCall, label: 'Agentes' },
   { to: '/callbacks', icon: CalendarClock, label: 'Agenda Callbacks' },
   { to: '/reports', icon: BarChart2, label: 'Reportes' },
-  { to: '/soporte', icon: LifeBuoy, label: 'Soporte', end: false },
 ]
 
-const platformNavItem = {
-  to: '/platform/tenants',
-  icon: Building2,
-  label: 'Tenants',
-  end: false as const,
-}
+const platformNavItems = [
+  {
+    to: '/soporte',
+    icon: LifeBuoy,
+    label: 'Soporte',
+    end: false as const,
+  },
+  {
+    to: '/platform/tenants',
+    icon: Building2,
+    label: 'Tenants',
+    end: false as const,
+  },
+]
 
 /** Hosts that resolve to Optick (crm). */
 function isOptickHost(): boolean {
@@ -77,9 +84,11 @@ export default function Layout() {
     (user?.isSystemOwner === true || user?.isSuperAdmin === true)
   const navItems = isAdmin
     ? isPlatformUser
-      ? [...adminNav, platformNavItem]
+      ? [...adminNav, ...platformNavItems]
       : adminNav
     : agentNav
+  /** Agents always; platform owner/super-admin optional (inbox has create). Regular client admins: no. */
+  const showSupportFab = !isAdmin || isPlatformUser
   const sidebarBg = isAdmin ? 'bg-green-900' : 'bg-blue-900'
 
   const postHeartbeat = useCallback(() => {
@@ -193,23 +202,25 @@ export default function Layout() {
         </nav>
 
         <div className={`p-4 border-t lg:p-2 lg:space-y-2 ${isAdmin ? 'border-green-800' : 'border-blue-800'}`}>
-          <button
-            type="button"
-            title="Soporte"
-            aria-label="Soporte"
-            onClick={() => {
-              closeMenu()
-              setSupportOpen(true)
-            }}
-            className={`flex items-center gap-2 w-full px-3 py-2 mb-1 rounded-lg text-xs transition-colors lg:justify-center lg:w-10 lg:h-10 lg:mx-auto lg:px-0 lg:py-0 lg:mb-0 ${
-              isAdmin
-                ? 'text-green-300/80 hover:text-white hover:bg-green-800/50'
-                : 'text-blue-300/80 hover:text-white hover:bg-blue-800/50'
-            }`}
-          >
-            <LifeBuoy size={14} className="lg:w-[18px] lg:h-[18px]" />
-            <span className="lg:hidden">Soporte</span>
-          </button>
+          {showSupportFab && (
+            <button
+              type="button"
+              title="Soporte"
+              aria-label="Soporte"
+              onClick={() => {
+                closeMenu()
+                setSupportOpen(true)
+              }}
+              className={`flex items-center gap-2 w-full px-3 py-2 mb-1 rounded-lg text-xs transition-colors lg:justify-center lg:w-10 lg:h-10 lg:mx-auto lg:px-0 lg:py-0 lg:mb-0 ${
+                isAdmin
+                  ? 'text-green-300/80 hover:text-white hover:bg-green-800/50'
+                  : 'text-blue-300/80 hover:text-white hover:bg-blue-800/50'
+              }`}
+            >
+              <LifeBuoy size={14} className="lg:w-[18px] lg:h-[18px]" />
+              <span className="lg:hidden">Soporte</span>
+            </button>
+          )}
           <Link
             to="/contacto"
             state={{ from: 'app' }}

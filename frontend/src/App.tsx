@@ -25,11 +25,26 @@ function ProtectedRoute({ children, adminOnly = false }: { children: React.React
   return <>{children}</>
 }
 
+/** Hosts that resolve to Optick (crm) — same list as Layout / PlatformTenants. */
+function isOptickHost(): boolean {
+  const host = window.location.hostname.toLowerCase()
+  return (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === 'pruebacrm.optickcloud.com' ||
+    host === 'crm.optickcloud.com' ||
+    host === 'mt-staging.optickcloud.com'
+  )
+}
+
+/** System owner / super-admin on Optick hosts only (Tenants, Soporte inbox). */
 function PlatformRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth()
   if (isLoading) return <div className="flex items-center justify-center h-screen text-gray-500">Cargando...</div>
   if (!user) return <Navigate to="/login" replace />
-  const isPlatform = user.isSystemOwner === true || user.isSuperAdmin === true
+  const isPlatform =
+    isOptickHost() &&
+    (user.isSystemOwner === true || user.isSuperAdmin === true)
   if (!isPlatform) return <Navigate to="/" replace />
   return <>{children}</>
 }
@@ -103,9 +118,9 @@ export default function App() {
           <Route
             path="soporte"
             element={
-              <ProtectedRoute adminOnly>
+              <PlatformRoute>
                 <SupportTickets />
-              </ProtectedRoute>
+              </PlatformRoute>
             }
           />
           <Route
