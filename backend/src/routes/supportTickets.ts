@@ -7,6 +7,7 @@ import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { resolveAdminElevation } from '../lib/adminElevation'
 import { prisma } from '../lib/prisma'
+import { runWithTenant } from '../lib/tenantContext'
 import { isSuperAdminOrOwner } from '../lib/userPermissions'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
@@ -201,6 +202,9 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
 
 // POST /api/support-tickets — ADMIN free; AGENT needs valid elevation
 // Accepts JSON or multipart (fields + images[]).
+// Multer parses the upload on stream callbacks that leave the resolveTenant ALS
+// store (Node async_hooks). Re-enter runWithTenant for the full handler so Prisma
+// scoped queries keep tenant context.
 router.post(
   '/',
   requireAuth,
@@ -224,99 +228,107 @@ router.post(
     })
   },
   async (req: AuthRequest, res: Response) => {
-    const files = (req.files as Express.Multer.File[] | undefined) ?? []
-    const bodyRaw = { ...req.body } as Record<string, unknown>
-    if (typeof bodyRaw.context === 'string') {
-      bodyRaw.context = parseContextField(bodyRaw.context)
-    }
-    if (typeof bodyRaw.priority === 'string' && bodyRaw.priority === '') {
-      delete bodyRaw.priority
-    }
-
-    const data = createSchema.parse(bodyRaw)
-    const { body, context } = resolveBodyAndContext(data)
-    const isAdmin = req.user!.role === 'ADMIN'
-    const isAgent = req.user!.role === 'AGENT'
-
-    let elevatedByAdminId: string | null = null
-    if (isAdmin) {
-      // All ADMINs (client + owner/super-admin): no elevation
-    } else if (isAgent) {
-      const elevation = await resolveAdminElevation(req)
-      if (!elevation) {
-        res.status(403).json({
-          error: 'Se requiere autorización de administrador para crear un ticket de soporte',
-          code: 'ADMIN_ELEVATION_REQUIRED',
-        })
-        return
-      }
-      elevatedByAdminId = elevation.adminId
-    } else {
-      res.status(403).json({
-        error: 'Solo administradores o agentes (con autorización) pueden crear tickets',
-        code: 'SUPPORT_CREATE_FORBIDDEN',
-      })
+    const tenantId = req.tenant?.id
+    if (!tenantId) {
+      res.status(400).json({ error: 'Tenant no resuelto' })
       return
     }
 
-    for (const file of files) {
-      if (!ALLOWED_MIME.has(file.mimetype)) {
-        res.status(400).json({ error: 'Solo se permiten imágenes JPG, PNG o WEBP' })
+    await runWithTenant(tenantId, async () => {
+      const files = (req.files as Express.Multer.File[] | undefined) ?? []
+      const bodyRaw = { ...req.body } as Record<string, unknown>
+      if (typeof bodyRaw.context === 'string') {
+        bodyRaw.context = parseContextField(bodyRaw.context)
+      }
+      if (typeof bodyRaw.priority === 'string' && bodyRaw.priority === '') {
+        delete bodyRaw.priority
+      }
+
+      const data = createSchema.parse(bodyRaw)
+      const { body, context } = resolveBodyAndContext(data)
+      const isAdmin = req.user!.role === 'ADMIN'
+      const isAgent = req.user!.role === 'AGENT'
+
+      let elevatedByAdminId: string | null = null
+      if (isAdmin) {
+        // All ADMINs (client + owner/super-admin): no elevation
+      } else if (isAgent) {
+        const elevation = await resolveAdminElevation(req)
+        if (!elevation) {
+          res.status(403).json({
+            error: 'Se requiere autorización de administrador para crear un ticket de soporte',
+            code: 'ADMIN_ELEVATION_REQUIRED',
+          })
+          return
+        }
+        elevatedByAdminId = elevation.adminId
+      } else {
+        res.status(403).json({
+          error: 'Solo administradores o agentes (con autorización) pueden crear tickets',
+          code: 'SUPPORT_CREATE_FORBIDDEN',
+        })
         return
       }
-      if (file.size > MAX_ATTACHMENT_BYTES) {
-        res.status(400).json({ error: 'Cada imagen debe pesar máximo 5 MB' })
-        return
-      }
-    }
-
-    const ticket = await prisma.supportTicket.create({
-      data: {
-        tenantId: req.tenant!.id,
-        subject: data.subject,
-        body,
-        priority: data.priority ?? 'NORMAL',
-        context: context as Prisma.InputJsonValue,
-        createdById: req.user!.id,
-        elevatedByAdminId,
-      },
-      select: { id: true },
-    })
-
-    if (files.length > 0) {
-      const dir = path.join(process.cwd(), 'uploads', 'support', ticket.id)
-      await fs.mkdir(dir, { recursive: true })
 
       for (const file of files) {
-        const ext = extForMime(file.mimetype)
-        const attachment = await prisma.supportTicketAttachment.create({
-          data: {
-            tenantId: req.tenant!.id,
-            ticketId: ticket.id,
-            path: 'pending',
-            mimeType: file.mimetype,
-            size: file.size,
-            originalName: file.originalname?.slice(0, 200) || null,
-          },
-        })
-        const relativePath = path
-          .join('uploads', 'support', ticket.id, `${attachment.id}${ext}`)
-          .replace(/\\/g, '/')
-        const absolutePath = path.join(process.cwd(), relativePath)
-        await fs.writeFile(absolutePath, file.buffer)
-        await prisma.supportTicketAttachment.update({
-          where: { id: attachment.id },
-          data: { path: relativePath },
-        })
+        if (!ALLOWED_MIME.has(file.mimetype)) {
+          res.status(400).json({ error: 'Solo se permiten imágenes JPG, PNG o WEBP' })
+          return
+        }
+        if (file.size > MAX_ATTACHMENT_BYTES) {
+          res.status(400).json({ error: 'Cada imagen debe pesar máximo 5 MB' })
+          return
+        }
       }
-    }
 
-    const full = await prisma.supportTicket.findUnique({
-      where: { id: ticket.id },
-      select: ticketSelect,
+      const ticket = await prisma.supportTicket.create({
+        data: {
+          tenantId,
+          subject: data.subject,
+          body,
+          priority: data.priority ?? 'NORMAL',
+          context: context as Prisma.InputJsonValue,
+          createdById: req.user!.id,
+          elevatedByAdminId,
+        },
+        select: { id: true },
+      })
+
+      if (files.length > 0) {
+        const dir = path.join(process.cwd(), 'uploads', 'support', ticket.id)
+        await fs.mkdir(dir, { recursive: true })
+
+        for (const file of files) {
+          const ext = extForMime(file.mimetype)
+          const attachment = await prisma.supportTicketAttachment.create({
+            data: {
+              tenantId,
+              ticketId: ticket.id,
+              path: 'pending',
+              mimeType: file.mimetype,
+              size: file.size,
+              originalName: file.originalname?.slice(0, 200) || null,
+            },
+          })
+          const relativePath = path
+            .join('uploads', 'support', ticket.id, `${attachment.id}${ext}`)
+            .replace(/\\/g, '/')
+          const absolutePath = path.join(process.cwd(), relativePath)
+          await fs.writeFile(absolutePath, file.buffer)
+          await prisma.supportTicketAttachment.update({
+            where: { id: attachment.id },
+            data: { path: relativePath },
+          })
+        }
+      }
+
+      const full = await prisma.supportTicket.findUnique({
+        where: { id: ticket.id },
+        select: ticketSelect,
+      })
+
+      res.status(201).json(full)
     })
-
-    res.status(201).json(full)
   }
 )
 

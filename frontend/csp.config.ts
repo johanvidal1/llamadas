@@ -47,7 +47,7 @@ export function buildProductionCsp(apiOrigins: string[]): string {
     "default-src 'self'; " +
     "script-src 'self'; " +
     "style-src 'self' 'unsafe-inline'; " +
-    "img-src 'self' data:; " +
+    "img-src 'self' data: blob:; " +
     `connect-src ${connectSrc}; ` +
     "font-src 'self' data:"
   )
@@ -64,6 +64,6 @@ export const devCsp =
   "default-src 'self'; " +
   "script-src 'self' 'unsafe-eval' 'unsafe-inline'; " +
   "style-src 'self' 'unsafe-inline'; " +
-  "img-src 'self' data:; " +
+  "img-src 'self' data: blob:; " +
   "connect-src 'self' ws://localhost:5173 ws://127.0.0.1:5173 http://localhost:3001 http://localhost:5173; " +
   "font-src 'self' data:"
