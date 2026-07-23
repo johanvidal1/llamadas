@@ -31,9 +31,9 @@ function buildTicketContext(): Record<string, unknown> {
 type PreviewFile = { file: File; url: string }
 
 export default function CreateSupportTicketModal({ open, onClose, onCreated }: Props) {
-  const { user } = useAuth()
-  const canCreateWithoutElevation =
-    user?.isSystemOwner === true || user?.isSuperAdmin === true
+  const { isAdmin } = useAuth()
+  /** Regular + platform ADMINs skip elevation; agents still need confirm+password. */
+  const canCreateWithoutElevation = isAdmin
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [subject, setSubject] = useState('')
   const [whatHappened, setWhatHappened] = useState('')

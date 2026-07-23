@@ -87,8 +87,8 @@ export default function Layout() {
       ? [...adminNav, ...platformNavItems]
       : adminNav
     : agentNav
-  /** Agents always; platform owner/super-admin optional (inbox has create). Regular client admins: no. */
-  const showSupportFab = !isAdmin || isPlatformUser
+  /** Agents + all admins can create tickets; inbox (/soporte) stays platform-only via platformNavItems. */
+  const showSupportFab = true
   const sidebarBg = isAdmin ? 'bg-green-900' : 'bg-blue-900'
 
   const postHeartbeat = useCallback(() => {

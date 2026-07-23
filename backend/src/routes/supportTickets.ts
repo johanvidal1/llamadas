@@ -199,7 +199,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   res.json({ tickets })
 })
 
-// POST /api/support-tickets — owner/super-admin free; AGENT needs valid elevation
+// POST /api/support-tickets — ADMIN free; AGENT needs valid elevation
 // Accepts JSON or multipart (fields + images[]).
 router.post(
   '/',
@@ -235,12 +235,12 @@ router.post(
 
     const data = createSchema.parse(bodyRaw)
     const { body, context } = resolveBodyAndContext(data)
-    const canCreateFree = isSuperAdminOrOwner(req.user!)
+    const isAdmin = req.user!.role === 'ADMIN'
     const isAgent = req.user!.role === 'AGENT'
 
     let elevatedByAdminId: string | null = null
-    if (canCreateFree) {
-      // Platform owner / super-admin: no elevation
+    if (isAdmin) {
+      // All ADMINs (client + owner/super-admin): no elevation
     } else if (isAgent) {
       const elevation = await resolveAdminElevation(req)
       if (!elevation) {
@@ -253,7 +253,7 @@ router.post(
       elevatedByAdminId = elevation.adminId
     } else {
       res.status(403).json({
-        error: 'Solo agentes (con autorización) o el dueño/super-admin pueden crear tickets',
+        error: 'Solo administradores o agentes (con autorización) pueden crear tickets',
         code: 'SUPPORT_CREATE_FORBIDDEN',
       })
       return
