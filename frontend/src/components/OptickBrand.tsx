@@ -39,15 +39,15 @@ export default function OptickBrand({ variant, showSubtitle = true }: OptickBran
         <img
           src="/logo-optick.png"
           alt="Optick Cloud"
-          className="w-9 h-9 rounded-lg object-contain shrink-0 bg-white/10 p-0.5"
+          className="w-9 h-9 rounded-lg object-contain shrink-0 bg-gray-100 p-0.5"
         />
         <div className="min-w-0">
-          <p className="text-white font-bold text-sm leading-tight tracking-tight">
+          <p className="text-gray-900 font-bold text-sm leading-tight tracking-tight">
             Optick{' '}
-            <span className="font-semibold text-white/75">Cloud</span>
+            <span className="font-semibold text-gray-600">Cloud</span>
           </p>
           {showSubtitle && (
-            <p className="text-white/60 text-[11px] leading-tight truncate">CRM Llamadas</p>
+            <p className="text-gray-500 text-[11px] leading-tight truncate">CRM Llamadas</p>
           )}
         </div>
       </div>

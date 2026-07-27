@@ -720,14 +720,17 @@ export default function MyLeads() {
   const initialBatchId = searchParams.get('batchId') ?? ''
   const initialCompanyId = searchParams.get('companyId') ?? ''
   const initialContactId = searchParams.get('contactId') ?? ''
+  const initialQ = searchParams.get('q') ?? ''
   const hasListDeepLink = initialFilter !== '' && VALID_LIST_FILTERS.has(initialFilter)
   const initialListFilters = parseListFiltersFromUrl(initialFilter)
   const safeInitialCola: ListCola = initialListFilters.cola
   const initialFromDashboard = searchParams.get('from') === 'dashboard'
+  const hasSearchDeepLink = initialQ.trim().length > 0
 
   // ── View toggle (persisted)
   const [viewMode, setViewMode] = useState<'detail' | 'grid' | 'list'>(() => {
     if (hasListDeepLink) return 'list'
+    if (hasSearchDeepLink) return 'grid'
     return (localStorage.getItem('myLeadsView') as 'detail' | 'grid' | 'list') || 'detail'
   })
   const [returnToView, setReturnToView] = useState<'list' | 'grid' | null>(null)
@@ -748,10 +751,20 @@ export default function MyLeads() {
   const listColaOptions = useMemo(() => [...LIST_COLA_OPTIONS], [])
 
   // ── Grid view state
-  const [gridSearch, setGridSearch] = useState('')
+  const [gridSearch, setGridSearch] = useState(initialQ)
   const [gridStatus, setGridStatus] = useState('')
   const [gridPage, setGridPage] = useState(1)
   const [selectedClient, setSelectedClient] = useState<{ id: string; ruc: string; razonSocial?: string; contacts?: { id?: string; nombre: string; tipoContacto?: string; telefono?: string }[] } | null>(null)
+
+  // Command palette / deep-link: apply ?q= when it changes
+  useEffect(() => {
+    const q = searchParams.get('q') ?? ''
+    if (!q.trim()) return
+    setGridSearch(q)
+    setGridPage(1)
+    setViewMode('grid')
+    localStorage.setItem('myLeadsView', 'grid')
+  }, [searchParams])
 
   // ── Batch filter (shared between detail + grid views)
   const [selectedBatchId, setSelectedBatchId] = useState<string>(initialBatchId)
@@ -2275,16 +2288,11 @@ export default function MyLeads() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
 
-      {/* ══════════════════════ SHARED TOP BAR ══════════════════════ */}
-      <div className="bg-blue-800 text-white px-3 lg:px-6 py-3 flex flex-wrap lg:flex-nowrap items-center justify-between shrink-0 gap-2 lg:gap-4">
+      {/* ══════════════════════ PAGE TOOLBAR (shell owns role color) ══════════════════════ */}
+      <div className="bg-white border-b border-gray-200 text-gray-800 px-3 lg:px-6 py-2 flex flex-wrap lg:flex-nowrap items-center justify-between shrink-0 gap-2 lg:gap-4">
         <div className="flex items-center gap-2 lg:gap-4 min-w-0 text-sm flex-wrap">
           <div className="min-w-0 shrink-0 max-w-[11rem] sm:max-w-[14rem]">
-            <span className="font-semibold truncate block">Migración de Operador</span>
-            {user?.name ? (
-              <span className="text-blue-200 text-xs truncate block leading-tight mt-0.5">
-                {user.name}
-              </span>
-            ) : null}
+            <span className="font-semibold truncate block text-gray-900">Migración de Operador</span>
           </div>
 
           {/* Batch selector */}
@@ -2294,8 +2302,9 @@ export default function MyLeads() {
               clients={allClients}
               value={selectedBatchId}
               onChange={switchBatch}
-              variant="header"
+              variant="filter"
               id="detail-batch-filter"
+              className="min-w-[12rem] max-w-[16rem]"
             />
           )}
 
@@ -2304,7 +2313,7 @@ export default function MyLeads() {
               type="button"
               onClick={handleExport}
               disabled={exporting}
-              className="flex items-center justify-center p-1.5 bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white rounded transition-colors shrink-0"
+              className="flex items-center justify-center p-1.5 bg-white hover:bg-blue-50 disabled:opacity-50 text-blue-700 border border-blue-200 rounded transition-colors shrink-0"
               title="Descargar mis registros"
             >
               <Save size={13} />
@@ -2312,7 +2321,7 @@ export default function MyLeads() {
           )}
 
           {viewMode === 'grid' && (
-            <span className="text-blue-300 text-xs shrink-0">{gridData?.total ?? 0} clientes</span>
+            <span className="text-gray-500 text-xs shrink-0">{gridData?.total ?? 0} clientes</span>
           )}
         </div>
 
@@ -2321,12 +2330,12 @@ export default function MyLeads() {
             <button
               type="button"
               onClick={returnToDashboardHome}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-600 border border-blue-500 text-white text-xs font-medium"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white hover:bg-blue-50 border border-blue-200 text-blue-800 text-xs font-medium"
             >
               <ArrowLeft size={14} />
               Volver al inicio
               {(listDrilldown || listCola !== 'FUNNEL') && (
-                <span className="text-blue-200 font-normal">
+                <span className="text-blue-600/80 font-normal">
                   ({getListFilterLabel(listCola, listDrilldown)})
                 </span>
               )}
@@ -2336,19 +2345,19 @@ export default function MyLeads() {
             <button
               type="button"
               onClick={returnToList}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-600 border border-blue-500 text-white text-xs font-medium"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white hover:bg-blue-50 border border-blue-200 text-blue-800 text-xs font-medium"
             >
               <ArrowLeft size={14} />
               Volver a la lista
               {(listDrilldown || listCola !== 'FUNNEL') && (
-                <span className="text-blue-200 font-normal">
+                <span className="text-blue-600/80 font-normal">
                   ({getListFilterLabel(listCola, listDrilldown)})
                 </span>
               )}
             </button>
           )}
           {/* ── View toggle ── */}
-          <div className="flex bg-blue-700 rounded-lg p-0.5 gap-0.5 shrink-0">
+          <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5 shrink-0 border border-gray-200">
             <button
               onClick={() => {
                 setReturnToView(null)
@@ -2359,7 +2368,7 @@ export default function MyLeads() {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
                 viewMode === 'detail'
                   ? 'bg-white text-blue-700 shadow-sm'
-                  : 'text-blue-200 hover:text-white'
+                  : 'text-gray-500 hover:text-gray-800'
               }`}
             >
               <List size={13} /> Detalle
@@ -2370,7 +2379,7 @@ export default function MyLeads() {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
                 viewMode === 'grid'
                   ? 'bg-white text-blue-700 shadow-sm'
-                  : 'text-blue-200 hover:text-white'
+                  : 'text-gray-500 hover:text-gray-800'
               }`}
             >
               <LayoutGrid size={13} /> Tarjetas
@@ -2392,7 +2401,7 @@ export default function MyLeads() {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
                 viewMode === 'list'
                   ? 'bg-white text-blue-700 shadow-sm'
-                  : 'text-blue-200 hover:text-white'
+                  : 'text-gray-500 hover:text-gray-800'
               } ${
                 viewMode === 'detail' && returnToView === 'list'
                   ? 'ring-1 ring-blue-300'
@@ -2407,14 +2416,14 @@ export default function MyLeads() {
           {viewMode === 'detail' && (
             <div className="flex items-center justify-end gap-2.5 shrink-0">
               <span
-                className="inline-flex items-baseline gap-1 px-2.5 py-1 rounded-md bg-blue-700/90 border border-blue-500/70 text-white text-sm font-semibold tabular-nums whitespace-nowrap shadow-sm"
+                className="inline-flex items-baseline gap-1 px-2.5 py-1 rounded-md bg-blue-50 border border-blue-200 text-blue-900 text-sm font-semibold tabular-nums whitespace-nowrap shadow-sm"
                 title={isAdmin ? COLA_ALL_ADMIN_TITLE : COLA_ALL_AGENT_TITLE}
               >
                 {currentIndex + 1}
-                <span className="text-blue-200 font-medium">/</span>
+                <span className="text-blue-400 font-medium">/</span>
                 {total}
                 {hiddenNavCount > 0 && (
-                  <span className="text-blue-200/80 text-xs font-medium ml-0.5" title="Empresas archivadas ocultas de la cola">
+                  <span className="text-blue-500/80 text-xs font-medium ml-0.5" title="Empresas archivadas ocultas de la cola">
                     ({hiddenNavCount} ocultas)
                   </span>
                 )}
@@ -2423,6 +2432,7 @@ export default function MyLeads() {
                 pending={headerBatchPending.pending}
                 total={headerBatchPending.total}
                 done={headerBatchPending.done}
+                variant="filter"
               />
             </div>
           )}

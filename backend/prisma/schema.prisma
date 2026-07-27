@@ -70,6 +70,8 @@ model User {
   email            String
   password         String
   role             String   @default("AGENT")
+  // Relative path under process.cwd(), e.g. uploads/avatars/{userId}/avatar.jpg
+  avatarUrl        String?
   isSuperAdmin     Boolean  @default(false)
   isSystemOwner    Boolean  @default(false)
   isArchivedAgent  Boolean  @default(false)

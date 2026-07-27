@@ -260,9 +260,11 @@ export function BatchPendingThermometer({
   total,
   done,
   className = '',
-}: BatchPendingCounts & { className?: string }) {
+  /** `header` = light metrics on dark chrome; `filter` = dark metrics on light chrome. */
+  variant = 'header',
+}: BatchPendingCounts & { className?: string; variant?: 'header' | 'filter' }) {
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
-  const tone = queueToneHeader(pending, total)
+  const tone = variant === 'filter' ? queueTone(pending, total) : queueToneHeader(pending, total)
   const { alert, shake } = useLowPendingShake(pending, total)
   const label =
     total <= 0 ? 'Sin empresas' : pending === 0 ? 'Lote completo' : `${pending} pend.`

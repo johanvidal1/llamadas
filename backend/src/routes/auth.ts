@@ -1,6 +1,10 @@
+import path from 'path'
+import fs from 'fs/promises'
+import { createReadStream, existsSync } from 'fs'
 import { Router, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import multer from 'multer'
 import { z } from 'zod'
 import { computeBillingStatus } from '../lib/billing'
 import {
@@ -12,9 +16,73 @@ import {
   recordElevateAttempt,
 } from '../lib/elevateAdminRateLimit'
 import { prisma } from '../lib/prisma'
+import { runWithTenant } from '../lib/tenantContext'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
+
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024
+const ALLOWED_AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp'])
+
+const avatarUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_AVATAR_BYTES, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_AVATAR_MIME.has(file.mimetype)) {
+      cb(null, true)
+      return
+    }
+    cb(new Error('Solo se permiten imágenes JPG, PNG o WEBP'))
+  },
+})
+
+function extForMime(mime: string): string {
+  if (mime === 'image/png') return '.png'
+  if (mime === 'image/webp') return '.webp'
+  return '.jpg'
+}
+
+/** Resolve avatar path only under uploads/avatars/{userId}/ (blocks traversal). */
+function resolveAvatarAbsolutePath(
+  userId: string,
+  relativePath: string
+): string | null {
+  const normalized = relativePath.replace(/\\/g, '/')
+  const expectedPrefix = `uploads/avatars/${userId}/`
+  if (
+    !normalized.startsWith(expectedPrefix) ||
+    normalized.includes('..') ||
+    normalized.includes('\0')
+  ) {
+    return null
+  }
+  const absolute = path.resolve(process.cwd(), normalized)
+  const allowedRoot = path.resolve(process.cwd(), 'uploads', 'avatars', userId)
+  if (absolute !== allowedRoot && !absolute.startsWith(allowedRoot + path.sep)) {
+    return null
+  }
+  return absolute
+}
+
+function publicUserFields(user: {
+  id: string
+  name: string
+  email: string
+  role: string
+  isSuperAdmin: boolean
+  isSystemOwner: boolean
+  avatarUrl?: string | null
+}) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    isSuperAdmin: user.isSuperAdmin,
+    isSystemOwner: user.isSystemOwner,
+    hasAvatar: Boolean(user.avatarUrl),
+  }
+}
 
 const loginSchema = z.object({
   email: z.string().email('Email inválido'),
@@ -69,14 +137,7 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
 
   res.json({
     token,
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      isSuperAdmin: user.isSuperAdmin,
-      isSystemOwner: user.isSystemOwner,
-    },
+    user: publicUserFields(user),
   })
 })
 
@@ -186,6 +247,7 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
       isSuperAdmin: true,
       isSystemOwner: true,
       active: true,
+      avatarUrl: true,
     },
   })
   if (!user) {
@@ -212,7 +274,156 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     }
   }
 
-  res.json({ ...user, billing })
+  const { avatarUrl: _avatarUrl, ...safe } = user
+  res.json({ ...safe, hasAvatar: Boolean(_avatarUrl), billing })
+})
+
+// GET /api/auth/me/avatar — stream current user's avatar (auth required)
+router.get('/me/avatar', requireAuth, async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.id
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { avatarUrl: true },
+  })
+  if (!user?.avatarUrl) {
+    res.status(404).json({ error: 'Sin foto de perfil' })
+    return
+  }
+
+  const absolutePath = resolveAvatarAbsolutePath(userId, user.avatarUrl)
+  if (!absolutePath || !existsSync(absolutePath)) {
+    res.status(404).json({ error: 'Archivo no encontrado' })
+    return
+  }
+
+  const ext = path.extname(user.avatarUrl).toLowerCase()
+  const mime =
+    ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+  res.setHeader('Content-Type', mime)
+  res.setHeader('Cache-Control', 'private, max-age=3600')
+  createReadStream(absolutePath).pipe(res)
+})
+
+// POST /api/auth/me/avatar — multipart field "avatar"
+// Multer leaves resolveTenant ALS; re-enter runWithTenant for Prisma.
+router.post(
+  '/me/avatar',
+  requireAuth,
+  (req, res, next) => {
+    avatarUpload.single('avatar')(req, res, (err) => {
+      if (err) {
+        const msg =
+          err instanceof multer.MulterError
+            ? err.code === 'LIMIT_FILE_SIZE'
+              ? 'La imagen debe pesar máximo 2 MB'
+              : err.message
+            : err instanceof Error
+              ? err.message
+              : 'Error al subir archivo'
+        res.status(400).json({ error: msg })
+        return
+      }
+      next()
+    })
+  },
+  async (req: AuthRequest, res: Response) => {
+    const tenantId = req.tenant?.id
+    if (!tenantId) {
+      res.status(400).json({ error: 'Tenant no resuelto' })
+      return
+    }
+
+    await runWithTenant(tenantId, async () => {
+      const file = req.file
+      if (!file) {
+        res.status(400).json({ error: 'Selecciona una imagen' })
+        return
+      }
+      if (!ALLOWED_AVATAR_MIME.has(file.mimetype)) {
+        res.status(400).json({ error: 'Solo se permiten imágenes JPG, PNG o WEBP' })
+        return
+      }
+      if (file.size > MAX_AVATAR_BYTES) {
+        res.status(400).json({ error: 'La imagen debe pesar máximo 2 MB' })
+        return
+      }
+
+      const userId = req.user!.id
+      const existing = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { avatarUrl: true },
+      })
+
+      const dir = path.join(process.cwd(), 'uploads', 'avatars', userId)
+      await fs.mkdir(dir, { recursive: true })
+
+      const ext = extForMime(file.mimetype)
+      const filename = `avatar${ext}`
+      const relativePath = path.join('uploads', 'avatars', userId, filename).replace(/\\/g, '/')
+      const absolutePath = resolveAvatarAbsolutePath(userId, relativePath)
+      if (!absolutePath) {
+        res.status(500).json({ error: 'Ruta de avatar inválida' })
+        return
+      }
+      await fs.writeFile(absolutePath, file.buffer)
+
+      if (existing?.avatarUrl && existing.avatarUrl !== relativePath) {
+        const oldAbs = resolveAvatarAbsolutePath(userId, existing.avatarUrl)
+        if (oldAbs) await fs.unlink(oldAbs).catch(() => {})
+      }
+
+      const updated = await prisma.user.update({
+        where: { id: userId },
+        data: { avatarUrl: relativePath },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          isSuperAdmin: true,
+          isSystemOwner: true,
+          avatarUrl: true,
+        },
+      })
+
+      res.json(publicUserFields(updated))
+    })
+  }
+)
+
+// DELETE /api/auth/me/avatar
+router.delete('/me/avatar', requireAuth, async (req: AuthRequest, res: Response) => {
+  const tenantId = req.tenant?.id
+  if (!tenantId) {
+    res.status(400).json({ error: 'Tenant no resuelto' })
+    return
+  }
+
+  await runWithTenant(tenantId, async () => {
+    const userId = req.user!.id
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { avatarUrl: true },
+    })
+    if (user?.avatarUrl) {
+      const abs = resolveAvatarAbsolutePath(userId, user.avatarUrl)
+      if (abs) await fs.unlink(abs).catch(() => {})
+    }
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { avatarUrl: null },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        isSuperAdmin: true,
+        isSystemOwner: true,
+        avatarUrl: true,
+      },
+    })
+    res.json(publicUserFields(updated))
+  })
 })
 
 export default router

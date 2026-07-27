@@ -61,7 +61,32 @@ api.interceptors.response.use(
 export const login = (email: string, password: string) =>
   api.post('/auth/login', { email, password }).then((r) => r.data)
 
-export const getMe = () => api.get('/auth/me').then((r) => r.data)
+export type AuthUser = {
+  id: string
+  name: string
+  email: string
+  role: 'ADMIN' | 'AGENT'
+  isSuperAdmin?: boolean
+  isSystemOwner?: boolean
+  hasAvatar?: boolean
+  /** Client-only cache buster after avatar upload. */
+  avatarVersion?: number
+}
+
+export const getMe = () =>
+  api.get<AuthUser & { active?: boolean; billing?: unknown }>('/auth/me').then((r) => r.data)
+
+export const uploadAvatar = (file: File) => {
+  const form = new FormData()
+  form.append('avatar', file)
+  return api.post<AuthUser>('/auth/me/avatar', form).then((r) => r.data)
+}
+
+export const deleteAvatar = () =>
+  api.delete<AuthUser>('/auth/me/avatar').then((r) => r.data)
+
+export const fetchMyAvatarBlob = () =>
+  api.get<Blob>('/auth/me/avatar', { responseType: 'blob' }).then((r) => r.data)
 
 export type ElevateAdminResult = {
   elevationToken: string
