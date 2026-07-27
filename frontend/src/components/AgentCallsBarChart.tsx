@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import {
   ResponsiveContainer,
   BarChart,
@@ -21,8 +22,24 @@ const REGISTERED_DEFAULT = '#10b981'
 const REGISTERED_HIGHLIGHT = '#059669'
 const REGISTERED_MUTED = '#a7f3d0'
 
+const MD_QUERY = '(min-width: 768px)'
+
 function truncateName(name: string, max = 12) {
   return name.length > max ? `${name.slice(0, max - 1)}…` : name
+}
+
+function useIsMd() {
+  const [isMd, setIsMd] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(MD_QUERY).matches
+  )
+  useEffect(() => {
+    const mq = window.matchMedia(MD_QUERY)
+    const handler = (e: MediaQueryListEvent) => setIsMd(e.matches)
+    setIsMd(mq.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+  return isMd
 }
 
 type ChartRow = AgentCallChartRow & { shortName: string }
@@ -77,6 +94,7 @@ function AgentAxisTick({
   y,
   payload,
   textAnchor,
+  angle = 0,
   chartData,
   highlightedAgentId,
   onAgentSelect,
@@ -85,6 +103,7 @@ function AgentAxisTick({
   y: number
   payload?: { value: string }
   textAnchor?: 'end' | 'start' | 'middle' | 'inherit'
+  angle?: number
   chartData: ChartRow[]
   highlightedAgentId?: string
   onAgentSelect?: (agentId: string) => void
@@ -100,8 +119,49 @@ function AgentAxisTick({
       <text
         x={0}
         y={0}
-        dy={16}
+        dy={angle ? 4 : 16}
         textAnchor={textAnchor ?? 'middle'}
+        fill={isHighlight ? '#2563eb' : '#6b7280'}
+        fontSize={11}
+        fontWeight={isHighlight ? 600 : 400}
+        transform={angle ? `rotate(${angle})` : undefined}
+        style={selectable ? { cursor: 'pointer' } : undefined}
+        onClick={() => onAgentSelect?.(row.agentId)}
+      >
+        {payload?.value}
+      </text>
+    </g>
+  )
+}
+
+function AgentYAxisTick({
+  x,
+  y,
+  payload,
+  chartData,
+  highlightedAgentId,
+  onAgentSelect,
+}: {
+  x: number
+  y: number
+  payload?: { value: string }
+  chartData: ChartRow[]
+  highlightedAgentId?: string
+  onAgentSelect?: (agentId: string) => void
+}) {
+  const row = chartData.find((r) => r.shortName === payload?.value)
+  if (!row) return null
+
+  const isHighlight = highlightedAgentId === row.agentId
+  const selectable = !!onAgentSelect
+
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text
+        x={0}
+        y={0}
+        dy={4}
+        textAnchor="end"
         fill={isHighlight ? '#2563eb' : '#6b7280'}
         fontSize={11}
         fontWeight={isHighlight ? 600 : 400}
@@ -112,6 +172,23 @@ function AgentAxisTick({
       </text>
     </g>
   )
+}
+
+function barFill(
+  entry: ChartRow,
+  highlightedAgentId: string | undefined,
+  kind: 'calls' | 'registered'
+) {
+  const isHighlight = highlightedAgentId === entry.agentId
+  const isDimmed = highlightedAgentId && highlightedAgentId !== entry.agentId
+  if (kind === 'calls') {
+    return isHighlight ? CALLS_HIGHLIGHT : isDimmed ? CALLS_MUTED : CALLS_DEFAULT
+  }
+  return isHighlight
+    ? REGISTERED_HIGHLIGHT
+    : isDimmed
+      ? REGISTERED_MUTED
+      : REGISTERED_DEFAULT
 }
 
 export function AgentCallsBarChart({
@@ -129,6 +206,8 @@ export function AgentCallsBarChart({
   onAgentSelect?: (agentId: string) => void
   onViewClients?: (agentId: string) => void
 }) {
+  const isMd = useIsMd()
+
   if (loading) {
     return (
       <div className="h-72 flex items-center justify-center animate-pulse">
@@ -148,9 +227,10 @@ export function AgentCallsBarChart({
     )
   }
 
+  const nameMax = isMd ? 12 : typeof window !== 'undefined' && window.innerWidth < 380 ? 8 : 10
   const chartData: ChartRow[] = data.map((row) => ({
     ...row,
-    shortName: truncateName(row.name),
+    shortName: truncateName(row.name, nameMax),
   }))
 
   const totalCalls = data.reduce((s, d) => s + d.calls, 0)
@@ -159,6 +239,11 @@ export function AgentCallsBarChart({
     data.length > 0 ? Math.round((totalCalls / data.length) * 10) / 10 : 0
   const hasCalls = totalCalls > 0
   const selectable = !!onAgentSelect
+  const rotateTicks = chartData.length > 6
+  const tickAngle = rotateTicks ? -35 : 0
+
+  // Horizontal chart: grow with agent count so bars aren't crushed
+  const mobileHeight = Math.max(280, chartData.length * 44 + 72)
 
   return (
     <div>
@@ -195,12 +280,17 @@ export function AgentCallsBarChart({
         <p className="text-sm text-gray-400 text-center py-16">
           Sin llamadas en el período seleccionado
         </p>
-      ) : (
+      ) : isMd ? (
         <div className="h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={chartData}
-              margin={{ top: 8, right: 8, left: -12, bottom: 48 }}
+              margin={{
+                top: 8,
+                right: 8,
+                left: -12,
+                bottom: rotateTicks ? 64 : 48,
+              }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
               <XAxis
@@ -208,12 +298,13 @@ export function AgentCallsBarChart({
                 axisLine={false}
                 tickLine={false}
                 interval={0}
-                angle={chartData.length > 6 ? -35 : 0}
-                textAnchor={chartData.length > 6 ? 'end' : 'middle'}
-                height={chartData.length > 6 ? 56 : 32}
+                angle={tickAngle}
+                textAnchor={rotateTicks ? 'end' : 'middle'}
+                height={rotateTicks ? 64 : 32}
                 tick={(props) => (
                   <AgentAxisTick
                     {...props}
+                    angle={tickAngle}
                     chartData={chartData}
                     highlightedAgentId={highlightedAgentId}
                     onAgentSelect={onAgentSelect}
@@ -267,25 +358,16 @@ export function AgentCallsBarChart({
                   if (row?.agentId && onAgentSelect) onAgentSelect(row.agentId)
                 }}
               >
-                {chartData.map((entry) => {
-                  const isHighlight = highlightedAgentId === entry.agentId
-                  const isDimmed =
-                    highlightedAgentId && highlightedAgentId !== entry.agentId
-                  return (
-                    <Cell
-                      key={`calls-${entry.agentId}`}
-                      fill={
-                        isHighlight
-                          ? CALLS_HIGHLIGHT
-                          : isDimmed
-                            ? CALLS_MUTED
-                            : CALLS_DEFAULT
-                      }
-                      stroke={isHighlight ? '#1d4ed8' : undefined}
-                      strokeWidth={isHighlight ? 1 : 0}
-                    />
-                  )
-                })}
+                {chartData.map((entry) => (
+                  <Cell
+                    key={`calls-${entry.agentId}`}
+                    fill={barFill(entry, highlightedAgentId, 'calls')}
+                    stroke={
+                      highlightedAgentId === entry.agentId ? '#1d4ed8' : undefined
+                    }
+                    strokeWidth={highlightedAgentId === entry.agentId ? 1 : 0}
+                  />
+                ))}
               </Bar>
               <Bar
                 dataKey="registered"
@@ -299,25 +381,125 @@ export function AgentCallsBarChart({
                   if (row?.agentId && onAgentSelect) onAgentSelect(row.agentId)
                 }}
               >
-                {chartData.map((entry) => {
-                  const isHighlight = highlightedAgentId === entry.agentId
-                  const isDimmed =
-                    highlightedAgentId && highlightedAgentId !== entry.agentId
-                  return (
-                    <Cell
-                      key={`registered-${entry.agentId}`}
-                      fill={
-                        isHighlight
-                          ? REGISTERED_HIGHLIGHT
-                          : isDimmed
-                            ? REGISTERED_MUTED
-                            : REGISTERED_DEFAULT
-                      }
-                      stroke={isHighlight ? '#047857' : undefined}
-                      strokeWidth={isHighlight ? 1 : 0}
-                    />
-                  )
-                })}
+                {chartData.map((entry) => (
+                  <Cell
+                    key={`registered-${entry.agentId}`}
+                    fill={barFill(entry, highlightedAgentId, 'registered')}
+                    stroke={
+                      highlightedAgentId === entry.agentId ? '#047857' : undefined
+                    }
+                    strokeWidth={highlightedAgentId === entry.agentId ? 1 : 0}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <div className="w-full" style={{ height: mobileHeight }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              layout="vertical"
+              data={chartData}
+              margin={{ top: 8, right: 16, left: 4, bottom: 8 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" horizontal={false} />
+              <XAxis
+                type="number"
+                allowDecimals={false}
+                tick={{ fontSize: 11, fill: '#9ca3af' }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                type="category"
+                dataKey="shortName"
+                axisLine={false}
+                tickLine={false}
+                width={88}
+                interval={0}
+                tick={(props) => (
+                  <AgentYAxisTick
+                    {...props}
+                    chartData={chartData}
+                    highlightedAgentId={highlightedAgentId}
+                    onAgentSelect={onAgentSelect}
+                  />
+                )}
+              />
+              <Tooltip
+                cursor={{ fill: 'rgba(59, 130, 246, 0.06)' }}
+                wrapperStyle={{ pointerEvents: 'auto', zIndex: 20 }}
+                offset={12}
+                content={<AgentCallsTooltip onViewClients={onViewClients} />}
+              />
+              <Legend
+                verticalAlign="top"
+                align="right"
+                iconType="square"
+                iconSize={10}
+                wrapperStyle={{ fontSize: 11, paddingBottom: 4 }}
+                formatter={(value) =>
+                  value === 'calls' ? 'Llamadas' : 'Registrados (empresas)'
+                }
+              />
+              <ReferenceLine
+                x={teamAverage}
+                stroke="#f59e0b"
+                strokeDasharray="4 4"
+                strokeWidth={1.5}
+                label={{
+                  value: `Prom. ${teamAverage}`,
+                  position: 'insideTopRight',
+                  fill: '#d97706',
+                  fontSize: 10,
+                }}
+              />
+              <Bar
+                dataKey="calls"
+                name="calls"
+                radius={[0, 4, 4, 0]}
+                maxBarSize={18}
+                legendType="square"
+                style={selectable ? { cursor: 'pointer' } : undefined}
+                onClick={(barData) => {
+                  const row = barData as ChartRow | undefined
+                  if (row?.agentId && onAgentSelect) onAgentSelect(row.agentId)
+                }}
+              >
+                {chartData.map((entry) => (
+                  <Cell
+                    key={`m-calls-${entry.agentId}`}
+                    fill={barFill(entry, highlightedAgentId, 'calls')}
+                    stroke={
+                      highlightedAgentId === entry.agentId ? '#1d4ed8' : undefined
+                    }
+                    strokeWidth={highlightedAgentId === entry.agentId ? 1 : 0}
+                  />
+                ))}
+              </Bar>
+              <Bar
+                dataKey="registered"
+                name="registered"
+                radius={[0, 3, 3, 0]}
+                maxBarSize={14}
+                legendType="square"
+                style={selectable ? { cursor: 'pointer' } : undefined}
+                onClick={(barData) => {
+                  const row = barData as ChartRow | undefined
+                  if (row?.agentId && onAgentSelect) onAgentSelect(row.agentId)
+                }}
+              >
+                {chartData.map((entry) => (
+                  <Cell
+                    key={`m-registered-${entry.agentId}`}
+                    fill={barFill(entry, highlightedAgentId, 'registered')}
+                    stroke={
+                      highlightedAgentId === entry.agentId ? '#047857' : undefined
+                    }
+                    strokeWidth={highlightedAgentId === entry.agentId ? 1 : 0}
+                  />
+                ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
