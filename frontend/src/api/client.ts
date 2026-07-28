@@ -600,6 +600,9 @@ export type DashboardStats = {
   // agent
   assignedClients?: number
   todayCallbacks?: number
+  callsToday?: number
+  callsYesterday?: number
+  callsDayBeforeYesterday?: number
 }
 
 export const getDashboardStats = (batchId?: string, options?: { refresh?: boolean }) =>

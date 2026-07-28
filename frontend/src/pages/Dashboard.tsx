@@ -94,6 +94,87 @@ function StatCard({
   return <div className={className}>{body}</div>
 }
 
+type CallsTrendTone = 'up' | 'down' | 'neutral'
+
+function callsTrendVsAnteayer(
+  yesterday: number,
+  dayBefore: number
+): { text: string; tone: CallsTrendTone } {
+  if (dayBefore === 0 && yesterday === 0) {
+    return { text: '0%', tone: 'neutral' }
+  }
+  if (dayBefore === 0 && yesterday > 0) {
+    return { text: 'Nuevo', tone: 'up' }
+  }
+  const pct = Math.round(((yesterday - dayBefore) / dayBefore) * 100)
+  if (pct > 0) return { text: `↑ ${pct}%`, tone: 'up' }
+  if (pct < 0) return { text: `↓ ${Math.abs(pct)}%`, tone: 'down' }
+  return { text: '0%', tone: 'neutral' }
+}
+
+/** Agent-only: primary = ayer, % vs anteayer, secondary = Hoy · N. */
+function CallsTrendStatCard({
+  callsYesterday,
+  callsDayBeforeYesterday,
+  callsToday,
+  totalCalls,
+  to,
+  icon: Icon,
+  color,
+}: {
+  callsYesterday: number
+  callsDayBeforeYesterday: number
+  callsToday: number
+  totalCalls?: number
+  to: string
+  icon: React.ElementType
+  color: string
+}) {
+  const trend = callsTrendVsAnteayer(callsYesterday, callsDayBeforeYesterday)
+  const trendClass =
+    trend.tone === 'up'
+      ? 'text-emerald-600'
+      : trend.tone === 'down'
+        ? 'text-red-600'
+        : 'text-gray-400'
+
+  const tooltipParts = [
+    'Número grande: llamadas de ayer. El % compara ayer vs anteayer (días Lima). Debajo: hoy.',
+  ]
+  if (totalCalls != null) {
+    tooltipParts.push(`Total histórico: ${totalCalls}.`)
+  }
+
+  return (
+    <Link
+      to={to}
+      className="card relative block w-full min-h-[7.5rem] p-5 text-left cursor-pointer hover:border-gray-300 hover:shadow-md transition-shadow"
+    >
+      <div className="pr-14">
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <p className="text-3xl font-bold text-gray-900 tabular-nums leading-none">
+            {callsYesterday}
+          </p>
+          <span className={`text-sm font-semibold tabular-nums leading-none ${trendClass}`}>
+            {trend.text}
+          </span>
+          <span className="text-[11px] text-gray-400 leading-none">vs anteayer</span>
+        </div>
+        <p className="text-xs text-gray-400 mt-1.5 tabular-nums">Hoy · {callsToday}</p>
+        <p className="text-sm text-gray-500 mt-2 inline-flex items-center flex-wrap">
+          <span>Llamadas realizadas</span>
+          <HelpTooltip text={tooltipParts.join(' ')} />
+        </p>
+      </div>
+      <div
+        className={`absolute bottom-4 right-4 w-10 h-10 rounded-xl flex items-center justify-center ${color}`}
+      >
+        <Icon size={20} className="text-white" />
+      </div>
+    </Link>
+  )
+}
+
 function scrollToCompanyPipeline() {
   document.getElementById('company-pipeline')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
@@ -388,10 +469,11 @@ export default function Dashboard() {
             icon={Users}
             color="bg-blue-600"
           />
-          <StatCard
-            label="Llamadas realizadas"
-            value={stats?.totalCalls ?? 0}
-            tooltip="Total de llamadas que has registrado"
+          <CallsTrendStatCard
+            callsYesterday={stats?.callsYesterday ?? 0}
+            callsDayBeforeYesterday={stats?.callsDayBeforeYesterday ?? 0}
+            callsToday={stats?.callsToday ?? 0}
+            totalCalls={stats?.totalCalls}
             to="/calls?from=dashboard"
             icon={Phone}
             color="bg-green-600"

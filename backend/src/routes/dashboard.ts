@@ -420,6 +420,16 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       ? { agentId: req.user!.id, company: { importBatchId: batchId } }
       : { agentId: req.user!.id }
 
+    const todayYmd = todayYmdInAppTz()
+    const yesterdayYmd = addDaysYmd(todayYmd, -1)
+    const dayBeforeYmd = addDaysYmd(todayYmd, -2)
+    const todayStart = localDayStartUtc(todayYmd)
+    const todayEnd = localDayEndUtc(todayYmd)
+    const yesterdayStart = localDayStartUtc(yesterdayYmd)
+    const yesterdayEnd = localDayEndUtc(yesterdayYmd)
+    const dayBeforeStart = localDayStartUtc(dayBeforeYmd)
+    const dayBeforeEnd = localDayEndUtc(dayBeforeYmd)
+
     const [assignedContacts, assignedCompanies, totalCalls] = await Promise.all([
       prisma.assignment.count({ where: { agentId: req.user!.id, ...batchFilter } }),
       prisma.company.findMany({
@@ -429,7 +439,14 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       prisma.callLog.count({ where: callFilter }),
     ])
 
-    const [pendingCallbacks, todayCallbacks, recentCalls] = await Promise.all([
+    const [
+      pendingCallbacks,
+      todayCallbacks,
+      recentCalls,
+      callsToday,
+      callsYesterday,
+      callsDayBeforeYesterday,
+    ] = await Promise.all([
       prisma.callback.count({ where: { ...cbFilter, completed: false } }),
       prisma.callback.count({
         where: {
@@ -450,6 +467,15 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
           contact: { select: { nombre: true } },
         },
       }),
+      prisma.callLog.count({
+        where: { ...callFilter, calledAt: { gte: todayStart, lte: todayEnd } },
+      }),
+      prisma.callLog.count({
+        where: { ...callFilter, calledAt: { gte: yesterdayStart, lte: yesterdayEnd } },
+      }),
+      prisma.callLog.count({
+        where: { ...callFilter, calledAt: { gte: dayBeforeStart, lte: dayBeforeEnd } },
+      }),
     ])
 
     const lastByCompany = await getLastDispositionByCompanyIds(
@@ -467,6 +493,9 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       assignedContacts,
       assignedCompanies: assignedCompanies.length,
       totalCalls,
+      callsToday,
+      callsYesterday,
+      callsDayBeforeYesterday,
       pendingCallbacks,
       todayCallbacks,
       companyPipeline,
