@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getDashboardStats, getMyBatches } from '../api/client'
@@ -12,6 +12,7 @@ import {
   Layers,
   RefreshCw,
   ArrowRight,
+  Search,
   X,
 } from 'lucide-react'
 import { RecentCallRow } from '../components/RecentCallRow'
@@ -96,41 +97,52 @@ function StatCard({
 
 type CallsTrendTone = 'up' | 'down' | 'neutral'
 
-function callsTrendVsAnteayer(
-  yesterday: number,
-  dayBefore: number
+function formatDayLabelEs(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number)
+  if (!y || !m || !d) return ymd
+  const date = new Date(y, m - 1, d)
+  return format(date, 'd MMM', { locale: es })
+}
+
+function callsTrendVsPrevActive(
+  lastCount: number,
+  prevCount: number | null | undefined
 ): { text: string; tone: CallsTrendTone } {
-  if (dayBefore === 0 && yesterday === 0) {
+  if (prevCount == null || prevCount <= 0) {
+    return { text: '—', tone: 'neutral' }
+  }
+  if (lastCount === 0 && prevCount === 0) {
     return { text: '0%', tone: 'neutral' }
   }
-  if (dayBefore === 0 && yesterday > 0) {
-    return { text: 'Nuevo', tone: 'up' }
-  }
-  const pct = Math.round(((yesterday - dayBefore) / dayBefore) * 100)
+  const pct = Math.round(((lastCount - prevCount) / prevCount) * 100)
   if (pct > 0) return { text: `↑ ${pct}%`, tone: 'up' }
   if (pct < 0) return { text: `↓ ${Math.abs(pct)}%`, tone: 'down' }
   return { text: '0%', tone: 'neutral' }
 }
 
-/** Agent-only: primary = ayer, % vs anteayer, secondary = Hoy · N. */
+/** Agent-only: primary = último día con actividad, % vs día activo anterior, secondary = Hoy · N. */
 function CallsTrendStatCard({
-  callsYesterday,
-  callsDayBeforeYesterday,
+  callsLastActiveDay,
+  callsPrevActiveDay,
+  lastActiveDayYmd,
+  prevActiveDayYmd,
   callsToday,
   totalCalls,
   to,
   icon: Icon,
   color,
 }: {
-  callsYesterday: number
-  callsDayBeforeYesterday: number
+  callsLastActiveDay: number
+  callsPrevActiveDay: number | null
+  lastActiveDayYmd: string | null
+  prevActiveDayYmd: string | null
   callsToday: number
   totalCalls?: number
   to: string
   icon: React.ElementType
   color: string
 }) {
-  const trend = callsTrendVsAnteayer(callsYesterday, callsDayBeforeYesterday)
+  const trend = callsTrendVsPrevActive(callsLastActiveDay, callsPrevActiveDay)
   const trendClass =
     trend.tone === 'up'
       ? 'text-emerald-600'
@@ -138,9 +150,23 @@ function CallsTrendStatCard({
         ? 'text-red-600'
         : 'text-gray-400'
 
+  const compareLabel =
+    lastActiveDayYmd && prevActiveDayYmd
+      ? `${formatDayLabelEs(lastActiveDayYmd)} vs ${formatDayLabelEs(prevActiveDayYmd)}`
+      : lastActiveDayYmd
+        ? formatDayLabelEs(lastActiveDayYmd)
+        : 'Sin días previos'
+
   const tooltipParts = [
-    'Número grande: llamadas de ayer. El % compara ayer vs anteayer (días Lima). Debajo: hoy.',
+    'Número grande: llamadas del último día con actividad (antes de hoy, zona Lima).',
+    'El % compara ese día con el día activo anterior (omite días en 0).',
+    'Debajo: llamadas de hoy.',
   ]
+  if (lastActiveDayYmd && prevActiveDayYmd) {
+    tooltipParts.push(`Comparación: ${compareLabel}.`)
+  } else if (lastActiveDayYmd) {
+    tooltipParts.push(`Último día con llamadas: ${formatDayLabelEs(lastActiveDayYmd)}.`)
+  }
   if (totalCalls != null) {
     tooltipParts.push(`Total histórico: ${totalCalls}.`)
   }
@@ -149,16 +175,19 @@ function CallsTrendStatCard({
     <Link
       to={to}
       className="card relative block w-full min-h-[7.5rem] p-5 text-left cursor-pointer hover:border-gray-300 hover:shadow-md transition-shadow"
+      title={lastActiveDayYmd && prevActiveDayYmd ? compareLabel : undefined}
     >
       <div className="pr-14">
         <div className="flex items-baseline gap-2 flex-wrap">
           <p className="text-3xl font-bold text-gray-900 tabular-nums leading-none">
-            {callsYesterday}
+            {callsLastActiveDay}
           </p>
           <span className={`text-sm font-semibold tabular-nums leading-none ${trendClass}`}>
             {trend.text}
           </span>
-          <span className="text-[11px] text-gray-400 leading-none">vs anteayer</span>
+          <span className="text-[11px] text-gray-400 leading-none">
+            {prevActiveDayYmd ? `vs ${formatDayLabelEs(prevActiveDayYmd)}` : 'vs —'}
+          </span>
         </div>
         <p className="text-xs text-gray-400 mt-1.5 tabular-nums">Hoy · {callsToday}</p>
         <p className="text-sm text-gray-500 mt-2 inline-flex items-center flex-wrap">
@@ -177,6 +206,256 @@ function CallsTrendStatCard({
 
 function scrollToCompanyPipeline() {
   document.getElementById('company-pipeline')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+type AgentBatchChip = {
+  id: string
+  filename: string
+  companyCount?: number
+  clientCount: number
+}
+
+const MAX_VISIBLE_BATCH_CHIPS = 4
+const OVERFLOW_SEARCH_THRESHOLD = 6
+
+function batchChipLabel(filename: string) {
+  return filename.replace(/\.[^.]+$/, '')
+}
+
+function batchChipCount(b: AgentBatchChip) {
+  return b.companyCount ?? b.clientCount
+}
+
+const chipBaseClass =
+  'px-3 py-1.5 rounded-full text-xs font-medium transition-colors border'
+const chipSelectedClass = 'bg-blue-600 text-white border-blue-600 shadow-sm'
+const chipIdleClass =
+  'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-600'
+
+/**
+ * Visible-slot rules (agent lote row):
+ * - Always render Todos separately.
+ * - At most 4 batch chips in the row.
+ * - Prefer the 4 most recent (API already orderBy createdAt desc).
+ * - If selected is older than those 4: pin selected first, then fill
+ *   remaining slots from recent excluding selected.
+ * - Everything else goes behind "+N más".
+ */
+function pickVisibleBatchChips(
+  batches: AgentBatchChip[],
+  selectedBatchId: string | undefined
+): { visible: AgentBatchChip[]; overflow: AgentBatchChip[] } {
+  if (batches.length <= MAX_VISIBLE_BATCH_CHIPS) {
+    return { visible: batches, overflow: [] }
+  }
+
+  const top = batches.slice(0, MAX_VISIBLE_BATCH_CHIPS)
+  const selected = selectedBatchId
+    ? batches.find((b) => b.id === selectedBatchId)
+    : undefined
+  const selectedInTop = Boolean(selected && top.some((b) => b.id === selected.id))
+
+  let visible: AgentBatchChip[]
+  if (selected && !selectedInTop) {
+    const rest = batches.filter((b) => b.id !== selected.id)
+    visible = [selected, ...rest.slice(0, MAX_VISIBLE_BATCH_CHIPS - 1)]
+  } else {
+    visible = top
+  }
+
+  const visibleIds = new Set(visible.map((b) => b.id))
+  return {
+    visible,
+    overflow: batches.filter((b) => !visibleIds.has(b.id)),
+  }
+}
+
+function AgentBatchChipButton({
+  batch,
+  selected,
+  onSelect,
+}: {
+  batch: AgentBatchChip
+  selected: boolean
+  onSelect: (id: string) => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(batch.id)}
+      className={`${chipBaseClass} ${selected ? chipSelectedClass : chipIdleClass}`}
+    >
+      {batchChipLabel(batch.filename)}
+      <span className={`ml-1.5 ${selected ? 'text-blue-200' : 'text-gray-400'}`}>
+        {batchChipCount(batch)}
+      </span>
+    </button>
+  )
+}
+
+function AgentBatchOverflowMenu({
+  overflow,
+  selectedBatchId,
+  onSelect,
+}: {
+  overflow: AgentBatchChip[]
+  selectedBatchId: string | undefined
+  onSelect: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const rootRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const showSearch = overflow.length > OVERFLOW_SEARCH_THRESHOLD
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return overflow
+    return overflow.filter((b) => batchChipLabel(b.filename).toLowerCase().includes(q))
+  }, [overflow, query])
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) {
+      setQuery('')
+      return
+    }
+    if (showSearch) {
+      requestAnimationFrame(() => searchRef.current?.focus())
+    }
+  }, [open, showSearch])
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => setOpen((v) => !v)}
+        className={`${chipBaseClass} ${open ? chipSelectedClass : chipIdleClass}`}
+      >
+        +{overflow.length} más
+      </button>
+      {open ? (
+        <div
+          role="listbox"
+          aria-label="Más lotes"
+          className="absolute left-0 z-50 mt-1.5 w-[min(280px,85vw)] rounded-xl border border-gray-200 bg-white shadow-lg overflow-hidden"
+        >
+          {showSearch ? (
+            <div className="flex items-center gap-2 border-b border-gray-100 px-2.5 py-2">
+              <Search size={14} className="text-gray-400 shrink-0" aria-hidden />
+              <input
+                ref={searchRef}
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Buscar lote…"
+                aria-label="Buscar lote"
+                className="w-full min-w-0 bg-transparent text-xs text-gray-800 placeholder:text-gray-400 outline-none"
+              />
+            </div>
+          ) : null}
+          <ul className="max-h-64 overflow-y-auto py-1">
+            {filtered.map((b) => {
+              const selected = selectedBatchId === b.id
+              return (
+                <li key={b.id} role="option" aria-selected={selected}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSelect(b.id)
+                      setOpen(false)
+                    }}
+                    className={`w-full flex items-center justify-between gap-3 px-3 py-2 text-left text-xs transition-colors ${
+                      selected
+                        ? 'bg-blue-50 text-blue-700'
+                        : 'text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="truncate font-medium">{batchChipLabel(b.filename)}</span>
+                    <span
+                      className={`tabular-nums shrink-0 ${
+                        selected ? 'text-blue-400' : 'text-gray-400'
+                      }`}
+                    >
+                      {batchChipCount(b)}
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
+            {filtered.length === 0 ? (
+              <li className="px-3 py-3 text-xs text-gray-400 text-center">Sin coincidencias</li>
+            ) : null}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function AgentLoteFilterChips({
+  batches,
+  selectedBatchId,
+  onSelect,
+}: {
+  batches: AgentBatchChip[]
+  selectedBatchId: string | undefined
+  onSelect: (id: string | undefined) => void
+}) {
+  const { visible, overflow } = useMemo(
+    () => pickVisibleBatchChips(batches, selectedBatchId),
+    [batches, selectedBatchId]
+  )
+
+  const todosCount = batches.reduce((s, b) => s + batchChipCount(b), 0)
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-center gap-1.5 text-gray-400 mr-1">
+        <Layers size={14} />
+        <span className="text-xs font-medium">Lote:</span>
+      </div>
+      <button
+        type="button"
+        onClick={() => onSelect(undefined)}
+        className={`${chipBaseClass} ${!selectedBatchId ? chipSelectedClass : chipIdleClass}`}
+      >
+        Todos ({todosCount})
+      </button>
+      {visible.map((b) => (
+        <AgentBatchChipButton
+          key={b.id}
+          batch={b}
+          selected={selectedBatchId === b.id}
+          onSelect={(id) => onSelect(id)}
+        />
+      ))}
+      {overflow.length > 0 ? (
+        <AgentBatchOverflowMenu
+          overflow={overflow}
+          selectedBatchId={selectedBatchId}
+          onSelect={(id) => onSelect(id)}
+        />
+      ) : null}
+    </div>
+  )
 }
 
 function CompanyContactRateModal({
@@ -362,38 +641,11 @@ export default function Dashboard() {
 
       {/* Batch filter chips (agent only) */}
       {!isAdmin && myBatches && myBatches.length > 1 && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5 text-gray-400 mr-1">
-            <Layers size={14} />
-            <span className="text-xs font-medium">Lote:</span>
-          </div>
-          <button
-            onClick={() => setSelectedBatchId(undefined)}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
-              !selectedBatchId
-                ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-600'
-            }`}
-          >
-            Todos ({myBatches.reduce((s: number, b: { clientCount: number }) => s + b.clientCount, 0)})
-          </button>
-          {myBatches.map((b: { id: string; filename: string; clientCount: number }) => (
-            <button
-              key={b.id}
-              onClick={() => setSelectedBatchId(b.id)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
-                selectedBatchId === b.id
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-600'
-              }`}
-            >
-              {b.filename.replace(/\.[^.]+$/, '')}
-              <span className={`ml-1.5 ${selectedBatchId === b.id ? 'text-blue-200' : 'text-gray-400'}`}>
-                {b.clientCount}
-              </span>
-            </button>
-          ))}
-        </div>
+        <AgentLoteFilterChips
+          batches={myBatches}
+          selectedBatchId={selectedBatchId}
+          onSelect={setSelectedBatchId}
+        />
       )}
 
       {/* Stat cards */}
@@ -457,21 +709,18 @@ export default function Dashboard() {
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
-            label="Contactos asignados"
-            value={stats?.assignedContacts ?? stats?.assignedClients ?? 0}
-            subtitle={
-              stats?.assignedCompanies != null
-                ? `${stats.assignedCompanies} empresas`
-                : undefined
-            }
-            tooltip="Contactos que tienes asignados para gestionar"
+            label="Empresas asignadas"
+            value={stats?.assignedCompanies ?? 0}
+            tooltip="Empresas (RUC) que tienes asignadas para gestionar"
             to="/my-leads?from=dashboard"
             icon={Users}
             color="bg-blue-600"
           />
           <CallsTrendStatCard
-            callsYesterday={stats?.callsYesterday ?? 0}
-            callsDayBeforeYesterday={stats?.callsDayBeforeYesterday ?? 0}
+            callsLastActiveDay={stats?.callsLastActiveDay ?? 0}
+            callsPrevActiveDay={stats?.callsPrevActiveDay ?? null}
+            lastActiveDayYmd={stats?.lastActiveDayYmd ?? null}
+            prevActiveDayYmd={stats?.prevActiveDayYmd ?? null}
             callsToday={stats?.callsToday ?? 0}
             totalCalls={stats?.totalCalls}
             to="/calls?from=dashboard"

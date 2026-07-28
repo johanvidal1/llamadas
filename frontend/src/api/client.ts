@@ -601,8 +601,12 @@ export type DashboardStats = {
   assignedClients?: number
   todayCallbacks?: number
   callsToday?: number
-  callsYesterday?: number
-  callsDayBeforeYesterday?: number
+  /** Last calendar day before today (app TZ) with calls > 0 */
+  callsLastActiveDay?: number
+  /** Previous day with calls > 0 before lastActiveDay; null if none */
+  callsPrevActiveDay?: number | null
+  lastActiveDayYmd?: string | null
+  prevActiveDayYmd?: string | null
 }
 
 export const getDashboardStats = (batchId?: string, options?: { refresh?: boolean }) =>

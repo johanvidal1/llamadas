@@ -19,6 +19,7 @@ import {
   fetchAgentGapStatsSql,
   fetchCallActivitySeriesSql,
   fetchGlobalGapStatsSql,
+  fetchLastActiveCallDays,
   fetchTotalCallsSql,
   parseDateParam,
   parseDateEndParam,
@@ -408,7 +409,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
     setCachedDashboardStats(cacheKey, data)
     res.json(data)
   } else {
-    const batchFilter = batchId ? { company: { importBatchId: batchId } } : {}
+    const batchFilter = batchId ? { contact: { company: { importBatchId: batchId } } } : {}
     const agentCompanyFilter = {
       contacts: { some: { assignment: { agentId: req.user!.id } } },
       ...(batchId ? { importBatchId: batchId } : {}),
@@ -421,14 +422,8 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       : { agentId: req.user!.id }
 
     const todayYmd = todayYmdInAppTz()
-    const yesterdayYmd = addDaysYmd(todayYmd, -1)
-    const dayBeforeYmd = addDaysYmd(todayYmd, -2)
     const todayStart = localDayStartUtc(todayYmd)
     const todayEnd = localDayEndUtc(todayYmd)
-    const yesterdayStart = localDayStartUtc(yesterdayYmd)
-    const yesterdayEnd = localDayEndUtc(yesterdayYmd)
-    const dayBeforeStart = localDayStartUtc(dayBeforeYmd)
-    const dayBeforeEnd = localDayEndUtc(dayBeforeYmd)
 
     const [assignedContacts, assignedCompanies, totalCalls] = await Promise.all([
       prisma.assignment.count({ where: { agentId: req.user!.id, ...batchFilter } }),
@@ -439,44 +434,45 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       prisma.callLog.count({ where: callFilter }),
     ])
 
-    const [
-      pendingCallbacks,
-      todayCallbacks,
-      recentCalls,
-      callsToday,
-      callsYesterday,
-      callsDayBeforeYesterday,
-    ] = await Promise.all([
-      prisma.callback.count({ where: { ...cbFilter, completed: false } }),
-      prisma.callback.count({
-        where: {
-          ...cbFilter,
-          completed: false,
-          scheduledAt: {
-            gte: new Date(new Date().setHours(0, 0, 0, 0)),
-            lte: new Date(new Date().setHours(23, 59, 59, 999)),
+    const [pendingCallbacks, todayCallbacks, recentCalls, callsToday, activeCallDays] =
+      await Promise.all([
+        prisma.callback.count({ where: { ...cbFilter, completed: false } }),
+        prisma.callback.count({
+          where: {
+            ...cbFilter,
+            completed: false,
+            scheduledAt: {
+              gte: new Date(new Date().setHours(0, 0, 0, 0)),
+              lte: new Date(new Date().setHours(23, 59, 59, 999)),
+            },
           },
-        },
-      }),
-      prisma.callLog.findMany({
-        where: callFilter,
-        take: 10,
-        orderBy: { calledAt: 'desc' },
-        include: {
-          company: { select: { id: true, ruc: true, razonSocial: true } },
-          contact: { select: { nombre: true } },
-        },
-      }),
-      prisma.callLog.count({
-        where: { ...callFilter, calledAt: { gte: todayStart, lte: todayEnd } },
-      }),
-      prisma.callLog.count({
-        where: { ...callFilter, calledAt: { gte: yesterdayStart, lte: yesterdayEnd } },
-      }),
-      prisma.callLog.count({
-        where: { ...callFilter, calledAt: { gte: dayBeforeStart, lte: dayBeforeEnd } },
-      }),
-    ])
+        }),
+        prisma.callLog.findMany({
+          where: callFilter,
+          take: 10,
+          orderBy: { calledAt: 'desc' },
+          include: {
+            company: { select: { id: true, ruc: true, razonSocial: true } },
+            contact: { select: { nombre: true } },
+          },
+        }),
+        prisma.callLog.count({
+          where: { ...callFilter, calledAt: { gte: todayStart, lte: todayEnd } },
+        }),
+        fetchLastActiveCallDays({
+          agentId: req.user!.id,
+          batchId: batchId || undefined,
+          beforeExclusiveYmd: todayYmd,
+          limit: 2,
+        }),
+      ])
+
+    const lastActive = activeCallDays[0]
+    const prevActive = activeCallDays[1]
+    const callsLastActiveDay = lastActive?.count ?? 0
+    const callsPrevActiveDay = prevActive?.count ?? null
+    const lastActiveDayYmd = lastActive?.ymd ?? null
+    const prevActiveDayYmd = prevActive?.ymd ?? null
 
     const lastByCompany = await getLastDispositionByCompanyIds(
       assignedCompanies.map((c) => c.id),
@@ -494,8 +490,10 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       assignedCompanies: assignedCompanies.length,
       totalCalls,
       callsToday,
-      callsYesterday,
-      callsDayBeforeYesterday,
+      callsLastActiveDay,
+      callsPrevActiveDay,
+      lastActiveDayYmd,
+      prevActiveDayYmd,
       pendingCallbacks,
       todayCallbacks,
       companyPipeline,
@@ -1484,15 +1482,35 @@ router.get('/my-batches', requireAuth, async (req: AuthRequest, res: Response) =
     orderBy: { createdAt: 'desc' },
   })
 
-  const counts = await Promise.all(
-    batches.map((b) =>
-      prisma.assignment.count({
-        where: { agentId, contact: { company: { importBatchId: b.id } } },
-      })
-    )
-  )
+  const [companyCounts, contactCounts] = await Promise.all([
+    Promise.all(
+      batches.map((b) =>
+        prisma.company.count({
+          where: {
+            importBatchId: b.id,
+            contacts: { some: { assignment: { agentId } } },
+          },
+        })
+      )
+    ),
+    Promise.all(
+      batches.map((b) =>
+        prisma.assignment.count({
+          where: { agentId, contact: { company: { importBatchId: b.id } } },
+        })
+      )
+    ),
+  ])
 
-  res.json(batches.map((b, i) => ({ ...b, clientCount: counts[i], contactCount: counts[i] })))
+  // clientCount = empresas (chips/UI); contactCount kept for callers that need contacts
+  res.json(
+    batches.map((b, i) => ({
+      ...b,
+      clientCount: companyCounts[i],
+      companyCount: companyCounts[i],
+      contactCount: contactCounts[i],
+    }))
+  )
 })
 
 export default router

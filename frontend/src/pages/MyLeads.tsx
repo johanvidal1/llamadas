@@ -27,6 +27,7 @@ import {
   CheckCircle2,
   Sparkles,
   X,
+  GripHorizontal,
 } from 'lucide-react'
 import { dedupeMobileLinesByNumber } from '../lib/mobileLine'
 import CallModal from '../components/CallModal'
@@ -2926,10 +2927,16 @@ export default function MyLeads() {
               role="separator"
               aria-orientation="horizontal"
               aria-valuenow={agendadosSplitPct}
+              aria-label="Redimensionar panel Agendados"
+              title="Arrastrar para ajustar altura"
               onMouseDown={handleSplitMouseDown}
-              className="hidden lg:flex shrink-0 h-1.5 cursor-row-resize bg-gray-100 hover:bg-blue-100 border-y border-gray-200 items-center justify-center group"
+              className="hidden lg:flex shrink-0 h-3 cursor-row-resize bg-gray-50 hover:bg-blue-50 border-y border-gray-200 items-center justify-center gap-1.5 group select-none"
             >
-              <div className="w-10 h-0.5 bg-gray-300 group-hover:bg-blue-400 rounded-full" />
+              <GripHorizontal size={12} className="text-gray-300 group-hover:text-blue-400" />
+              <span className="text-[9px] font-medium text-gray-300 group-hover:text-blue-400 uppercase tracking-wide">
+                Arrastrar
+              </span>
+              <GripHorizontal size={12} className="text-gray-300 group-hover:text-blue-400" />
             </div>
 
             {/* ── 3. HISTORIAL DE LLAMADAS ── flex-1, scroll, más recientes primero */}

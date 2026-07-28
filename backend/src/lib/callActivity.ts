@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { prisma } from './prisma'
 import {
   addDaysYmd,
@@ -6,6 +7,7 @@ import {
   localDayStartUtc,
   parseYmdString,
   todayYmdInAppTz,
+  toLocalWallClockSql,
 } from './appTimezone'
 import { sqlAndTenant } from './tenant'
 
@@ -385,6 +387,59 @@ export async function fetchAgentGapStatsSql(
     FROM gaps g
     GROUP BY g."agentId"
   `
+}
+
+/**
+ * Last calendar days (app TZ) before `beforeExclusiveYmd` with at least one call.
+ * Day A = most recent with calls > 0; Day B = previous with calls > 0 (skips empty days).
+ */
+export async function fetchLastActiveCallDays(params: {
+  agentId: string
+  batchId?: string
+  /** Exclusive upper bound as YMD (typically today); only days strictly before this. */
+  beforeExclusiveYmd: string
+  limit?: number
+}): Promise<{ ymd: string; count: number }[]> {
+  const { agentId, batchId, beforeExclusiveYmd, limit = 2 } = params
+  const beforeStart = localDayStartUtc(beforeExclusiveYmd)
+  const tenantCl = sqlAndTenant('cl')
+  const tenantCo = sqlAndTenant('co')
+  const localDay = toLocalWallClockSql('cl."calledAt"')
+
+  type Row = { ymd: string; count: bigint }
+  let rows: Row[]
+
+  const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 14)
+
+  if (batchId) {
+    rows = await prisma.$queryRaw<Row[]>`
+      SELECT TO_CHAR(DATE(${localDay}), 'YYYY-MM-DD') AS ymd, COUNT(*)::bigint AS count
+      FROM "CallLog" cl
+      INNER JOIN "Company" co ON co.id = cl."companyId"
+      WHERE cl."calledAt" < ${beforeStart}
+        ${tenantCl} ${tenantCo}
+        AND cl."agentId" = ${agentId}
+        AND co."importBatchId" = ${batchId}
+      GROUP BY 1
+      HAVING COUNT(*) > 0
+      ORDER BY 1 DESC
+      LIMIT ${Prisma.raw(String(safeLimit))}
+    `
+  } else {
+    rows = await prisma.$queryRaw<Row[]>`
+      SELECT TO_CHAR(DATE(${localDay}), 'YYYY-MM-DD') AS ymd, COUNT(*)::bigint AS count
+      FROM "CallLog" cl
+      WHERE cl."calledAt" < ${beforeStart}
+        ${tenantCl}
+        AND cl."agentId" = ${agentId}
+      GROUP BY 1
+      HAVING COUNT(*) > 0
+      ORDER BY 1 DESC
+      LIMIT ${Prisma.raw(String(safeLimit))}
+    `
+  }
+
+  return rows.map((r) => ({ ymd: r.ymd, count: Number(r.count) }))
 }
 
 export async function fetchTotalCallsSql(filters: CallActivityFilters): Promise<number> {

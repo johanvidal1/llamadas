@@ -456,11 +456,11 @@ export default function Assignments() {
   const [agentsViewMode, setAgentsViewMode] = useState<AgentsViewMode>(() => {
     try {
       const storedUser = user ?? (JSON.parse(localStorage.getItem('user') || 'null') as { id?: string } | null)
-      if (!storedUser?.id) return 'cards'
+      if (!storedUser?.id) return 'list'
       const saved = localStorage.getItem(agentsViewStorageKey(storedUser.id))
-      return saved === 'list' || saved === 'cards' ? saved : 'cards'
+      return saved === 'list' || saved === 'cards' ? saved : 'list'
     } catch {
-      return 'cards'
+      return 'list'
     }
   })
   const [agentSearch, setAgentSearch] = useState('')
@@ -468,7 +468,7 @@ export default function Assignments() {
   useEffect(() => {
     if (!user?.id) return
     const saved = localStorage.getItem(agentsViewStorageKey(user.id))
-    setAgentsViewMode(saved === 'list' || saved === 'cards' ? saved : 'cards')
+    setAgentsViewMode(saved === 'list' || saved === 'cards' ? saved : 'list')
   }, [user?.id])
 
   const setAgentsView = (mode: AgentsViewMode) => {
