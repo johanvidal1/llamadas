@@ -196,7 +196,7 @@ export default function CommandPalette({ open, onClose, isAdmin, isPlatformUser 
         hint: a.email,
         keywords: `${a.name} ${a.email}`,
         icon: PhoneCall,
-        action: () => go('/agents'),
+        action: () => go(`/agents?highlight=${encodeURIComponent(a.id)}`),
       }))
   }, [agents, go, isAdmin, query])
 

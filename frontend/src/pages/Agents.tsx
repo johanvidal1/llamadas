@@ -1,4 +1,5 @@
-import { useState, Fragment } from 'react'
+import { useState, useEffect, useRef, Fragment, type MutableRefObject } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getUsers,
@@ -131,6 +132,8 @@ function UserTable({
   onToggleShowTotalCallsColumn,
   showTotalCallbacksColumn,
   onToggleShowTotalCallbacksColumn,
+  highlightedUserId = null,
+  rowRefs,
 }: {
   users: AppUser[]
   onEdit: (u: AppUser) => void
@@ -148,6 +151,8 @@ function UserTable({
   onToggleShowTotalCallsColumn: () => void
   showTotalCallbacksColumn: boolean
   onToggleShowTotalCallbacksColumn: () => void
+  highlightedUserId?: string | null
+  rowRefs?: MutableRefObject<Map<string, HTMLTableRowElement>>
 }) {
   const [expandedPresenceId, setExpandedPresenceId] = useState<string | null>(null)
   const [presencePopover, setPresencePopover] = useState<{
@@ -249,10 +254,21 @@ function UserTable({
             : u.id === currentUserId
               ? 'No puedes desactivar tu propia cuenta'
               : 'Desactivar usuario'
+          const isHighlighted = highlightedUserId === u.id
 
           return (
             <Fragment key={u.id}>
-              <tr className={`hover:bg-gray-50 ${muted ? 'text-gray-500' : ''}`}>
+              <tr
+                ref={(el) => {
+                  if (!rowRefs) return
+                  if (el) rowRefs.current.set(u.id, el)
+                  else rowRefs.current.delete(u.id)
+                }}
+                data-user-id={u.id}
+                className={`hover:bg-gray-50 transition-colors ${muted ? 'text-gray-500' : ''} ${
+                  isHighlighted ? 'bg-amber-50 ring-2 ring-inset ring-amber-400' : ''
+                }`}
+              >
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
                     <div
@@ -484,6 +500,7 @@ function UserTable({
 
 export default function Agents() {
   const { user } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
   const isAdmin = user?.role === 'ADMIN'
   const isSuperAdmin = user?.isSuperAdmin === true
   const isSystemOwner = user?.isSystemOwner === true
@@ -503,6 +520,9 @@ export default function Agents() {
   const [showTotalCallbacksColumn, setShowTotalCallbacksColumn] = useState(
     readShowTotalCallbacksColumn,
   )
+  const [highlightedUserId, setHighlightedUserId] = useState<string | null>(null)
+  const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map())
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const qc = useQueryClient()
 
   const toggleShowTotalCallsColumn = () => {
@@ -606,6 +626,55 @@ export default function Agents() {
 
   const activeUsers = visibleUsers.filter((u) => u.active)
   const inactiveUsers = visibleUsers.filter((u) => !u.active)
+  const highlightParam = searchParams.get('highlight')
+
+  // Ctrl+K → /agents?highlight=<userId>: amber flash (MyLeads "Última registrada" pattern)
+  useEffect(() => {
+    if (!highlightParam || isLoading) return
+
+    const target = users.find(
+      (u) => u.id === highlightParam && (!u.isSystemOwner || isSystemOwner),
+    )
+
+    setSearchParams(
+      (prev) => {
+        if (!prev.has('highlight')) return prev
+        const next = new URLSearchParams(prev)
+        next.delete('highlight')
+        return next
+      },
+      { replace: true },
+    )
+
+    if (!target) return
+
+    if (!target.active) setShowInactive(true)
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
+    setHighlightedUserId(target.id)
+
+    highlightTimerRef.current = setTimeout(() => {
+      setHighlightedUserId(null)
+      highlightTimerRef.current = null
+    }, 2800)
+  }, [highlightParam, isLoading, users, isSystemOwner, setSearchParams])
+
+  // Scroll after row mounts (esp. when expanding inactive section)
+  useEffect(() => {
+    if (!highlightedUserId) return
+    const scrollTimer = window.setTimeout(() => {
+      rowRefs.current.get(highlightedUserId)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
+    }, showInactive ? 120 : 50)
+    return () => window.clearTimeout(scrollTimer)
+  }, [highlightedUserId, showInactive])
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
+    }
+  }, [])
 
   const createMutation = useMutation({
     mutationFn: (data: object) => createUser(data),
@@ -866,6 +935,8 @@ export default function Agents() {
             onToggleShowTotalCallsColumn={toggleShowTotalCallsColumn}
             showTotalCallbacksColumn={showTotalCallbacksColumn}
             onToggleShowTotalCallbacksColumn={toggleShowTotalCallbacksColumn}
+            highlightedUserId={highlightedUserId}
+            rowRefs={rowRefs}
           />
         )}
       </div>
@@ -905,6 +976,8 @@ export default function Agents() {
                 onToggleShowTotalCallsColumn={toggleShowTotalCallsColumn}
                 showTotalCallbacksColumn={showTotalCallbacksColumn}
                 onToggleShowTotalCallbacksColumn={toggleShowTotalCallbacksColumn}
+                highlightedUserId={highlightedUserId}
+                rowRefs={rowRefs}
               />
             </div>
           )}
