@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { format } from 'date-fns'
-import { es } from 'date-fns/locale'
 import type { AgentPresence, AgentPresenceStatus } from '../api/client'
 
 const POPOVER_WIDTH = 288
@@ -42,8 +40,17 @@ export function formatSessionDuration(loginAt: string, lastSeenAt: string): stri
   return `${hours} h ${mins} min`
 }
 
-function formatPresenceDateTime(iso: string): string {
-  return format(new Date(iso), 'dd/MM/yyyy HH:mm', { locale: es })
+/** Display timestamps in America/Lima (Peru). */
+export function formatPresenceDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('es-PE', {
+    timeZone: 'America/Lima',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
 }
 
 function presenceStatusLabel(status: AgentPresenceStatus): string {
@@ -174,7 +181,7 @@ export function PresenceDetailPopover({
       ) : (
         <div className="space-y-2 text-xs">
           <div>
-            <p className="font-semibold text-gray-900">Presencia del agente</p>
+            <p className="font-semibold text-gray-900">Detalle de presencia</p>
             <p className="text-gray-500 mt-0.5">
               Estado actual:{' '}
               <span
@@ -197,6 +204,12 @@ export function PresenceDetailPopover({
           </div>
 
           <dl className="space-y-1.5 text-gray-600">
+            <div>
+              <dt className="text-gray-500">Entrada</dt>
+              <dd className="font-medium text-gray-800">
+                {formatPresenceDateTime(session.loginAt)}
+              </dd>
+            </div>
             <div>
               <dt className="text-gray-500">Última actividad</dt>
               <dd className={`font-medium ${status === 'offline' ? 'text-gray-900' : 'text-gray-800'}`}>

@@ -5,7 +5,7 @@ import { invalidateAuthUserCache } from '../lib/authUserCache'
 import { prisma } from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { excludeArchivedAgentWhere } from '../lib/archivedAgent'
-import { isAdminUser } from '../lib/userPermissions'
+import { isAdminUser, isSystemOwnerUser } from '../lib/userPermissions'
 import { OPTICK_TENANT_ID } from '../lib/tenant'
 
 const router = Router()
@@ -174,12 +174,16 @@ router.get('/agents', requireAuth, async (req: AuthRequest, res: Response) => {
     return
   }
 
+  // System owner may also see ADMIN presence (login/last activity). Regular admins: agents only.
+  const roles = isSystemOwnerUser(req.user) ? (['AGENT', 'ADMIN'] as const) : (['AGENT'] as const)
+
   const agents = await prisma.user.findMany({
-    where: { role: 'AGENT', ...excludeArchivedAgentWhere },
+    where: { role: { in: [...roles] }, ...excludeArchivedAgentWhere },
     select: {
       id: true,
       name: true,
       email: true,
+      role: true,
       sessions: {
         where: {
           lastSeenAt: { gte: new Date(Date.now() - STALE_SESSION_MS) },
@@ -195,6 +199,7 @@ router.get('/agents', requireAuth, async (req: AuthRequest, res: Response) => {
       id: agent.id,
       name: agent.name,
       email: agent.email,
+      role: agent.role,
       status: agentStatus(agent.sessions),
       sessions: agent.sessions.map((session) => ({
         browser: session.browser,

@@ -36,7 +36,7 @@ import {
   RotateCcw,
   ArrowLeft,
 } from 'lucide-react'
-import { PresenceDetailPopover, formatTimeAgo } from '../components/PresenceDetailPopover'
+import { PresenceDetailPopover, formatTimeAgo, formatPresenceDateTime } from '../components/PresenceDetailPopover'
 
 interface FormState {
   name: string
@@ -232,6 +232,10 @@ function UserTable({
           const adminTarget = isAdminUser(u)
           const presence = presenceByUserId?.[u.id]
           const isAgentRole = u.role === 'AGENT'
+          // System owner sees admin presence; everyone with presence data sees agents.
+          const showPresence =
+            !!presenceByUserId &&
+            (isAgentRole || (adminTarget && currentUserIsSystemOwner))
           const canManageAdmin = !adminTarget || isSuperAdminOrOwner
           const canDelete =
             canManageAdmin &&
@@ -296,7 +300,7 @@ function UserTable({
                   </span>
                 </td>
                 <td className="px-4 py-3">
-                  {!isAgentRole || !presenceByUserId ? (
+                  {!showPresence ? (
                     <span className="text-xs text-gray-400">N/A</span>
                   ) : (
                     <button
@@ -308,7 +312,9 @@ function UserTable({
                         (presence.status === 'offline' || presence.status === 'recent') &&
                         presence.sessions.length > 0
                           ? `Última actividad ${formatTimeAgo(presence.sessions[0].lastSeenAt)}`
-                          : undefined
+                          : presence?.sessions[0]
+                            ? `Entrada ${formatPresenceDateTime(presence.sessions[0].loginAt)}`
+                            : undefined
                       }
                       onClick={(e) => {
                         const anchor = e.currentTarget
@@ -325,13 +331,13 @@ function UserTable({
                             <span className="ml-1 text-[10px] opacity-75">({presence.sessions.length})</span>
                           )}
                         </span>
-                        {presence &&
-                          (presence.status === 'offline' || presence.status === 'recent') &&
-                          presence.sessions.length > 0 && (
-                            <span className="text-[10px] font-normal opacity-75">
-                              {formatTimeAgo(presence.sessions[0].lastSeenAt)}
-                            </span>
-                          )}
+                        {presence && presence.sessions.length > 0 && (
+                          <span className="text-[10px] font-normal opacity-75">
+                            {presence.status === 'online'
+                              ? `Entrada ${formatPresenceDateTime(presence.sessions[0].loginAt)}`
+                              : formatTimeAgo(presence.sessions[0].lastSeenAt)}
+                          </span>
+                        )}
                       </span>
                     </button>
                   )}
@@ -449,12 +455,16 @@ function UserTable({
                           {session.ipAddress ? ` · IP ${session.ipAddress}` : ''}
                         </p>
                         <p className="mt-0.5 text-gray-500">
-                          {session.currentRoute ? `Ruta ${session.currentRoute} · ` : ''}
-                          {formatTimeAgo(session.lastSeenAt)}
+                          Entrada {formatPresenceDateTime(session.loginAt)}
+                          {' · '}
+                          Última actividad {formatPresenceDateTime(session.lastSeenAt)} (
+                          {formatTimeAgo(session.lastSeenAt)})
+                          {session.currentRoute ? ` · Ruta ${session.currentRoute}` : ''}
                         </p>
                       </div>
                     ))}
                     {onRevokeSessions &&
+                      isAgentRole &&
                       (presence.status === 'online' || presence.status === 'recent') && (
                         <button
                           type="button"
@@ -488,6 +498,7 @@ function UserTable({
       }
       onRevokeSessions={
         activePopoverUser &&
+        activePopoverUser.role === 'AGENT' &&
         activePopoverPresence &&
         (activePopoverPresence.status === 'online' || activePopoverPresence.status === 'recent') &&
         onRevokeSessions

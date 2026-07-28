@@ -1024,6 +1024,8 @@ export type AgentPresence = {
   id: string
   name: string
   email: string
+  /** Present when API returns it (system-owner presence includes ADMIN). */
+  role?: 'ADMIN' | 'AGENT'
   status: AgentPresenceStatus
   sessions: AgentSession[]
 }
