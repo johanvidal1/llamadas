@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { format, startOfMonth } from 'date-fns'
-import { History, RefreshCw } from 'lucide-react'
+import { ArrowLeft, History, RefreshCw } from 'lucide-react'
 import { getCalls, getMyBatches, getUsers, type GetCallsParams } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { RecentCallRow } from '../components/RecentCallRow'
@@ -75,13 +75,16 @@ function readFilters(params: URLSearchParams): FilterState {
   const limit = LIMIT_OPTIONS.includes(limitRaw as (typeof LIMIT_OPTIONS)[number])
     ? limitRaw
     : 50
-  const defaultDates = !params.has('from') && !params.has('to')
+  const fromRaw = params.get('from')
+  // `from=dashboard` is a nav hint from KPI cards, not a date filter
+  const fromIsNavHint = fromRaw === 'dashboard'
+  const defaultDates = (!params.has('from') && !params.has('to')) || fromIsNavHint
   const pageRaw = Number(params.get('page'))
   const page = Number.isFinite(pageRaw) && pageRaw >= 1 ? Math.floor(pageRaw) : 1
   return {
     limit,
     page,
-    from: defaultDates ? monthStartLocal() : (params.get('from') ?? ''),
+    from: defaultDates ? monthStartLocal() : (fromRaw ?? ''),
     to: defaultDates ? todayLocal() : (params.get('to') ?? ''),
     timeFrom: params.get('timeFrom') ?? '',
     timeTo: params.get('timeTo') ?? '',
@@ -126,11 +129,16 @@ function filtersToApiParams(filters: FilterState, isAdmin: boolean): GetCallsPar
 export default function CallHistory() {
   const { isAdmin } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
+  // Capture nav hint before date defaults overwrite `from` in the URL
+  const [returnToDashboard] = useState(() => searchParams.get('from') === 'dashboard')
   const filters = useMemo(() => readFilters(searchParams), [searchParams])
   const [recordModal, setRecordModal] = useState<{ clientId: string } | null>(null)
 
   useEffect(() => {
-    const needsDates = !searchParams.has('from') && !searchParams.has('to')
+    const fromVal = searchParams.get('from')
+    const fromIsNavHint = fromVal === 'dashboard'
+    const needsDates =
+      (!searchParams.has('from') && !searchParams.has('to')) || fromIsNavHint
     if (needsDates) {
       const next = new URLSearchParams(searchParams)
       next.set('from', monthStartLocal())
@@ -175,7 +183,7 @@ export default function CallHistory() {
 
   return (
     <div className="p-4 md:p-8 space-y-6">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <History size={24} className="text-blue-600" />
@@ -187,16 +195,27 @@ export default function CallHistory() {
               : 'Consulta y filtra tus registros de llamada'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => refetch()}
-          disabled={isFetching}
-          title="Actualizar"
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors disabled:opacity-50 shrink-0"
-        >
-          <RefreshCw size={15} className={isFetching ? 'animate-spin' : ''} />
-          Actualizar
-        </button>
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          {returnToDashboard && (
+            <Link
+              to="/"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
+            >
+              <ArrowLeft size={15} />
+              Volver al Dashboard
+            </Link>
+          )}
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            title="Actualizar"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors disabled:opacity-50 shrink-0"
+          >
+            <RefreshCw size={15} className={isFetching ? 'animate-spin' : ''} />
+            Actualizar
+          </button>
+        </div>
       </div>
 
       <div className="card p-4 space-y-4">

@@ -12,9 +12,11 @@ import {
   Layers,
   RefreshCw,
   ArrowRight,
+  X,
 } from 'lucide-react'
 import { RecentCallRow } from '../components/RecentCallRow'
 import ClientRecordModal from '../components/ClientRecordModal'
+import HelpTooltip from '../components/HelpTooltip'
 import { DISPOSITION_BAR_COLORS, isFunnelDisposition } from '../config/responseOptions'
 import {
   AGENT_PIPELINE_FUNNEL,
@@ -30,26 +32,154 @@ function StatCard({
   label,
   value,
   subtitle,
+  tooltip,
+  to,
+  onClick,
   icon: Icon,
   color,
 }: {
   label: string
   value: number | string
   subtitle?: string
+  tooltip?: string
+  to?: string
+  onClick?: () => void
   icon: React.ElementType
   color: string
 }) {
+  const interactive = Boolean(to || onClick)
+  const className = [
+    'card relative block w-full min-h-[7.5rem] p-5 text-left',
+    interactive
+      ? 'cursor-pointer hover:border-gray-300 hover:shadow-md transition-shadow'
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  const body = (
+    <>
+      <div className="pr-14">
+        <p className="text-3xl font-bold text-gray-900 tabular-nums leading-none">{value}</p>
+        {subtitle ? <p className="text-xs text-gray-400 mt-1.5">{subtitle}</p> : null}
+        <p className="text-sm text-gray-500 mt-2 inline-flex items-center flex-wrap">
+          <span>{label}</span>
+          {tooltip ? <HelpTooltip text={tooltip} /> : null}
+        </p>
+      </div>
+      <div
+        className={`absolute bottom-4 right-4 w-10 h-10 rounded-xl flex items-center justify-center ${color}`}
+      >
+        <Icon size={20} className="text-white" />
+      </div>
+    </>
+  )
+
+  if (to) {
+    return (
+      <Link to={to} className={className}>
+        {body}
+      </Link>
+    )
+  }
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className={className}>
+        {body}
+      </button>
+    )
+  }
+
+  return <div className={className}>{body}</div>
+}
+
+function scrollToCompanyPipeline() {
+  document.getElementById('company-pipeline')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function CompanyContactRateModal({
+  assignedCompanies,
+  pendingCount,
+  pct,
+  onClose,
+}: {
+  assignedCompanies: number
+  pendingCount: number
+  pct: number
+  onClose: () => void
+}) {
+  const withResponse = Math.max(0, assignedCompanies - pendingCount)
+
   return (
-    <div className="card p-6 flex items-center gap-4">
-      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color}`}>
-        <Icon size={24} className="text-white" />
+    <>
+      <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="contact-rate-modal-title"
+          className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 id="contact-rate-modal-title" className="text-lg font-semibold text-gray-900">
+                Tasa de contacto empresas
+              </h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Empresas que ya no están pendientes ÷ empresas asignadas
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+              aria-label="Cerrar"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <dl className="space-y-2.5 text-sm">
+            <div className="flex justify-between gap-4">
+              <dt className="text-gray-500">Con respuesta</dt>
+              <dd className="font-semibold text-gray-900 tabular-nums">{withResponse}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-gray-500">Asignadas</dt>
+              <dd className="font-semibold text-gray-900 tabular-nums">{assignedCompanies}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-gray-500">Pendientes</dt>
+              <dd className="font-semibold text-gray-900 tabular-nums">{pendingCount}</dd>
+            </div>
+            <div className="flex justify-between gap-4 pt-2 border-t border-gray-100">
+              <dt className="text-gray-700 font-medium">Tasa</dt>
+              <dd className="font-semibold text-emerald-700 tabular-nums text-right">
+                {withResponse} ÷ {assignedCompanies} ≈ {pct}%
+              </dd>
+            </div>
+          </dl>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:gap-3 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                onClose()
+                requestAnimationFrame(() => scrollToCompanyPipeline())
+              }}
+              className="btn-primary justify-center flex-1"
+            >
+              Ver cola / embudo
+            </button>
+            <button type="button" onClick={onClose} className="btn-secondary justify-center flex-1">
+              Cerrar
+            </button>
+          </div>
+        </div>
       </div>
-      <div>
-        <p className="text-2xl font-bold text-gray-900">{value}</p>
-        {subtitle ? <p className="text-xs text-gray-400">{subtitle}</p> : null}
-        <p className="text-sm text-gray-500">{label}</p>
-      </div>
-    </div>
+    </>
   )
 }
 
@@ -58,6 +188,7 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [selectedBatchId, setSelectedBatchId] = useState<string | undefined>(undefined)
   const [recordModal, setRecordModal] = useState<{ clientId: string } | null>(null)
+  const [contactRateModal, setContactRateModal] = useState(false)
 
   const goToMyLeadsFilter = (filter: string) => {
     const params = new URLSearchParams()
@@ -196,27 +327,50 @@ export default function Dashboard() {
               : (stats?.companyContactRate ?? 0)
 
           return (
+            <>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <StatCard
                 label="Empresas asignadas"
                 value={assignedCompanies}
-                subtitle={
-                  stats?.assignedContacts != null
-                    ? `${stats.assignedContacts} contactos`
-                    : undefined
-                }
+                tooltip="Empresas (RUC) con al menos un contacto asignado a un agente"
+                to="/assignments?from=dashboard"
                 icon={Users}
                 color="bg-blue-600"
               />
               <StatCard
                 label="Tasa contacto empresas"
                 value={`${companyContactPct}%`}
+                tooltip="% de empresas asignadas que ya no están pendientes (tuvieron algún resultado)"
+                onClick={() => setContactRateModal(true)}
                 icon={Phone}
                 color="bg-emerald-600"
               />
-              <StatCard label="Agentes activos" value={stats?.totalAgents ?? 0} icon={PhoneCall} color="bg-indigo-600" />
-              <StatCard label="Callbacks pendientes" value={stats?.pendingCallbacks ?? 0} icon={CalendarClock} color="bg-amber-500" />
+              <StatCard
+                label="Agentes activos"
+                value={stats?.totalAgents ?? 0}
+                tooltip="Usuarios con rol agente y cuenta activa"
+                to="/agents?from=dashboard"
+                icon={PhoneCall}
+                color="bg-indigo-600"
+              />
+              <StatCard
+                label="Callbacks pendientes"
+                value={stats?.pendingCallbacks ?? 0}
+                tooltip="Callbacks agendados aún no atendidos"
+                to="/callbacks?from=dashboard"
+                icon={CalendarClock}
+                color="bg-amber-500"
+              />
             </div>
+            {contactRateModal ? (
+              <CompanyContactRateModal
+                assignedCompanies={assignedCompanies}
+                pendingCount={pendingCount}
+                pct={companyContactPct}
+                onClose={() => setContactRateModal(false)}
+              />
+            ) : null}
+            </>
           )
         })()
       ) : (
@@ -229,12 +383,35 @@ export default function Dashboard() {
                 ? `${stats.assignedCompanies} empresas`
                 : undefined
             }
+            tooltip="Contactos que tienes asignados para gestionar"
+            to="/my-leads?from=dashboard"
             icon={Users}
             color="bg-blue-600"
           />
-          <StatCard label="Llamadas realizadas" value={stats?.totalCalls ?? 0} icon={Phone} color="bg-green-600" />
-          <StatCard label="Callbacks hoy" value={stats?.todayCallbacks ?? 0} icon={CalendarClock} color="bg-amber-500" />
-          <StatCard label="Callbacks pendientes" value={stats?.pendingCallbacks ?? 0} icon={Calendar} color="bg-purple-600" />
+          <StatCard
+            label="Llamadas realizadas"
+            value={stats?.totalCalls ?? 0}
+            tooltip="Total de llamadas que has registrado"
+            to="/calls?from=dashboard"
+            icon={Phone}
+            color="bg-green-600"
+          />
+          <StatCard
+            label="Callbacks hoy"
+            value={stats?.todayCallbacks ?? 0}
+            tooltip="Callbacks programados para hoy"
+            to="/callbacks?from=dashboard"
+            icon={CalendarClock}
+            color="bg-amber-500"
+          />
+          <StatCard
+            label="Callbacks pendientes"
+            value={stats?.pendingCallbacks ?? 0}
+            tooltip="Callbacks agendados aún no atendidos"
+            to="/callbacks?from=dashboard"
+            icon={Calendar}
+            color="bg-purple-600"
+          />
         </div>
       )}
 
@@ -251,7 +428,7 @@ export default function Dashboard() {
           ]
 
           return (
-            <div className="card p-6 overflow-visible lg:col-span-2">
+            <div id="company-pipeline" className="card p-6 overflow-visible lg:col-span-2 scroll-mt-4">
               <h2 className="font-semibold text-gray-900 mb-1">Por empresa (RUC)</h2>
               <p className="text-xs text-gray-500 mb-5">
                 {pipeline ? (

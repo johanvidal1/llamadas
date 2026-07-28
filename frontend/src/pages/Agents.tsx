@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Fragment, type MutableRefObject } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getUsers,
@@ -34,6 +34,7 @@ import {
   ChevronDown,
   ChevronRight,
   RotateCcw,
+  ArrowLeft,
 } from 'lucide-react'
 import { PresenceDetailPopover, formatTimeAgo } from '../components/PresenceDetailPopover'
 
@@ -501,6 +502,7 @@ function UserTable({
 export default function Agents() {
   const { user } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
+  const returnToDashboard = searchParams.get('from') === 'dashboard'
   const isAdmin = user?.role === 'ADMIN'
   const isSuperAdmin = user?.isSuperAdmin === true
   const isSystemOwner = user?.isSystemOwner === true
@@ -809,7 +811,7 @@ export default function Agents() {
 
   return (
     <div className="p-4 sm:p-8 space-y-8">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Gestión de agentes</h1>
           <p className="text-gray-500 text-sm mt-1">Administra los usuarios del sistema</p>
@@ -817,10 +819,21 @@ export default function Agents() {
             Agentes: {agentCount}/{MAX_AGENTS} · Admins: {regularAdminCount}/{MAX_REGULAR_ADMINS}
           </p>
         </div>
-        <button onClick={() => { setShowForm(true); setEditId(null); setForm(emptyForm) }} className="btn-primary">
-          <UserPlus size={18} />
-          Nuevo usuario
-        </button>
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          {returnToDashboard && (
+            <Link
+              to="/"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
+            >
+              <ArrowLeft size={15} />
+              Volver al Dashboard
+            </Link>
+          )}
+          <button onClick={() => { setShowForm(true); setEditId(null); setForm(emptyForm) }} className="btn-primary">
+            <UserPlus size={18} />
+            Nuevo usuario
+          </button>
+        </div>
       </div>
 
       {/* Create / Edit form */}

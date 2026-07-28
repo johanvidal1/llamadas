@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getUsers,
@@ -21,7 +22,7 @@ import {
   type AppUser,
 } from '../api/client'
 import toast from 'react-hot-toast'
-import { UserCheck, Users, AlertCircle, X, ChevronDown, ChevronRight, History, PackageOpen, Search, Loader2, LayoutGrid, AlignJustify } from 'lucide-react'
+import { UserCheck, Users, AlertCircle, X, ChevronDown, ChevronRight, History, PackageOpen, Search, Loader2, LayoutGrid, AlignJustify, ArrowLeft } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { DispositionBadge } from '../components/StatusBadge'
@@ -440,6 +441,8 @@ function AgentCompaniesSummary({
 
 export default function Assignments() {
   const { user } = useAuth()
+  const [searchParams] = useSearchParams()
+  const returnToDashboard = searchParams.get('from') === 'dashboard'
   const [agentId, setAgentId] = useState('')
   const [batchId, setBatchId] = useState('')
   const [count, setCount] = useState<number | ''>('')
@@ -886,11 +889,22 @@ export default function Assignments() {
 
   return (
     <div className="p-8 space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Asignar empresas a agentes</h1>
-        <p className="text-gray-500 text-sm mt-1">
-          Distribuye empresas (RUC) entre tu equipo; todos los contactos de cada empresa se asignan juntos
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Asignar empresas a agentes</h1>
+          <p className="text-gray-500 text-sm mt-1">
+            Distribuye empresas (RUC) entre tu equipo; todos los contactos de cada empresa se asignan juntos
+          </p>
+        </div>
+        {returnToDashboard && (
+          <Link
+            to="/"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors shrink-0"
+          >
+            <ArrowLeft size={15} />
+            Volver al Dashboard
+          </Link>
+        )}
       </div>
 
       {/* Assignment form */}

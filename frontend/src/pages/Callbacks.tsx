@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getCallbacks, getUsers, updateCallback } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
-import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, Phone } from 'lucide-react'
+import { ArrowLeft, CalendarClock, CheckCircle2, ChevronDown, ChevronUp, Phone } from 'lucide-react'
 import { format, isToday, isPast, endOfToday, isAfter } from 'date-fns'
 import { es } from 'date-fns/locale'
 import CompleteCallbackModal, { type CompleteConfirm } from '../components/CompleteCallbackModal'
@@ -281,6 +282,8 @@ function CollapsibleGroup({
 
 export default function Callbacks() {
   const { isAdmin } = useAuth()
+  const [searchParams] = useSearchParams()
+  const returnToDashboard = searchParams.get('from') === 'dashboard'
   const [filter, setFilter] = useState<FilterKey>('all')
   const [agentId, setAgentId] = useState('')
   const [completeConfirm, setCompleteConfirm] = useState<CompleteConfirm | null>(null)
@@ -404,9 +407,20 @@ export default function Callbacks() {
 
   return (
     <div className="p-4 md:p-8 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Agenda de Callbacks</h1>
-        <p className="text-gray-500 text-sm mt-1">Llamadas de seguimiento programadas</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Agenda de Callbacks</h1>
+          <p className="text-gray-500 text-sm mt-1">Llamadas de seguimiento programadas</p>
+        </div>
+        {returnToDashboard && (
+          <Link
+            to="/"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors shrink-0"
+          >
+            <ArrowLeft size={15} />
+            Volver al Dashboard
+          </Link>
+        )}
       </div>
 
       <div className="flex flex-col sm:flex-row sm:items-start gap-3">
