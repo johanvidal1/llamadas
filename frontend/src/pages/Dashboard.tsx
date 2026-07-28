@@ -128,7 +128,7 @@ function CallsTrendStatCard({
   prevActiveDayYmd,
   callsToday,
   totalCalls,
-  to,
+  onClick,
   icon: Icon,
   color,
 }: {
@@ -138,7 +138,7 @@ function CallsTrendStatCard({
   prevActiveDayYmd: string | null
   callsToday: number
   totalCalls?: number
-  to: string
+  onClick: () => void
   icon: React.ElementType
   color: string
 }) {
@@ -160,7 +160,7 @@ function CallsTrendStatCard({
   const tooltipParts = [
     'Número grande: llamadas del último día con actividad (antes de hoy, zona Lima).',
     'El % compara ese día con el día activo anterior (omite días en 0).',
-    'Debajo: llamadas de hoy.',
+    'Debajo: llamadas de hoy. Pulsa la tarjeta para ver el detalle.',
   ]
   if (lastActiveDayYmd && prevActiveDayYmd) {
     tooltipParts.push(`Comparación: ${compareLabel}.`)
@@ -172,8 +172,9 @@ function CallsTrendStatCard({
   }
 
   return (
-    <Link
-      to={to}
+    <button
+      type="button"
+      onClick={onClick}
       className="card relative block w-full min-h-[7.5rem] p-5 text-left cursor-pointer hover:border-gray-300 hover:shadow-md transition-shadow"
       title={lastActiveDayYmd && prevActiveDayYmd ? compareLabel : undefined}
     >
@@ -200,7 +201,7 @@ function CallsTrendStatCard({
       >
         <Icon size={20} className="text-white" />
       </div>
-    </Link>
+    </button>
   )
 }
 
@@ -543,12 +544,159 @@ function CompanyContactRateModal({
   )
 }
 
+function CallsComparisonModal({
+  callsLastActiveDay,
+  callsPrevActiveDay,
+  lastActiveDayYmd,
+  prevActiveDayYmd,
+  callsToday,
+  onViewHistory,
+  onClose,
+}: {
+  callsLastActiveDay: number
+  callsPrevActiveDay: number | null
+  lastActiveDayYmd: string | null
+  prevActiveDayYmd: string | null
+  callsToday: number
+  onViewHistory: () => void
+  onClose: () => void
+}) {
+  const hasPrev =
+    prevActiveDayYmd != null && callsPrevActiveDay != null && callsPrevActiveDay > 0
+  const lastLabel = lastActiveDayYmd ? formatDayLabelEs(lastActiveDayYmd) : '—'
+  const prevLabel = prevActiveDayYmd ? formatDayLabelEs(prevActiveDayYmd) : '—'
+
+  let formulaText: string
+  let formulaTone: 'up' | 'down' | 'neutral' | 'empty'
+  let summarySentence: string
+
+  if (!hasPrev || callsPrevActiveDay == null) {
+    formulaText = '—'
+    formulaTone = 'empty'
+    summarySentence = lastActiveDayYmd
+      ? 'Aún no hay un día activo anterior con al menos 1 llamada para comparar (solo se cuentan días con actividad, zona America/Lima).'
+      : 'Todavía no hay días con llamadas registradas para calcular una comparación.'
+  } else {
+    const diff = callsLastActiveDay - callsPrevActiveDay
+    const pct = Math.round((diff / callsPrevActiveDay) * 100)
+    const arrow = pct > 0 ? '↑' : pct < 0 ? '↓' : ''
+    const pctDisplay = pct === 0 ? '0%' : `${arrow} ${Math.abs(pct)}%`
+    formulaText = `(${callsLastActiveDay} − ${callsPrevActiveDay}) ÷ ${callsPrevActiveDay} × 100 ≈ ${pctDisplay}`
+    formulaTone = pct > 0 ? 'up' : pct < 0 ? 'down' : 'neutral'
+    if (diff > 0) {
+      summarySentence = `Subiste ${diff} llamada${diff === 1 ? '' : 's'} respecto al día activo anterior.`
+    } else if (diff < 0) {
+      const n = Math.abs(diff)
+      summarySentence = `Bajaste ${n} llamada${n === 1 ? '' : 's'} respecto al día activo anterior.`
+    } else {
+      summarySentence = 'Misma cantidad de llamadas que el día activo anterior.'
+    }
+  }
+
+  const formulaClass =
+    formulaTone === 'up'
+      ? 'text-emerald-700'
+      : formulaTone === 'down'
+        ? 'text-red-700'
+        : formulaTone === 'empty'
+          ? 'text-gray-500'
+          : 'text-gray-700'
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="calls-comparison-modal-title"
+          className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 id="calls-comparison-modal-title" className="text-lg font-semibold text-gray-900">
+                Comparación de llamadas
+              </h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Solo días con ≥1 llamada (America/Lima); los días vacíos no entran en la comparación.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+              aria-label="Cerrar"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <dl className="space-y-2.5 text-sm">
+            <div className="flex justify-between gap-4">
+              <dt className="text-gray-500">
+                Último día con actividad
+                {lastActiveDayYmd ? (
+                  <span className="block text-xs text-gray-400 mt-0.5">{lastLabel}</span>
+                ) : null}
+              </dt>
+              <dd className="font-semibold text-gray-900 tabular-nums self-center">
+                {callsLastActiveDay}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-gray-500">
+                Día activo anterior
+                {prevActiveDayYmd ? (
+                  <span className="block text-xs text-gray-400 mt-0.5">{prevLabel}</span>
+                ) : (
+                  <span className="block text-xs text-gray-400 mt-0.5">Sin día previo</span>
+                )}
+              </dt>
+              <dd className="font-semibold text-gray-900 tabular-nums self-center">
+                {callsPrevActiveDay != null ? callsPrevActiveDay : '—'}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-gray-500">Hoy</dt>
+              <dd className="font-semibold text-gray-900 tabular-nums">{callsToday}</dd>
+            </div>
+            <div className="flex justify-between gap-4 pt-2 border-t border-gray-100">
+              <dt className="text-gray-700 font-medium">Variación</dt>
+              <dd className={`font-semibold tabular-nums text-right ${formulaClass}`}>{formulaText}</dd>
+            </div>
+          </dl>
+
+          <p className="text-sm text-gray-600 leading-snug">{summarySentence}</p>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:gap-3 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                onClose()
+                onViewHistory()
+              }}
+              className="btn-primary justify-center flex-1"
+            >
+              Ver historial de llamadas
+            </button>
+            <button type="button" onClick={onClose} className="btn-secondary justify-center flex-1">
+              Cerrar
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
 export default function Dashboard() {
   const { isAdmin, user } = useAuth()
   const navigate = useNavigate()
   const [selectedBatchId, setSelectedBatchId] = useState<string | undefined>(undefined)
   const [recordModal, setRecordModal] = useState<{ clientId: string } | null>(null)
   const [contactRateModal, setContactRateModal] = useState(false)
+  const [callsComparisonModal, setCallsComparisonModal] = useState(false)
 
   const goToMyLeadsFilter = (filter: string) => {
     const params = new URLSearchParams()
@@ -557,6 +705,13 @@ export default function Dashboard() {
     params.set('from', 'dashboard')
     const query = params.toString()
     navigate(`/my-leads?${query}`)
+  }
+
+  const goToCallsHistory = () => {
+    const params = new URLSearchParams()
+    params.set('from', 'dashboard')
+    if (selectedBatchId) params.set('batchId', selectedBatchId)
+    navigate(`/calls?${params.toString()}`)
   }
 
   const goToClientsFilter = (filter: string) => {
@@ -707,6 +862,7 @@ export default function Dashboard() {
           )
         })()
       ) : (
+        <>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             label="Empresas asignadas"
@@ -723,7 +879,7 @@ export default function Dashboard() {
             prevActiveDayYmd={stats?.prevActiveDayYmd ?? null}
             callsToday={stats?.callsToday ?? 0}
             totalCalls={stats?.totalCalls}
-            to="/calls?from=dashboard"
+            onClick={() => setCallsComparisonModal(true)}
             icon={Phone}
             color="bg-green-600"
           />
@@ -744,6 +900,18 @@ export default function Dashboard() {
             color="bg-purple-600"
           />
         </div>
+        {callsComparisonModal ? (
+          <CallsComparisonModal
+            callsLastActiveDay={stats?.callsLastActiveDay ?? 0}
+            callsPrevActiveDay={stats?.callsPrevActiveDay ?? null}
+            lastActiveDayYmd={stats?.lastActiveDayYmd ?? null}
+            prevActiveDayYmd={stats?.prevActiveDayYmd ?? null}
+            callsToday={stats?.callsToday ?? 0}
+            onViewHistory={goToCallsHistory}
+            onClose={() => setCallsComparisonModal(false)}
+          />
+        ) : null}
+        </>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
