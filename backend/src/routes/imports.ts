@@ -329,11 +329,25 @@ router.get('/:id/export', requireAuth, async (req: AuthRequest, res: Response) =
     numero_telefono: line.numeroTelefono ?? '',
     estado_linea: line.estadoLinea ?? '',
     plan: line.plan ?? '',
-    estado: line.estado ?? '',
+    renta_basica: line.rentaBasica ?? '',
+    renta_basica_con_desc: line.rentaBasicaConDesc ?? '',
   }))
 
   const mobileWs = XLSX.utils.json_to_sheet(mobileRows)
   XLSX.utils.book_append_sheet(wb, mobileWs, 'productosmovil')
+
+  const detalleRows = mobileLines
+    .filter((line) => line.rentaBasica || line.rentaBasicaConDesc)
+    .map((line) => ({
+      ruc: line.ruc,
+      numero_telefono: line.numeroTelefono ?? '',
+      renta_basica: line.rentaBasica ?? '',
+      renta_basica_con_desc: line.rentaBasicaConDesc ?? '',
+    }))
+  if (detalleRows.length > 0) {
+    const detalleWs = XLSX.utils.json_to_sheet(detalleRows)
+    XLSX.utils.book_append_sheet(wb, detalleWs, 'DetallePlan')
+  }
 
   const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
 
@@ -568,7 +582,8 @@ router.post(
                   numeroTelefono: line.numeroTelefono ?? null,
                   estadoLinea: line.estadoLinea ?? null,
                   plan: line.plan ?? null,
-                  estado: line.estado ?? null,
+                  rentaBasica: line.rentaBasica ?? null,
+                  rentaBasicaConDesc: line.rentaBasicaConDesc ?? null,
                   importBatchId: created.id,
                 }
               })

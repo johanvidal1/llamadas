@@ -193,19 +193,21 @@ model Company {
 }
 
 model MobileLine {
-  id             String       @id @default(cuid())
-  tenantId       String
-  tenant         Tenant       @relation(fields: [tenantId], references: [id])
-  companyId      String
-  company        Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  ruc            String
-  numeroTelefono String?
-  estadoLinea    String?
-  plan           String?
-  estado         String?
-  importBatchId  String?
-  importBatch    ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
-  createdAt      DateTime     @default(now())
+  id                 String       @id @default(cuid())
+  tenantId           String
+  tenant             Tenant       @relation(fields: [tenantId], references: [id])
+  companyId          String
+  company            Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  ruc                String
+  numeroTelefono     String?
+  estadoLinea        String?
+  plan               String?
+  estado             String?
+  rentaBasica        String?
+  rentaBasicaConDesc String?
+  importBatchId      String?
+  importBatch        ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  createdAt          DateTime     @default(now())
 
   @@index([tenantId])
   @@index([companyId])

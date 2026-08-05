@@ -388,7 +388,7 @@ export default function Imports() {
               Arrastra tu archivo aquí, o <span className="text-blue-600">haz clic para seleccionar</span>
             </p>
             <p className="text-sm text-gray-400 mt-1">
-              Excel (.xlsx, .xls) con hoja &quot;Contactos&quot; (opcional: &quot;productosmovil&quot;) · CSV (.csv) · Máximo 20 MB
+              Excel (.xlsx, .xls) con hoja &quot;Contactos&quot; (opcional: &quot;ProductosMovil&quot;, &quot;DetallePlan&quot;) · CSV (.csv) · Máximo 20 MB
             </p>
           </>
         )}
@@ -399,7 +399,8 @@ export default function Imports() {
         <p className="text-sm text-gray-600 mb-3">
           Los archivos <strong>Excel</strong> deben incluir una hoja llamada{' '}
           <strong>Contactos</strong> con los datos (no se usa la primera hoja). Opcionalmente pueden
-          incluir una hoja <strong>productosmovil</strong> con líneas móviles vinculadas por RUC. Los{' '}
+          incluir <strong>ProductosMovil</strong> (líneas móviles por RUC) y{' '}
+          <strong>DetallePlan</strong> (rentas por RUC + número de teléfono). Los{' '}
           <strong>CSV</strong> no requieren hoja; la primera fila son los encabezados.
         </p>
         <p className="text-sm font-semibold text-gray-700 mb-2">
@@ -418,14 +419,22 @@ export default function Imports() {
           <span><strong>Fecha consulta:</strong> fecha_consulta, fecha</span>
         </div>
         <p className="text-sm font-semibold text-gray-700 mt-4 mb-2">
-          📱 Columnas hoja productosmovil (opcional):
+          📱 Columnas hoja ProductosMovil (opcional):
         </p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-gray-500">
           <span><strong>RUC:</strong> ruc</span>
           <span><strong>Número:</strong> numero_telefono, telefono, celular, móvil</span>
           <span><strong>Estado línea:</strong> estado_linea</span>
           <span><strong>Plan:</strong> plan</span>
-          <span><strong>Estado:</strong> estado</span>
+        </div>
+        <p className="text-sm font-semibold text-gray-700 mt-4 mb-2">
+          💰 Columnas hoja DetallePlan (opcional; se une a ProductosMovil por RUC + teléfono):
+        </p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-gray-500">
+          <span><strong>RUC:</strong> ruc</span>
+          <span><strong>Número:</strong> numero_telefono, telefono, celular, móvil</span>
+          <span><strong>Renta básica:</strong> renta_basica</span>
+          <span><strong>Renta c/desc:</strong> renta_basica_con_desc</span>
         </div>
       </div>
 

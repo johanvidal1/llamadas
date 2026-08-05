@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx'
 import csvParser from 'csv-parser'
 import { Readable } from 'stream'
-import { dedupeParsedMobileLines, isValidMobileLineNumber } from './mobileLine'
+import { dedupeParsedMobileLines, isValidMobileLineNumber, mobileDigits } from './mobileLine'
 
 export interface ParsedContact {
   nombre: string
@@ -16,7 +16,10 @@ export interface ParsedMobileLine {
   numeroTelefono?: string
   estadoLinea?: string
   plan?: string
+  /** @deprecated product OK flag; kept for older imports; no longer shown in UI */
   estado?: string
+  rentaBasica?: string
+  rentaBasicaConDesc?: string
 }
 
 export interface ParsedCompany {
@@ -104,10 +107,58 @@ const MOBILE_HEADER_ALIASES: Record<string, string> = {
   estado_producto: 'estado_producto',
 }
 
+const DETALLE_PLAN_HEADER_ALIASES: Record<string, string> = {
+  ruc: 'ruc',
+  numero_telefono: 'numero_telefono',
+  numero_de_telefono: 'numero_telefono',
+  telefono: 'numero_telefono',
+  tel: 'numero_telefono',
+  phone: 'numero_telefono',
+  celular: 'numero_telefono',
+  movil: 'numero_telefono',
+  mobile: 'numero_telefono',
+  renta_basica: 'renta_basica',
+  rentabasica: 'renta_basica',
+  renta_basica_con_desc: 'renta_basica_con_desc',
+  renta_basica_con_descuento: 'renta_basica_con_desc',
+  renta_con_desc: 'renta_basica_con_desc',
+  rentabasicacondesc: 'renta_basica_con_desc',
+}
+
+function findSheetName(sheetNames: string[], target: string): string | undefined {
+  const needle = target.trim().toLowerCase()
+  return sheetNames.find((name) => name.trim().toLowerCase() === needle)
+}
+
+function mobileJoinKey(ruc: string, numeroTelefono?: string | null): string | null {
+  const digits = mobileDigits(numeroTelefono)
+  if (!ruc || digits.length < 9) return null
+  return `${ruc}:${digits}`
+}
+
 function normalizeMobileRow(row: Record<string, unknown>): Record<string, unknown> {
   const normalized: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(row)) {
     const canonical = MOBILE_HEADER_ALIASES[normalizeHeader(key)]
+    if (canonical && value != null && String(value).trim() !== '') {
+      normalized[canonical] = value
+    }
+  }
+
+  const phoneRaw = String(normalized['numero_telefono'] ?? '').trim()
+  if (phoneRaw) {
+    normalized['numero_telefono'] = normalizePhone(phoneRaw)
+  } else {
+    delete normalized['numero_telefono']
+  }
+
+  return normalized
+}
+
+function normalizeDetallePlanRow(row: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(row)) {
+    const canonical = DETALLE_PLAN_HEADER_ALIASES[normalizeHeader(key)]
     if (canonical && value != null && String(value).trim() !== '') {
       normalized[canonical] = value
     }
@@ -225,12 +276,70 @@ function parseMobileRows(rows: Record<string, unknown>[]): ParsedMobileLine[] {
 
     const estadoLinea = String(row['estado_linea'] ?? '').trim() || undefined
     const plan = String(row['plan'] ?? '').trim() || undefined
+    // Product OK (`estado`) is no longer displayed; keep parsing lightly for legacy but do not rely on it
     const estado = String(row['estado_producto'] ?? '').trim() || undefined
 
     result.push({ ruc, numeroTelefono, estadoLinea, plan, estado })
   }
 
   return dedupeParsedMobileLines(result)
+}
+
+interface ParsedDetallePlanRenta {
+  rentaBasica?: string
+  rentaBasicaConDesc?: string
+}
+
+/** Build ruc+phone → rentas map from DetallePlan rows (first non-empty wins per field). */
+export function parseDetallePlanRentas(
+  rows: Record<string, unknown>[]
+): Map<string, ParsedDetallePlanRenta> {
+  const map = new Map<string, ParsedDetallePlanRenta>()
+
+  for (const row of rows) {
+    const ruc = String(row['ruc'] ?? '').trim()
+    if (!ruc) continue
+
+    const numeroTelefonoRaw = String(row['numero_telefono'] ?? '').trim()
+    const numeroTelefono = numeroTelefonoRaw ? normalizePhone(numeroTelefonoRaw) : undefined
+    const key = mobileJoinKey(ruc, numeroTelefono)
+    if (!key) continue
+
+    const rentaBasica = String(row['renta_basica'] ?? '').trim() || undefined
+    const rentaBasicaConDesc = String(row['renta_basica_con_desc'] ?? '').trim() || undefined
+    if (!rentaBasica && !rentaBasicaConDesc) continue
+
+    const existing = map.get(key)
+    if (!existing) {
+      map.set(key, { rentaBasica, rentaBasicaConDesc })
+      continue
+    }
+    if (!existing.rentaBasica && rentaBasica) existing.rentaBasica = rentaBasica
+    if (!existing.rentaBasicaConDesc && rentaBasicaConDesc) {
+      existing.rentaBasicaConDesc = rentaBasicaConDesc
+    }
+  }
+
+  return map
+}
+
+export function mergeDetallePlanRentas(
+  mobileLines: ParsedMobileLine[],
+  rentasByKey: Map<string, ParsedDetallePlanRenta>
+): ParsedMobileLine[] {
+  if (rentasByKey.size === 0) return mobileLines
+
+  return mobileLines.map((line) => {
+    const key = mobileJoinKey(line.ruc, line.numeroTelefono)
+    if (!key) return line
+    const rentas = rentasByKey.get(key)
+    if (!rentas) return line
+    return {
+      ...line,
+      rentaBasica: rentas.rentaBasica,
+      rentaBasicaConDesc: rentas.rentaBasicaConDesc,
+    }
+  })
 }
 
 export class MissingContactosSheetError extends Error {
@@ -244,9 +353,7 @@ export class MissingContactosSheetError extends Error {
 
 export async function parseExcel(buffer: Buffer): Promise<ParseResult> {
   const workbook = XLSX.read(buffer, { type: 'buffer' })
-  const sheetName = workbook.SheetNames.find(
-    (name) => name.trim().toLowerCase() === 'contactos'
-  )
+  const sheetName = findSheetName(workbook.SheetNames, 'contactos')
   if (!sheetName) {
     throw new MissingContactosSheetError(workbook.SheetNames)
   }
@@ -255,15 +362,23 @@ export async function parseExcel(buffer: Buffer): Promise<ParseResult> {
   const rows = rawRows.map(normalizeRow)
 
   let mobileLines: ParsedMobileLine[] = []
-  const mobileSheetName = workbook.SheetNames.find(
-    (name) => name.trim().toLowerCase() === 'productosmovil'
-  )
+  const mobileSheetName = findSheetName(workbook.SheetNames, 'productosmovil')
   if (mobileSheetName) {
     const mobileSheet = workbook.Sheets[mobileSheetName]
     const rawMobileRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(mobileSheet, {
       defval: '',
     })
     mobileLines = parseMobileRows(rawMobileRows.map(normalizeMobileRow))
+  }
+
+  const detalleSheetName = findSheetName(workbook.SheetNames, 'detalleplan')
+  if (detalleSheetName && mobileLines.length > 0) {
+    const detalleSheet = workbook.Sheets[detalleSheetName]
+    const rawDetalleRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(detalleSheet, {
+      defval: '',
+    })
+    const rentasByKey = parseDetallePlanRentas(rawDetalleRows.map(normalizeDetallePlanRow))
+    mobileLines = mergeDetallePlanRentas(mobileLines, rentasByKey)
   }
 
   return { companies: parseRows(rows), sourceRowCount: rawRows.length, mobileLines }
@@ -286,4 +401,3 @@ export async function parseCsv(buffer: Buffer): Promise<ParseResult> {
       .on('error', reject)
   })
 }
-

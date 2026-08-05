@@ -119,7 +119,14 @@ interface ClientDetail {
   contacts: { id: string; nombre: string; tipoContacto?: string; telefono?: string; email?: string; dni?: string }[]
   callLogs: CallLogEntry[]
   callbacks: { id: string; callLogId?: string; scheduledAt: string; notes?: string; completed: boolean }[]
-  mobileLines: { id: string; numeroTelefono?: string; estadoLinea?: string; plan?: string; estado?: string }[]
+  mobileLines: {
+    id: string
+    numeroTelefono?: string
+    estadoLinea?: string
+    plan?: string
+    rentaBasica?: string
+    rentaBasicaConDesc?: string
+  }[]
 }
 
 interface Callback {
@@ -2696,13 +2703,14 @@ export default function MyLeads() {
                       {visibleMobileLines.length === 0 ? (
                         <p className="text-sm text-gray-400 italic">Sin líneas móviles registradas</p>
                       ) : (
-                        <table className="w-full text-sm min-w-[320px]">
+                        <table className="w-full text-sm min-w-[420px]">
                           <thead>
                             <tr className="border-b border-gray-200 text-left">
                               <th className="pb-2 pr-3 font-medium text-gray-600">Número</th>
                               <th className="pb-2 pr-3 font-medium text-gray-600">Estado línea</th>
                               <th className="pb-2 pr-3 font-medium text-gray-600">Plan</th>
-                              <th className="pb-2 font-medium text-gray-600">Estado</th>
+                              <th className="pb-2 pr-3 font-medium text-gray-600">Renta básica</th>
+                              <th className="pb-2 font-medium text-gray-600">Renta c/desc</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -2713,7 +2721,8 @@ export default function MyLeads() {
                                 </td>
                                 <td className="py-2 pr-3 text-gray-700">{line.estadoLinea || '—'}</td>
                                 <td className="py-2 pr-3 text-gray-700">{line.plan || '—'}</td>
-                                <td className="py-2 text-gray-700">{line.estado || '—'}</td>
+                                <td className="py-2 pr-3 text-gray-700">{line.rentaBasica || '—'}</td>
+                                <td className="py-2 text-gray-700">{line.rentaBasicaConDesc || '—'}</td>
                               </tr>
                             ))}
                           </tbody>
