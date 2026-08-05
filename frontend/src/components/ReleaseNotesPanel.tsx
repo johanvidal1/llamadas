@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react'
@@ -26,6 +26,34 @@ const MONTHS_ES = [
   'noviembre',
   'diciembre',
 ]
+
+/** Minimal safe markdown: **bold**, *italic*, _italic_ — no HTML. */
+function renderInlineMarkdown(text: string): ReactNode {
+  const TOKEN = /(\*\*(.+?)\*\*|\*(.+?)\*|_(.+?)_)/g
+  const nodes: ReactNode[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  let key = 0
+  while ((match = TOKEN.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index))
+    }
+    if (match[2] !== undefined) {
+      nodes.push(<strong key={key++}>{match[2]}</strong>)
+    } else if (match[3] !== undefined) {
+      nodes.push(<em key={key++}>{match[3]}</em>)
+    } else if (match[4] !== undefined) {
+      nodes.push(<em key={key++}>{match[4]}</em>)
+    }
+    lastIndex = match.index + match[0].length
+  }
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex))
+  }
+  if (nodes.length === 0) return text
+  if (nodes.length === 1 && typeof nodes[0] === 'string') return nodes[0]
+  return nodes
+}
 
 function todayIso() {
   const d = new Date()
@@ -59,6 +87,7 @@ type EditorState =
 
 export default function ReleaseNotesPanel({ isSystemOwner }: { isSystemOwner: boolean }) {
   const queryClient = useQueryClient()
+  const itemsTextareaRef = useRef<HTMLTextAreaElement>(null)
   const [showFullHistory, setShowFullHistory] = useState(false)
   const [editor, setEditor] = useState<EditorState>(null)
   const [formDate, setFormDate] = useState(todayIso())
@@ -108,6 +137,21 @@ export default function ReleaseNotesPanel({ isSystemOwner }: { isSystemOwner: bo
     setFormItemsText(note.items.join('\n'))
     setFormError(null)
     setEditor({ mode: 'edit', note })
+  }
+
+  const wrapSelection = (prefix: string, suffix: string) => {
+    const el = itemsTextareaRef.current
+    if (!el) return
+    const start = el.selectionStart
+    const end = el.selectionEnd
+    const selected = formItemsText.slice(start, end)
+    const next = formItemsText.slice(0, start) + prefix + selected + suffix + formItemsText.slice(end)
+    setFormItemsText(next)
+    requestAnimationFrame(() => {
+      el.focus()
+      const innerStart = start + prefix.length
+      el.setSelectionRange(innerStart, innerStart + selected.length)
+    })
   }
 
   const parseItems = () =>
@@ -233,7 +277,7 @@ export default function ReleaseNotesPanel({ isSystemOwner }: { isSystemOwner: bo
             <ul className="space-y-2.5 list-disc list-outside pl-5 text-sm text-gray-600">
               {release.items.map((item) => (
                 <li key={item} className="leading-relaxed">
-                  {item}
+                  {renderInlineMarkdown(item)}
                 </li>
               ))}
             </ul>
@@ -293,14 +337,34 @@ export default function ReleaseNotesPanel({ isSystemOwner }: { isSystemOwner: bo
                 <p className="text-xs text-gray-500 mt-1">{dateLabelEs(formDate)}</p>
               </div>
               <div>
-                <label
-                  className="block text-sm font-medium text-gray-700 mb-1"
-                  htmlFor="rn-items"
-                >
-                  Ítems (uno por línea)
-                </label>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className="block text-sm font-medium text-gray-700" htmlFor="rn-items">
+                    Ítems (uno por línea)
+                  </label>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      title="Negrita (**texto**)"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => wrapSelection('**', '**')}
+                      className="min-w-[1.75rem] px-1.5 py-0.5 rounded border border-gray-200 text-sm font-bold text-gray-700 hover:bg-gray-50"
+                    >
+                      N
+                    </button>
+                    <button
+                      type="button"
+                      title="Cursiva (*texto*)"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => wrapSelection('*', '*')}
+                      className="min-w-[1.75rem] px-1.5 py-0.5 rounded border border-gray-200 text-sm italic text-gray-700 hover:bg-gray-50"
+                    >
+                      C
+                    </button>
+                  </div>
+                </div>
                 <textarea
                   id="rn-items"
+                  ref={itemsTextareaRef}
                   value={formItemsText}
                   onChange={(e) => setFormItemsText(e.target.value)}
                   rows={8}
@@ -308,6 +372,9 @@ export default function ReleaseNotesPanel({ isSystemOwner }: { isSystemOwner: bo
                   placeholder="Beneficio o cambio visible para el usuario…"
                   required
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  Usa **texto** para negrita y *texto* para cursiva
+                </p>
               </div>
               {formError && <p className="text-sm text-red-600">{formError}</p>}
               <div className="flex justify-end gap-2 pt-1">
