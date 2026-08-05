@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 
 type HelpTooltipProps = {
   text: string
-  /** Extra class on the trigger button */
+  /** Extra class on the trigger wrapper */
   className?: string
 }
 
@@ -10,6 +10,7 @@ const SHOW_DELAY_MS = 300
 
 /**
  * Floating help tooltip: hover/focus with delay, click toggle for touch.
+ * Trigger is a span (role=button) so it can nest inside StatCard <button>/<a> safely.
  * White card + soft shadow; short Spanish copy expected from caller.
  */
 export default function HelpTooltip({ text, className = '' }: HelpTooltipProps) {
@@ -33,6 +34,11 @@ export default function HelpTooltip({ text, className = '' }: HelpTooltipProps) 
   const hide = useCallback(() => {
     clearShowTimer()
     setOpen(false)
+  }, [clearShowTimer])
+
+  const toggle = useCallback(() => {
+    clearShowTimer()
+    setOpen((v) => !v)
   }, [clearShowTimer])
 
   useEffect(() => () => clearShowTimer(), [clearShowTimer])
@@ -60,25 +66,32 @@ export default function HelpTooltip({ text, className = '' }: HelpTooltipProps) 
       onMouseEnter={scheduleShow}
       onMouseLeave={hide}
     >
-      <button
-        type="button"
+      <span
+        role="button"
+        tabIndex={0}
         aria-label="Más información"
         aria-describedby={open ? tooltipId : undefined}
         aria-expanded={open}
         onClick={(e) => {
           e.preventDefault()
           e.stopPropagation()
-          clearShowTimer()
-          setOpen((v) => !v)
+          toggle()
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            e.stopPropagation()
+            toggle()
+          }
         }}
         onFocus={scheduleShow}
         onBlur={(e) => {
           if (!rootRef.current?.contains(e.relatedTarget as Node)) hide()
         }}
-        className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-semibold leading-none text-gray-400 hover:border-gray-400 hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 bg-white/80"
+        className="ml-1 inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-full border border-gray-300 text-[10px] font-semibold leading-none text-gray-400 hover:border-gray-400 hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 bg-white/80"
       >
         ?
-      </button>
+      </span>
       {open ? (
         <span
           id={tooltipId}
