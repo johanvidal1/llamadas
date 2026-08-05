@@ -16,7 +16,8 @@ type DuplicateRucBannerProps = {
   ruc: string
   siblings: DuplicateRucSibling[]
   currentCompanyId: string
-  onSwitchBatch: (batchId: string) => void
+  /** Navigate to a specific sibling company (and its batch), not just switch batch. */
+  onGoToSibling: (companyId: string, batchId: string) => void
 }
 
 function batchLabelShort(batch: { filename: string }) {
@@ -42,7 +43,7 @@ export function DuplicateRucBanner({
   ruc,
   siblings,
   currentCompanyId,
-  onSwitchBatch,
+  onGoToSibling,
 }: DuplicateRucBannerProps) {
   const [open, setOpen] = useState(false)
   const [horizontalAlign, setHorizontalAlign] = useState<HorizontalAlign>('start')
@@ -121,12 +122,15 @@ export function DuplicateRucBanner({
           }
         }}
         aria-expanded={open}
-        aria-label={`RUC duplicado: ${siblings.length} registros en tus asignaciones`}
+        aria-label={`RUC duplicado ${ruc}: ${siblings.length} registros en tus asignaciones`}
         className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 cursor-default max-md:cursor-pointer"
       >
         <AlertCircle size={15} className="text-amber-600 shrink-0 mt-0.5" />
         <p className="text-xs text-amber-800">
-          RUC duplicado — apuntá para ver en qué lotes aparece
+          RUC duplicado:{' '}
+          <span className="font-mono font-medium tracking-wide">{ruc}</span>
+          {' — '}
+          apuntá para ver en qué lotes aparece
         </p>
       </div>
 
@@ -171,37 +175,44 @@ export function DuplicateRucBanner({
             <ul className="space-y-2">
               {othersByBatch.map(({ batchId, batch, records }) => (
                 <li key={batchId}>
-                  {records.map((record) => (
-                    <div
-                      key={record.id}
-                      className="rounded-md border border-gray-100 px-2.5 py-2 not-first:mt-1.5"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-medium text-gray-800 truncate">
-                            {batch ? batchLabelShort(batch) : 'Sin lote'}
-                          </p>
-                          <p className="text-[11px] text-gray-500 mt-0.5 truncate">
-                            {truncate(record.razonSocial)}
-                          </p>
+                  {records.map((record) => {
+                    const siblingBatchId = batch?.id
+                    const sameBatch = Boolean(
+                      siblingBatchId && currentBatchId && siblingBatchId === currentBatchId
+                    )
+                    const canNavigate = Boolean(siblingBatchId || sameBatch)
+                    return (
+                      <div
+                        key={record.id}
+                        className="rounded-md border border-gray-100 px-2.5 py-2 not-first:mt-1.5"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-medium text-gray-800 truncate">
+                              {batch ? batchLabelShort(batch) : 'Sin lote'}
+                            </p>
+                            <p className="text-[11px] text-gray-500 mt-0.5 truncate">
+                              {truncate(record.razonSocial)}
+                            </p>
+                          </div>
+                          {canNavigate && siblingBatchId && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                onGoToSibling(record.id, siblingBatchId)
+                                setOpen(false)
+                              }}
+                              className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-medium text-blue-600 hover:text-blue-800 hover:underline pointer-events-auto"
+                            >
+                              {sameBatch ? 'Ir a este registro' : 'Ver en ese lote'}
+                              <ArrowRight size={11} />
+                            </button>
+                          )}
                         </div>
-                        {batch?.id && batch.id !== currentBatchId && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              onSwitchBatch(batch.id)
-                              setOpen(false)
-                            }}
-                            className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-medium text-blue-600 hover:text-blue-800 hover:underline pointer-events-auto"
-                          >
-                            Ir al lote
-                            <ArrowRight size={11} />
-                          </button>
-                        )}
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </li>
               ))}
             </ul>

@@ -850,6 +850,8 @@ export default function MyLeads() {
   const stayAfterSaveRef = useRef(false)
   const pendingContactIdRef = useRef<string | null>(null)
   const pendingContactIdxRef = useRef<number | null>(null)
+  /** After Duplicate RUC “Ver en ese lote”: switch batch, then jump to this company id. */
+  const pendingCompanyNavRef = useRef<{ companyId: string; batchId: string } | null>(null)
   const needsContactResolveRef = useRef(false)
   const companyDeepLinkHandledRef = useRef(false)
   // Cold entry to detail (no deep-link, no explicit selection) → auto-jump to first pending
@@ -1645,6 +1647,7 @@ export default function MyLeads() {
     setSelectedBatchId(batchId)
     setCurrentIndex(0)
     autoJumpToPendingRef.current = true
+    pendingCompanyNavRef.current = null
     pendingContactIdRef.current = null
     pendingContactIdxRef.current = null
     pendingCallLogIdRef.current = null
@@ -1662,6 +1665,73 @@ export default function MyLeads() {
       { replace: true }
     )
   }
+
+  /** Open a Duplicate-RUC sibling by company id (same or other batch). */
+  const goToDuplicateSibling = useCallback(
+    (companyId: string, batchId: string) => {
+      autoJumpToPendingRef.current = false
+      pendingCallLogIdRef.current = null
+      stayAfterSaveRef.current = false
+      setEditingCallLogId(null)
+
+      const sameBatch = !batchId || batchId === selectedBatchId
+      const idxInCurrent = clients.findIndex((c) => c.id === companyId)
+      if (sameBatch) {
+        pendingCompanyNavRef.current = null
+        if (idxInCurrent >= 0) {
+          void navigateToCompany(idxInCurrent)
+        } else {
+          toast('Este registro no está en tu lista visible', { icon: 'ℹ️' })
+        }
+        return
+      }
+
+      pendingCompanyNavRef.current = { companyId, batchId }
+      pendingContactIdRef.current = null
+      pendingContactIdxRef.current = null
+      needsContactResolveRef.current = true
+      // Avoid the ?companyId= deep-link effect also jumping once the list loads
+      companyDeepLinkHandledRef.current = true
+      setSelectedBatchId(batchId)
+      setCurrentIndex(0)
+      setGridPage(1)
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          if (batchId) next.set('batchId', batchId)
+          else next.delete('batchId')
+          next.set('companyId', companyId)
+          return next
+        },
+        { replace: true }
+      )
+      if (viewMode !== 'detail') {
+        switchView('detail', { persist: false })
+      }
+    },
+    [selectedBatchId, clients, navigateToCompany, setSearchParams, viewMode]
+  )
+
+  // Resolve pending Duplicate-RUC sibling after the target batch list loads
+  useEffect(() => {
+    const pending = pendingCompanyNavRef.current
+    if (!pending) return
+    if (selectedBatchId !== pending.batchId) return
+    if (loadingList) return
+    if (clients.length === 0) {
+      pendingCompanyNavRef.current = null
+      toast('No se encontró el registro en ese lote', { icon: 'ℹ️' })
+      return
+    }
+    const idx = clients.findIndex((c) => c.id === pending.companyId)
+    if (idx < 0) {
+      pendingCompanyNavRef.current = null
+      toast('Este registro no está en tu lista visible de ese lote', { icon: 'ℹ️' })
+      return
+    }
+    pendingCompanyNavRef.current = null
+    void navigateToCompany(idx)
+  }, [loadingList, clients, selectedBatchId, navigateToCompany])
 
   const applyListFilters = useCallback(
     (cola: ListCola, drilldown: string | null) => {
@@ -2523,7 +2593,7 @@ export default function MyLeads() {
                       ruc={displayDetail.ruc}
                       siblings={duplicateRucSiblings}
                       currentCompanyId={detail.id}
-                      onSwitchBatch={switchBatch}
+                      onGoToSibling={goToDuplicateSibling}
                     />
                   )}
                   <div className="flex flex-col sm:flex-row gap-3 items-start">
