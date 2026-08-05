@@ -373,6 +373,14 @@ export function BatchPendingPicker({
     return `${s.isNewest ? '★ ' : ''}${s.label} · ${s.pending} pend.`
   }, [value, stats, allPending])
 
+  /** Full batch name for native tooltip (no pending suffix — truncated trigger stays readable). */
+  const selectedTitle = useMemo(() => {
+    if (!value) return 'Todos los lotes'
+    const s = stats.find((b) => b.id === value)
+    if (!s) return 'Lote'
+    return `${s.isNewest ? '★ ' : ''}${s.label}`
+  }, [value, stats])
+
   useEffect(() => {
     if (!open) return
     const onPointerDown = (e: PointerEvent) => {
@@ -467,11 +475,14 @@ export function BatchPendingPicker({
         aria-haspopup="listbox"
         aria-controls={open ? listboxId : undefined}
         aria-label="Seleccionar lote"
+        title={selectedTitle}
         onClick={() => setOpen((v) => !v)}
         onKeyDown={handleTriggerKeyDown}
         className={`${triggerClass} flex items-center justify-between gap-2 text-left min-w-0`}
       >
-        <span className="truncate min-w-0 flex-1">{selectedLabel}</span>
+        <span className="truncate min-w-0 flex-1" title={selectedTitle}>
+          {selectedLabel}
+        </span>
         {!isHeader && selectedStats.total > 0 && (
           <span
             className={`h-1 w-8 shrink-0 rounded-full overflow-hidden transition-colors duration-300 ${
@@ -529,7 +540,12 @@ export function BatchPendingPicker({
               }`}
             >
               <div className="flex items-center justify-between gap-2 mb-1.5">
-                <span className="text-sm font-medium text-gray-900 truncate">Todos los lotes</span>
+                <span
+                  className="text-sm font-medium text-gray-900 truncate"
+                  title="Todos los lotes"
+                >
+                  Todos los lotes
+                </span>
                 <span
                   className={`text-xs tabular-nums shrink-0 font-medium transition-colors duration-300 ${
                     isLowPendingAlert(allPending, allTotal)
@@ -570,7 +586,10 @@ export function BatchPendingPicker({
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <span className="text-sm font-medium text-gray-900 truncate">
+                    <span
+                      className="text-sm font-medium text-gray-900 truncate"
+                      title={`${s.isNewest ? '★ ' : ''}${s.label}`}
+                    >
                       {s.isNewest ? '★ ' : ''}
                       {s.label}
                     </span>
