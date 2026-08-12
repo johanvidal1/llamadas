@@ -243,7 +243,7 @@ export function AgentCallsBarChart({
   const tickAngle = rotateTicks ? -35 : 0
 
   // Horizontal chart: grow with agent count so bars aren't crushed
-  const mobileHeight = Math.max(280, chartData.length * 44 + 72)
+  const mobileHeight = Math.max(300, chartData.length * 44 + 92)
 
   return (
     <div>
@@ -401,11 +401,19 @@ export function AgentCallsBarChart({
             <BarChart
               layout="vertical"
               data={chartData}
-              margin={{ top: 8, right: 16, left: 4, bottom: 8 }}
+              margin={{ top: 28, right: 16, left: 4, bottom: 8 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" horizontal={false} />
               <XAxis
                 type="number"
+                allowDecimals={false}
+                tick={{ fontSize: 11, fill: '#9ca3af' }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <XAxis
+                type="number"
+                orientation="top"
                 allowDecimals={false}
                 tick={{ fontSize: 11, fill: '#9ca3af' }}
                 axisLine={false}
