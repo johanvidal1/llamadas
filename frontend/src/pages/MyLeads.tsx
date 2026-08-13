@@ -1,7 +1,19 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getClients, getClient, logCall, updateCall, updateClient, updateContact, getCallbacks, updateCallback, downloadImportExport } from '../api/client'
+import {
+  getClients,
+  getClient,
+  getMyBatches,
+  logCall,
+  updateCall,
+  updateClient,
+  updateContact,
+  getCallbacks,
+  updateCallback,
+  downloadImportExport,
+  type GetClientsParams,
+} from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
 import {
@@ -698,9 +710,33 @@ const ULTIMA_REGISTRADA_NUEVO_KEY = 'myLeadsUltimaRegistradaNuevoSeen'
 const AGENDADOS_SPLIT_DEFAULT = 38
 const AGENDADOS_SPLIT_MIN = 20
 const AGENDADOS_SPLIT_MAX = 75
+/** Matches backend MAX_CLIENTS_LIMIT; paginate when an agent has more than one page. */
+const MY_LEADS_CLIENTS_PAGE_LIMIT = 2000
+const MY_LEADS_CLIENTS_MAX_PAGES = 50
 
 function clampAgendadosSplit(pct: number) {
   return Math.min(AGENDADOS_SPLIT_MAX, Math.max(AGENDADOS_SPLIT_MIN, pct))
+}
+
+/** Fetch every page of assigned clients (pending counts / nav / list must not cap at 500). */
+async function fetchAllMyLeadClients(
+  params: Omit<GetClientsParams, 'page' | 'limit'> = {}
+): Promise<{ clients: ClientSummary[]; total: number }> {
+  const limit = MY_LEADS_CLIENTS_PAGE_LIMIT
+  const clients: ClientSummary[] = []
+  let page = 1
+  let total = Infinity
+
+  while (clients.length < total && page <= MY_LEADS_CLIENTS_MAX_PAGES) {
+    const data = await getClients({ ...params, page, limit })
+    const chunk: ClientSummary[] = data?.clients ?? []
+    total = typeof data?.total === 'number' ? data.total : clients.length + chunk.length
+    clients.push(...chunk)
+    if (chunk.length === 0 || chunk.length < limit) break
+    page += 1
+  }
+
+  return { clients, total: typeof total === 'number' && Number.isFinite(total) ? total : clients.length }
 }
 
 function useIsLg() {
@@ -886,10 +922,17 @@ export default function MyLeads() {
     null
   )
 
-  // Load ALL clients without batch filter — used only to derive available batches
+  // All assigned clients (paginated) — pending counts, Duplicate RUC, picker stats
   const { data: allClientsData } = useQuery({
     queryKey: ['clients', 'my-leads', 'all-for-batches'],
-    queryFn: () => getClients({ limit: 500 }),
+    queryFn: () => fetchAllMyLeadClients(),
+  })
+
+  // Agent batch list from dedicated endpoint (not capped by client-list page size)
+  const { data: myBatches } = useQuery({
+    queryKey: ['my-batches'],
+    queryFn: getMyBatches,
+    enabled: !isAdmin,
   })
 
   // Load clients for current batch (server-side filter) — used for detail view navigation.
@@ -898,8 +941,7 @@ export default function MyLeads() {
   const { data: clientsData, isLoading: loadingList } = useQuery({
     queryKey: ['clients', 'my-leads', 'nav', selectedBatchId],
     queryFn: () =>
-      getClients({
-        limit: 500,
+      fetchAllMyLeadClients({
         batchId: selectedBatchId || undefined,
         sortBy: 'registeredCreatedAt',
       }),
@@ -914,8 +956,7 @@ export default function MyLeads() {
   } = useQuery({
     queryKey: ['clients', 'my-leads', 'list', selectedBatchId, listCola, listDrilldown],
     queryFn: () =>
-      getClients({
-        limit: 500,
+      fetchAllMyLeadClients({
         batchId: selectedBatchId || undefined,
         sortBy: 'registeredCreatedAt',
         ...getListApiParams(listCola, listDrilldown),
@@ -943,17 +984,26 @@ export default function MyLeads() {
     enabled: viewMode === 'grid',
   })
 
-  // All loaded clients (unfiltered) — used for batch derivation + pending counts
+  // All loaded clients (unfiltered) — used for pending counts + Duplicate RUC
   const allClients: ClientSummary[] = allClientsData?.clients ?? []
 
-  // Derive unique batches sorted newest first
-  const batches = Array.from(
-    new Map(
-      allClients
-        .filter((c) => c.importBatch)
-        .map((c) => [c.importBatch!.id, c.importBatch!])
-    ).values()
-  ).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  // Agents: authoritative batch list from getMyBatches. Admins: derive from loaded clients.
+  const batches = useMemo(() => {
+    if (!isAdmin && myBatches && Array.isArray(myBatches)) {
+      return (myBatches as { id: string; filename: string; createdAt: string }[]).map((b) => ({
+        id: b.id,
+        filename: b.filename,
+        createdAt: b.createdAt,
+      }))
+    }
+    return Array.from(
+      new Map(
+        allClients
+          .filter((c) => c.importBatch)
+          .map((c) => [c.importBatch!.id, c.importBatch!])
+      ).values()
+    ).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  }, [isAdmin, myBatches, allClients])
 
   // Clients for detail view navigation — server-filtered by batch
   const rawNavClients: ClientSummary[] = clientsData?.clients ?? []
@@ -2101,8 +2151,7 @@ export default function MyLeads() {
         const fresh = await qc.fetchQuery({
           queryKey: ['clients', 'my-leads', 'nav', selectedBatchId],
           queryFn: () =>
-            getClients({
-              limit: 500,
+            fetchAllMyLeadClients({
               batchId: selectedBatchId || undefined,
               sortBy: 'registeredCreatedAt',
             }),
