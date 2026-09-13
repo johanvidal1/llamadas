@@ -10,6 +10,7 @@ import {
   ReferenceLine,
   Cell,
   Legend,
+  LabelList,
 } from 'recharts'
 import type { TooltipProps } from 'recharts'
 import type { AgentCallChartRow } from '../api/client'
@@ -26,6 +27,86 @@ const MD_QUERY = '(min-width: 768px)'
 
 function truncateName(name: string, max = 12) {
   return name.length > max ? `${name.slice(0, max - 1)}…` : name
+}
+
+/** Nice ceiling so Recharts ticks stay even and labels fit past the longest bar. */
+function niceCeil(value: number): number {
+  if (value <= 0) return 10
+  const mag = 10 ** Math.floor(Math.log10(value))
+  const n = value / mag
+  const nice =
+    n <= 1 ? 1 : n <= 1.5 ? 1.5 : n <= 2 ? 2 : n <= 3 ? 3 : n <= 4 ? 4 : n <= 5 ? 5 : n <= 6 ? 6 : n <= 8 ? 8 : 10
+  return nice * mag
+}
+
+function mobileXMax(rows: { calls: number; registered: number }[], teamAverage: number): number {
+  const raw = Math.max(
+    ...rows.map((row) => Math.max(row.calls, row.registered)),
+    teamAverage,
+    1
+  )
+  return niceCeil(raw * 1.12)
+}
+
+type MobileBarLabelProps = {
+  x?: number | string
+  y?: number | string
+  width?: number | string
+  height?: number | string
+  value?: number | string
+}
+
+function MobileBarEndLabel({
+  x = 0,
+  y = 0,
+  width = 0,
+  height = 0,
+  value,
+  kind,
+}: MobileBarLabelProps & { kind: 'calls' | 'registered' }) {
+  if (value == null || value === '') return null
+  const left = Number(x) || 0
+  const top = Number(y) || 0
+  const w = Number(width) || 0
+  const h = Number(height) || 0
+  const barWideEnough = w >= 28
+  const labelX = barWideEnough ? left + w - 5 : left + w + 4
+  return (
+    <text
+      x={labelX}
+      y={top + h / 2}
+      dy={3}
+      textAnchor={barWideEnough ? 'end' : 'start'}
+      fill={
+        barWideEnough
+          ? kind === 'calls'
+            ? '#1e3a8a'
+            : '#ffffff'
+          : kind === 'calls'
+            ? '#2563eb'
+            : '#059669'
+      }
+      fontSize={10}
+      fontWeight={600}
+    >
+      {value}
+    </text>
+  )
+}
+
+function ChartSeriesLegend() {
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-3 text-[11px] text-gray-600">
+      <span className="inline-flex items-center gap-1.5">
+        <span className="inline-block w-2.5 h-2.5 rounded-[2px] bg-blue-300" aria-hidden />
+        Llamadas
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="inline-block w-2.5 h-2.5 rounded-[2px] bg-emerald-500" aria-hidden />
+        Registrados (empresas)
+      </span>
+    </div>
+  )
 }
 
 function useIsMd() {
@@ -242,8 +323,9 @@ export function AgentCallsBarChart({
   const rotateTicks = chartData.length > 6
   const tickAngle = rotateTicks ? -35 : 0
 
-  // Horizontal chart: grow with agent count so bars aren't crushed
-  const mobileHeight = Math.max(300, chartData.length * 44 + 92)
+  // Horizontal chart: grow with agent count so bars, top axis, and end labels aren't crushed
+  const mobileHeight = Math.max(320, chartData.length * 48 + 108)
+  const mobileXDomainMax = mobileXMax(chartData, teamAverage)
 
   return (
     <div>
@@ -396,121 +478,133 @@ export function AgentCallsBarChart({
           </ResponsiveContainer>
         </div>
       ) : (
-        <div className="w-full" style={{ height: mobileHeight }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              layout="vertical"
-              data={chartData}
-              margin={{ top: 28, right: 16, left: 4, bottom: 8 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" horizontal={false} />
-              <XAxis
-                type="number"
-                allowDecimals={false}
-                tick={{ fontSize: 11, fill: '#9ca3af' }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <XAxis
-                type="number"
-                orientation="top"
-                allowDecimals={false}
-                tick={{ fontSize: 11, fill: '#9ca3af' }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis
-                type="category"
-                dataKey="shortName"
-                axisLine={false}
-                tickLine={false}
-                width={88}
-                interval={0}
-                tick={(props) => (
-                  <AgentYAxisTick
-                    {...props}
-                    chartData={chartData}
-                    highlightedAgentId={highlightedAgentId}
-                    onAgentSelect={onAgentSelect}
-                  />
-                )}
-              />
-              <Tooltip
-                cursor={{ fill: 'rgba(59, 130, 246, 0.06)' }}
-                wrapperStyle={{ pointerEvents: 'auto', zIndex: 20 }}
-                offset={12}
-                content={<AgentCallsTooltip onViewClients={onViewClients} />}
-              />
-              <Legend
-                verticalAlign="top"
-                align="right"
-                iconType="square"
-                iconSize={10}
-                wrapperStyle={{ fontSize: 11, paddingBottom: 4 }}
-                formatter={(value) =>
-                  value === 'calls' ? 'Llamadas' : 'Registrados (empresas)'
-                }
-              />
-              <ReferenceLine
-                x={teamAverage}
-                stroke="#f59e0b"
-                strokeDasharray="4 4"
-                strokeWidth={1.5}
-                label={{
-                  value: `Prom. ${teamAverage}`,
-                  position: 'insideTopRight',
-                  fill: '#d97706',
-                  fontSize: 10,
-                }}
-              />
-              <Bar
-                dataKey="calls"
-                name="calls"
-                radius={[0, 4, 4, 0]}
-                maxBarSize={18}
-                legendType="square"
-                style={selectable ? { cursor: 'pointer' } : undefined}
-                onClick={(barData) => {
-                  const row = barData as ChartRow | undefined
-                  if (row?.agentId && onAgentSelect) onAgentSelect(row.agentId)
-                }}
+        <div>
+          <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm pb-1.5 mb-1">
+            <ChartSeriesLegend />
+          </div>
+          <div className="w-full" style={{ height: mobileHeight }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                layout="vertical"
+                data={chartData}
+                margin={{ top: 22, right: 36, left: 4, bottom: 8 }}
+                barCategoryGap="16%"
+                barGap={3}
               >
-                {chartData.map((entry) => (
-                  <Cell
-                    key={`m-calls-${entry.agentId}`}
-                    fill={barFill(entry, highlightedAgentId, 'calls')}
-                    stroke={
-                      highlightedAgentId === entry.agentId ? '#1d4ed8' : undefined
-                    }
-                    strokeWidth={highlightedAgentId === entry.agentId ? 1 : 0}
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" horizontal={false} />
+                <XAxis
+                  xAxisId="bottom"
+                  type="number"
+                  domain={[0, mobileXDomainMax]}
+                  allowDecimals={false}
+                  tick={{ fontSize: 11, fill: '#9ca3af' }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <XAxis
+                  xAxisId="top"
+                  type="number"
+                  orientation="top"
+                  domain={[0, mobileXDomainMax]}
+                  allowDecimals={false}
+                  tick={{ fontSize: 11, fill: '#9ca3af' }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="shortName"
+                  axisLine={false}
+                  tickLine={false}
+                  width={88}
+                  interval={0}
+                  tick={(props) => (
+                    <AgentYAxisTick
+                      {...props}
+                      chartData={chartData}
+                      highlightedAgentId={highlightedAgentId}
+                      onAgentSelect={onAgentSelect}
+                    />
+                  )}
+                />
+                <Tooltip
+                  cursor={{ fill: 'rgba(59, 130, 246, 0.06)' }}
+                  wrapperStyle={{ pointerEvents: 'auto', zIndex: 20 }}
+                  offset={12}
+                  content={<AgentCallsTooltip onViewClients={onViewClients} />}
+                />
+                <ReferenceLine
+                  xAxisId="bottom"
+                  x={teamAverage}
+                  stroke="#f59e0b"
+                  strokeDasharray="4 4"
+                  strokeWidth={1.5}
+                  label={{
+                    value: `Prom. ${teamAverage}`,
+                    position: 'insideTopRight',
+                    fill: '#d97706',
+                    fontSize: 10,
+                  }}
+                />
+                <Bar
+                  xAxisId="bottom"
+                  dataKey="calls"
+                  name="calls"
+                  radius={[0, 4, 4, 0]}
+                  maxBarSize={18}
+                  isAnimationActive={false}
+                  style={selectable ? { cursor: 'pointer' } : undefined}
+                  onClick={(barData) => {
+                    const row = barData as ChartRow | undefined
+                    if (row?.agentId && onAgentSelect) onAgentSelect(row.agentId)
+                  }}
+                >
+                  {chartData.map((entry) => (
+                    <Cell
+                      key={`m-calls-${entry.agentId}`}
+                      fill={barFill(entry, highlightedAgentId, 'calls')}
+                      stroke={
+                        highlightedAgentId === entry.agentId ? '#1d4ed8' : undefined
+                      }
+                      strokeWidth={highlightedAgentId === entry.agentId ? 1 : 0}
+                    />
+                  ))}
+                  <LabelList
+                    dataKey="calls"
+                    content={(props) => <MobileBarEndLabel {...props} kind="calls" />}
                   />
-                ))}
-              </Bar>
-              <Bar
-                dataKey="registered"
-                name="registered"
-                radius={[0, 3, 3, 0]}
-                maxBarSize={14}
-                legendType="square"
-                style={selectable ? { cursor: 'pointer' } : undefined}
-                onClick={(barData) => {
-                  const row = barData as ChartRow | undefined
-                  if (row?.agentId && onAgentSelect) onAgentSelect(row.agentId)
-                }}
-              >
-                {chartData.map((entry) => (
-                  <Cell
-                    key={`m-registered-${entry.agentId}`}
-                    fill={barFill(entry, highlightedAgentId, 'registered')}
-                    stroke={
-                      highlightedAgentId === entry.agentId ? '#047857' : undefined
-                    }
-                    strokeWidth={highlightedAgentId === entry.agentId ? 1 : 0}
+                </Bar>
+                <Bar
+                  xAxisId="bottom"
+                  dataKey="registered"
+                  name="registered"
+                  radius={[0, 3, 3, 0]}
+                  maxBarSize={14}
+                  isAnimationActive={false}
+                  style={selectable ? { cursor: 'pointer' } : undefined}
+                  onClick={(barData) => {
+                    const row = barData as ChartRow | undefined
+                    if (row?.agentId && onAgentSelect) onAgentSelect(row.agentId)
+                  }}
+                >
+                  {chartData.map((entry) => (
+                    <Cell
+                      key={`m-registered-${entry.agentId}`}
+                      fill={barFill(entry, highlightedAgentId, 'registered')}
+                      stroke={
+                        highlightedAgentId === entry.agentId ? '#047857' : undefined
+                      }
+                      strokeWidth={highlightedAgentId === entry.agentId ? 1 : 0}
+                    />
+                  ))}
+                  <LabelList
+                    dataKey="registered"
+                    content={(props) => <MobileBarEndLabel {...props} kind="registered" />}
                   />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       )}
     </div>
