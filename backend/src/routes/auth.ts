@@ -72,6 +72,8 @@ function publicUserFields(user: {
   isSuperAdmin: boolean
   isSystemOwner: boolean
   avatarUrl?: string | null
+  batchQueueMode?: string | null
+  workingBatchId?: string | null
 }) {
   return {
     id: user.id,
@@ -81,12 +83,18 @@ function publicUserFields(user: {
     isSuperAdmin: user.isSuperAdmin,
     isSystemOwner: user.isSystemOwner,
     hasAvatar: Boolean(user.avatarUrl),
+    batchQueueMode: user.batchQueueMode === 'LIFO' || user.batchQueueMode === 'ALL' ? user.batchQueueMode : 'FIFO',
+    workingBatchId: user.workingBatchId ?? null,
   }
 }
 
 const loginSchema = z.object({
   email: z.string().email('Email inválido'),
   password: z.string().min(1, 'Contraseña requerida'),
+})
+
+const patchMeSchema = z.object({
+  workingBatchId: z.union([z.string().min(1), z.null()]).optional(),
 })
 
 /** Password required; email optional (legacy path when provided). */
@@ -109,6 +117,21 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
       email: email.toLowerCase(),
       tenantId: req.tenant.id,
       active: true,
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      password: true,
+      role: true,
+      isSuperAdmin: true,
+      isSystemOwner: true,
+      isArchivedAgent: true,
+      tenantId: true,
+      tokenVersion: true,
+      avatarUrl: true,
+      batchQueueMode: true,
+      workingBatchId: true,
     },
   })
   if (!user || user.isArchivedAgent) {
@@ -235,6 +258,32 @@ router.post('/elevate-admin', requireAuth, async (req: AuthRequest, res: Respons
   })
 })
 
+// PATCH /api/auth/me — agent (or admin-as-self) pin for lote queue
+router.patch('/me', requireAuth, async (req: AuthRequest, res: Response) => {
+  const data = patchMeSchema.parse(req.body)
+  if (data.workingBatchId === undefined) {
+    res.status(400).json({ error: 'Nada que actualizar' })
+    return
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: req.user!.id },
+    data: { workingBatchId: data.workingBatchId },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      isSuperAdmin: true,
+      isSystemOwner: true,
+      avatarUrl: true,
+      batchQueueMode: true,
+      workingBatchId: true,
+    },
+  })
+  res.json(publicUserFields(updated))
+})
+
 // GET /api/auth/me
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const user = await prisma.user.findUnique({
@@ -248,6 +297,8 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
       isSystemOwner: true,
       active: true,
       avatarUrl: true,
+      batchQueueMode: true,
+      workingBatchId: true,
     },
   })
   if (!user) {
@@ -275,7 +326,11 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 
   const { avatarUrl: _avatarUrl, ...safe } = user
-  res.json({ ...safe, hasAvatar: Boolean(_avatarUrl), billing })
+  res.json({
+    ...publicUserFields({ ...safe, avatarUrl: _avatarUrl }),
+    active: user.active,
+    billing,
+  })
 })
 
 // GET /api/auth/me/avatar — stream current user's avatar (auth required)
@@ -383,6 +438,8 @@ router.post(
           isSuperAdmin: true,
           isSystemOwner: true,
           avatarUrl: true,
+          batchQueueMode: true,
+          workingBatchId: true,
         },
       })
 
@@ -420,6 +477,8 @@ router.delete('/me/avatar', requireAuth, async (req: AuthRequest, res: Response)
         isSuperAdmin: true,
         isSystemOwner: true,
         avatarUrl: true,
+        batchQueueMode: true,
+        workingBatchId: true,
       },
     })
     res.json(publicUserFields(updated))

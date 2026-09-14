@@ -12,6 +12,7 @@ import {
   getCallbacks,
   updateCallback,
   downloadImportExport,
+  patchMe,
   type GetClientsParams,
 } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
@@ -52,7 +53,14 @@ import {
   BatchPendingPicker,
   BatchPendingThermometer,
   getBatchPendingCounts,
+  isCompanyPendingForBatchPicker,
 } from '../components/BatchPendingPicker'
+import {
+  parseBatchQueueMode,
+  resolveWorkingBatchId,
+  shouldAutoAdvancePinnedBatch,
+  type QueueBatchInput,
+} from '../lib/batchQueuePolicy'
 import { DuplicateRucBanner } from '../components/DuplicateRucBanner'
 import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -757,13 +765,16 @@ function useIsLg() {
 export default function MyLeads() {
   const qc = useQueryClient()
   const navigate = useNavigate()
-  const { user, isAdmin } = useAuth()
+  const { user, isAdmin, updateUser: patchAuthUser } = useAuth()
   const isLg = useIsLg()
   const [searchParams, setSearchParams] = useSearchParams()
   const initialFilter = searchParams.get('filter') ?? ''
   const initialBatchId = searchParams.get('batchId') ?? ''
   const initialCompanyId = searchParams.get('companyId') ?? ''
   const initialContactId = searchParams.get('contactId') ?? ''
+  const hasBatchDeepLink = Boolean(searchParams.get('batchId'))
+  const hasCompanyDeepLink = Boolean(initialCompanyId)
+  const queueDeepLinkWins = hasBatchDeepLink || hasCompanyDeepLink
   const initialQ = searchParams.get('q') ?? ''
   const hasListDeepLink = initialFilter !== '' && VALID_LIST_FILTERS.has(initialFilter)
   const initialListFilters = parseListFiltersFromUrl(initialFilter)
@@ -811,7 +822,22 @@ export default function MyLeads() {
   }, [searchParams])
 
   // ── Batch filter (shared between detail + grid views)
-  const [selectedBatchId, setSelectedBatchId] = useState<string>(initialBatchId)
+  const [selectedBatchId, setSelectedBatchId] = useState<string>(() => {
+    if (initialBatchId) return initialBatchId
+    if (initialCompanyId) return ''
+    const mode = parseBatchQueueMode(user?.batchQueueMode)
+    if (mode === 'ALL') return ''
+    return user?.workingBatchId ?? ''
+  })
+  const queueHydratedRef = useRef(queueDeepLinkWins)
+  const explicitTodosRef = useRef(false)
+  const persistWorkingBatchRef = useRef<(batchId: string | null) => void>(() => {})
+  const [callbackResult, setCallbackResult] = useState<{
+    company: { id: string; ruc: string; razonSocial?: string }
+    contactId?: string
+    scheduledAt: string
+    notes?: string
+  } | null>(null)
 
   // ── Agendados sidebar tab
   const [cbTab, setCbTab] = useState<'own' | 'team'>('own')
@@ -1021,6 +1047,36 @@ export default function MyLeads() {
     () => getBatchPendingCounts(allClients, selectedBatchId),
     [allClients, selectedBatchId]
   )
+
+  const queueMode = parseBatchQueueMode(user?.batchQueueMode)
+  const workingBatchId = user?.workingBatchId ?? null
+  const queueBatches: QueueBatchInput[] = useMemo(
+    () =>
+      batches.map((b) => {
+        const inBatch = allClients.filter((c) => c.importBatch?.id === b.id)
+        return {
+          id: b.id,
+          createdAt: b.createdAt,
+          pending: inBatch.filter(isCompanyPendingForBatchPicker).length,
+        }
+      }),
+    [batches, allClients]
+  )
+  const batchesReady = isAdmin ? allClientsData !== undefined : myBatches !== undefined
+  const pickerWorkingBatchId = queueMode === 'ALL' ? undefined : workingBatchId ?? undefined
+
+  const persistWorkingBatch = useCallback(
+    (batchId: string | null) => {
+      if (!user) return
+      if ((user.workingBatchId ?? null) === batchId) return
+      patchAuthUser({ workingBatchId: batchId })
+      void patchMe({ workingBatchId: batchId }).catch(() => {
+        toast.error('No se pudo guardar el lote en curso')
+      })
+    },
+    [user, patchAuthUser]
+  )
+  persistWorkingBatchRef.current = persistWorkingBatch
 
   // Load detail for current client — placeholderData keeps previous record visible during nav
   const { data: clientDetail, isFetching: fetchingDetail } = useQuery({
@@ -1694,6 +1750,8 @@ export default function MyLeads() {
   )
 
   const switchBatch = (batchId: string) => {
+    if (!batchId) explicitTodosRef.current = true
+    else explicitTodosRef.current = false
     setSelectedBatchId(batchId)
     setCurrentIndex(0)
     autoJumpToPendingRef.current = true
@@ -1714,7 +1772,87 @@ export default function MyLeads() {
       },
       { replace: true }
     )
+    if (batchId) persistWorkingBatch(batchId)
   }
+
+  const applyQueueBatch = useCallback(
+    (batchId: string) => {
+      setSelectedBatchId(batchId)
+      setCurrentIndex(0)
+      autoJumpToPendingRef.current = true
+      pendingCompanyNavRef.current = null
+      pendingContactIdRef.current = null
+      pendingContactIdxRef.current = null
+      pendingCallLogIdRef.current = null
+      stayAfterSaveRef.current = false
+      setEditingCallLogId(null)
+      needsContactResolveRef.current = true
+      setGridPage(1)
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          if (batchId) next.set('batchId', batchId)
+          else next.delete('batchId')
+          return next
+        },
+        { replace: true }
+      )
+    },
+    [setSearchParams]
+  )
+
+  useEffect(() => {
+    if (queueDeepLinkWins) {
+      queueHydratedRef.current = true
+      return
+    }
+    if (!batchesReady) return
+    if (queueMode === 'ALL') {
+      if (!queueHydratedRef.current) {
+        setSelectedBatchId('')
+        queueHydratedRef.current = true
+      }
+      return
+    }
+    if (explicitTodosRef.current && selectedBatchId === '') {
+      queueHydratedRef.current = true
+      return
+    }
+
+    const resolved = resolveWorkingBatchId({
+      mode: queueMode,
+      workingBatchId,
+      batches: queueBatches,
+    })
+
+    if (!queueHydratedRef.current) {
+      queueHydratedRef.current = true
+      if (resolved !== selectedBatchId) applyQueueBatch(resolved)
+      persistWorkingBatchRef.current(resolved || null)
+      return
+    }
+
+    if (
+      !shouldAutoAdvancePinnedBatch({
+        mode: queueMode,
+        selectedBatchId,
+        workingBatchId,
+        batches: queueBatches,
+      })
+    ) {
+      return
+    }
+    if (resolved !== selectedBatchId) applyQueueBatch(resolved)
+    persistWorkingBatchRef.current(resolved || null)
+  }, [
+    applyQueueBatch,
+    batchesReady,
+    queueBatches,
+    queueDeepLinkWins,
+    queueMode,
+    selectedBatchId,
+    workingBatchId,
+  ])
 
   /** Open a Duplicate-RUC sibling by company id (same or other batch). */
   const goToDuplicateSibling = useCallback(
@@ -1859,6 +1997,45 @@ export default function MyLeads() {
     } else {
       toast('Este cliente no está en tu lista visible', { icon: 'ℹ️' })
     }
+  }
+
+  const openCallbackFromSidebar = (cb: Callback) => {
+    if (cb.company.id === currentClient?.id) {
+      const contactId = cb.callLog?.contact?.id
+      if (contactId) {
+        pendingContactIdRef.current = contactId
+        pendingContactIdxRef.current = null
+        needsContactResolveRef.current = false
+        const idx = displayContacts.findIndex((c) => c.id === contactId)
+        if (idx >= 0) setActiveContactIdx(idx)
+      }
+      return
+    }
+    setCallbackResult({
+      company: {
+        id: cb.company.id,
+        ruc: cb.company.ruc,
+        razonSocial: cb.company.razonSocial,
+      },
+      contactId: cb.callLog?.contact?.id,
+      scheduledAt: cb.scheduledAt,
+      notes: cb.notes,
+    })
+  }
+
+  const openCallbackFullRecord = () => {
+    if (!callbackResult) return
+    const companyId = callbackResult.company.id
+    const contactId = callbackResult.contactId
+    const row = allClients.find((c) => c.id === companyId)
+    const batchId = row?.importBatch?.id
+    setCallbackResult(null)
+    if (batchId && batchId !== selectedBatchId) {
+      if (contactId) pendingContactIdRef.current = contactId
+      goToDuplicateSibling(companyId, batchId)
+      return
+    }
+    goToClientById(companyId, { contactId })
   }
 
   const canSaveCallResult = useMemo(
@@ -2394,6 +2571,8 @@ export default function MyLeads() {
   }, [viewMode, saveMutation, canSaveCallResult, nextPendingTarget])
 
   const exportBatchId = selectedBatchId || detail?.importBatch?.id
+  const toolbarHasExtras =
+    viewMode === 'detail' || (viewMode === 'list' && returnToDashboard)
 
   const handleExport = async () => {
     if (!exportBatchId) {
@@ -2415,154 +2594,160 @@ export default function MyLeads() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
 
-      {/* ══════════════════════ PAGE TOOLBAR (shell owns role color) ══════════════════════ */}
-      <div className="bg-white border-b border-gray-200 text-gray-800 px-3 lg:px-6 py-2 flex flex-wrap lg:flex-nowrap items-center justify-between shrink-0 gap-2 lg:gap-4">
-        <div className="flex items-center gap-2 lg:gap-4 min-w-0 text-sm flex-wrap">
-          <div className="min-w-0 shrink-0 max-w-[11rem] sm:max-w-[14rem]">
-            <span className="font-semibold truncate block text-gray-900">Migración de Operador</span>
-          </div>
+      {/* ══════════════════════ PAGE TOOLBAR (3-zone: left | extras | toggle) ══════════════════════ */}
+      <div className="bg-white border-b border-gray-200 text-gray-800 px-3 lg:px-6 py-2 shrink-0">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 lg:gap-x-4 gap-y-2">
+          {/* Left: title + lote picker + export — never includes view toggle or N clientes.
+              No overflow here: it would clip the lote picker popover. Children shrink + truncate. */}
+          <div className="col-start-1 row-start-1 flex items-center gap-2 lg:gap-4 min-w-0 text-sm">
+            <div className="min-w-0 max-w-[11rem] sm:max-w-[14rem]">
+              <span className="font-semibold truncate block text-gray-900">Migración de Operador</span>
+            </div>
 
-          {/* Batch selector */}
-          {batches.length > 0 && (
-            <BatchPendingPicker
-              batches={batches}
-              clients={allClients}
-              value={selectedBatchId}
-              onChange={switchBatch}
-              variant="filter"
-              id="detail-batch-filter"
-              className="min-w-[12rem] max-w-[16rem]"
-            />
-          )}
+            {batches.length > 0 && (
+              <BatchPendingPicker
+                batches={batches}
+                clients={allClients}
+                value={selectedBatchId}
+                onChange={switchBatch}
+                variant="filter"
+                id="detail-batch-filter"
+                className="self-center min-w-0 lg:min-w-[12rem] max-w-[16rem]"
+                workingBatchId={pickerWorkingBatchId}
+              />
+            )}
 
-          {exportBatchId && (
-            <button
-              type="button"
-              onClick={handleExport}
-              disabled={exporting}
-              className="flex items-center justify-center p-1.5 bg-white hover:bg-blue-50 disabled:opacity-50 text-blue-700 border border-blue-200 rounded transition-colors shrink-0"
-              title="Descargar mis registros"
-            >
-              <Save size={13} />
-            </button>
-          )}
-
-          {viewMode === 'grid' && (
-            <span className="text-gray-500 text-xs shrink-0">{gridData?.total ?? 0} clientes</span>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 lg:gap-3 shrink-0 flex-wrap lg:flex-nowrap">
-          {viewMode === 'list' && returnToDashboard && (
-            <button
-              type="button"
-              onClick={returnToDashboardHome}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white hover:bg-blue-50 border border-blue-200 text-blue-800 text-xs font-medium"
-            >
-              <ArrowLeft size={14} />
-              Volver al inicio
-              {(listDrilldown || listCola !== 'FUNNEL') && (
-                <span className="text-blue-600/80 font-normal">
-                  ({getListFilterLabel(listCola, listDrilldown)})
-                </span>
-              )}
-            </button>
-          )}
-          {viewMode === 'detail' && returnToView === 'list' && (
-            <button
-              type="button"
-              onClick={returnToList}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white hover:bg-blue-50 border border-blue-200 text-blue-800 text-xs font-medium"
-            >
-              <ArrowLeft size={14} />
-              Volver a la lista
-              {(listDrilldown || listCola !== 'FUNNEL') && (
-                <span className="text-blue-600/80 font-normal">
-                  ({getListFilterLabel(listCola, listDrilldown)})
-                </span>
-              )}
-            </button>
-          )}
-          {/* ── View toggle ── */}
-          <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5 shrink-0 border border-gray-200">
-            <button
-              onClick={() => {
-                setReturnToView(null)
-                if (viewMode !== 'detail') autoJumpToPendingRef.current = true
-                switchView('detail')
-              }}
-              title="Vista detalle — ficha individual con historial"
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
-                viewMode === 'detail'
-                  ? 'bg-white text-blue-700 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-800'
-              }`}
-            >
-              <List size={13} /> Detalle
-            </button>
-            <button
-              onClick={() => { setReturnToView(null); switchView('grid') }}
-              title="Vista tarjetas — grilla con búsqueda y filtros"
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
-                viewMode === 'grid'
-                  ? 'bg-white text-blue-700 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-800'
-              }`}
-            >
-              <LayoutGrid size={13} /> Tarjetas
-            </button>
-            <button
-              onClick={() => {
-                if (viewMode === 'detail' && returnToView === 'list') {
-                  returnToList()
-                } else {
-                  setReturnToView(null)
-                  switchView('list')
-                }
-              }}
-              title={
-                viewMode === 'detail' && returnToView === 'list'
-                  ? 'Volver a la lista filtrada'
-                  : 'Vista lista — tabla completa de clientes'
-              }
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
-                viewMode === 'list'
-                  ? 'bg-white text-blue-700 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-800'
-              } ${
-                viewMode === 'detail' && returnToView === 'list'
-                  ? 'ring-1 ring-blue-300'
-                  : ''
-              }`}
-            >
-              <AlignJustify size={13} /> Lista
-            </button>
-          </div>
-
-          {/* Detalle: position counter + lote pending thermometer (nav arrows live in footer) */}
-          {viewMode === 'detail' && (
-            <div className="flex items-center justify-end gap-2.5 shrink-0">
-              <span
-                className="inline-flex items-baseline gap-1 px-2.5 py-1 rounded-md bg-blue-50 border border-blue-200 text-blue-900 text-sm font-semibold tabular-nums whitespace-nowrap shadow-sm"
-                title={isAdmin ? COLA_ALL_ADMIN_TITLE : COLA_ALL_AGENT_TITLE}
+            {exportBatchId && (
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={exporting}
+                className="flex items-center justify-center p-1.5 bg-white hover:bg-blue-50 disabled:opacity-50 text-blue-700 border border-blue-200 rounded transition-colors shrink-0"
+                title="Descargar mis registros"
               >
-                {currentIndex + 1}
-                <span className="text-blue-400 font-medium">/</span>
-                {total}
-                {hiddenNavCount > 0 && (
-                  <span className="text-blue-500/80 text-xs font-medium ml-0.5" title="Empresas archivadas ocultas de la cola">
-                    ({hiddenNavCount} ocultas)
+                <Save size={13} />
+              </button>
+            )}
+          </div>
+
+          {/* Extras: shrink/empty without moving the toggle. Mobile: second row below toggle. */}
+          <div
+            className={`min-w-0 items-center justify-start lg:justify-end gap-2 overflow-x-auto col-span-2 row-start-2 lg:col-span-1 lg:col-start-2 lg:row-start-1 ${
+              toolbarHasExtras ? 'flex' : 'hidden lg:flex'
+            }`}
+          >
+            {viewMode === 'list' && returnToDashboard && (
+              <button
+                type="button"
+                onClick={returnToDashboardHome}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white hover:bg-blue-50 border border-blue-200 text-blue-800 text-xs font-medium whitespace-nowrap shrink-0"
+              >
+                <ArrowLeft size={14} />
+                Volver al inicio
+                {(listDrilldown || listCola !== 'FUNNEL') && (
+                  <span className="text-blue-600/80 font-normal">
+                    ({getListFilterLabel(listCola, listDrilldown)})
                   </span>
                 )}
-              </span>
-              <BatchPendingThermometer
-                pending={headerBatchPending.pending}
-                total={headerBatchPending.total}
-                done={headerBatchPending.done}
-                variant="filter"
-              />
+              </button>
+            )}
+            {viewMode === 'detail' && returnToView === 'list' && (
+              <button
+                type="button"
+                onClick={returnToList}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white hover:bg-blue-50 border border-blue-200 text-blue-800 text-xs font-medium whitespace-nowrap shrink-0"
+              >
+                <ArrowLeft size={14} />
+                Volver a la lista
+                {(listDrilldown || listCola !== 'FUNNEL') && (
+                  <span className="text-blue-600/80 font-normal">
+                    ({getListFilterLabel(listCola, listDrilldown)})
+                  </span>
+                )}
+              </button>
+            )}
+            {viewMode === 'detail' && (
+              <div className="flex items-center justify-end gap-2.5 shrink-0">
+                <span
+                  className="inline-flex items-baseline gap-1 px-2.5 py-1 rounded-md bg-blue-50 border border-blue-200 text-blue-900 text-sm font-semibold tabular-nums whitespace-nowrap shadow-sm"
+                  title={isAdmin ? COLA_ALL_ADMIN_TITLE : COLA_ALL_AGENT_TITLE}
+                >
+                  {currentIndex + 1}
+                  <span className="text-blue-400 font-medium">/</span>
+                  {total}
+                  {hiddenNavCount > 0 && (
+                    <span className="text-blue-500/80 text-xs font-medium ml-0.5" title="Empresas archivadas ocultas de la cola">
+                      ({hiddenNavCount} ocultas)
+                    </span>
+                  )}
+                </span>
+                <BatchPendingThermometer
+                  pending={headerBatchPending.pending}
+                  total={headerBatchPending.total}
+                  done={headerBatchPending.done}
+                  variant="filter"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Rightmost: view toggle — reserved last column so siblings cannot shift it */}
+          <div className="col-start-2 row-start-1 lg:col-start-3 justify-self-end shrink-0">
+            <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5 shrink-0 border border-gray-200">
+              <button
+                onClick={() => {
+                  setReturnToView(null)
+                  if (viewMode !== 'detail') autoJumpToPendingRef.current = true
+                  switchView('detail')
+                }}
+                title="Vista detalle — ficha individual con historial"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
+                  viewMode === 'detail'
+                    ? 'bg-white text-blue-700 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                <List size={13} /> Detalle
+              </button>
+              <button
+                onClick={() => { setReturnToView(null); switchView('grid') }}
+                title="Vista tarjetas — grilla con búsqueda y filtros"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
+                  viewMode === 'grid'
+                    ? 'bg-white text-blue-700 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                <LayoutGrid size={13} /> Tarjetas
+              </button>
+              <button
+                onClick={() => {
+                  if (viewMode === 'detail' && returnToView === 'list') {
+                    returnToList()
+                  } else {
+                    setReturnToView(null)
+                    switchView('list')
+                  }
+                }}
+                title={
+                  viewMode === 'detail' && returnToView === 'list'
+                    ? 'Volver a la lista filtrada'
+                    : 'Vista lista — tabla completa de clientes'
+                }
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
+                  viewMode === 'list'
+                    ? 'bg-white text-blue-700 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-800'
+                } ${
+                  viewMode === 'detail' && returnToView === 'list'
+                    ? 'ring-1 ring-blue-300'
+                    : ''
+                }`}
+              >
+                <AlignJustify size={13} /> Lista
+              </button>
             </div>
-          )}
+          </div>
         </div>
       </div>
 
@@ -2998,10 +3183,7 @@ export default function MyLeads() {
                         className={`flex items-stretch gap-1 rounded border text-xs transition-all ${callbackColor(cb.scheduledAt)} ${isCurrent ? 'ring-2 ring-blue-400' : ''}`}
                       >
                         <button
-                          onClick={() => goToClientById(cb.company.id, {
-                            callLogId: cb.callLogId,
-                            contactId: cb.callLog?.contact?.id,
-                          })}
+                          onClick={() => openCallbackFromSidebar(cb)}
                           className="flex-1 min-w-0 text-left px-2.5 py-2"
                         >
                           <p className="font-semibold truncate leading-tight">{cb.company.razonSocial || cb.company.ruc}</p>
@@ -3177,7 +3359,7 @@ export default function MyLeads() {
       {viewMode === 'grid' && (
         <div className="flex-1 overflow-y-auto bg-gray-50 p-4 lg:p-6 space-y-5">
           {/* Search + filters */}
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <div className="relative flex-1 min-w-[200px]">
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
@@ -3188,19 +3370,6 @@ export default function MyLeads() {
                 onChange={(e) => { setGridSearch(e.target.value); setGridPage(1) }}
               />
             </div>
-            {batches.length > 0 && (
-              <div className="flex flex-col gap-1 shrink-0 w-full sm:w-auto sm:min-w-[200px]">
-                <BatchPendingPicker
-                  batches={batches}
-                  clients={allClients}
-                  value={selectedBatchId}
-                  onChange={switchBatch}
-                  variant="filter"
-                  id="grid-batch-filter"
-                  label="Lote"
-                />
-              </div>
-            )}
             <div className="flex gap-2 flex-wrap">
               {GRID_STATUS_FILTERS.map((f) => (
                 <button
@@ -3217,6 +3386,7 @@ export default function MyLeads() {
                 </button>
               ))}
             </div>
+            <span className="text-gray-500 text-xs shrink-0 sm:ml-auto">{gridData?.total ?? 0} clientes</span>
           </div>
 
           {/* Cards */}
@@ -3307,6 +3477,20 @@ export default function MyLeads() {
         />
       )}
 
+      {callbackResult && (
+        <CallModal
+          client={callbackResult.company}
+          initialContactId={callbackResult.contactId}
+          context={{
+            kind: 'callback',
+            scheduledAt: callbackResult.scheduledAt,
+            notes: callbackResult.notes,
+          }}
+          onViewFullRecord={openCallbackFullRecord}
+          onClose={() => setCallbackResult(null)}
+        />
+      )}
+
       {/* Conservar agenda confirmation */}
       {agendaConfirm && (
         <>
@@ -3389,7 +3573,7 @@ export default function MyLeads() {
           lastRegisteredListIdx >= 0 ? listFiltered[lastRegisteredListIdx] : null
         return (
           <div className="flex-1 overflow-y-auto p-4 lg:p-5 space-y-4">
-            {/* Filters — row 1: search, cola, lote */}
+            {/* Filters — row 1: search, cola */}
             <div className="space-y-3">
               <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
                 <div className="relative flex-1 min-w-[12rem] w-full sm:min-w-48">
@@ -3415,19 +3599,6 @@ export default function MyLeads() {
                     onChange={(cola) => requestListCola(cola)}
                   />
                 </div>
-                {batches.length > 0 && (
-                  <div className="flex flex-col gap-1 shrink-0 w-full sm:w-auto sm:min-w-[200px]">
-                    <BatchPendingPicker
-                      batches={batches}
-                      clients={allClients}
-                      value={selectedBatchId}
-                      onChange={switchBatch}
-                      variant="filter"
-                      id="list-batch-filter"
-                      label="Lote"
-                    />
-                  </div>
-                )}
                 <div className="flex items-center gap-2 shrink-0 pb-0.5 sm:ml-auto">
                   {(listDrilldown || (listCola !== 'FUNNEL' && listCola !== 'ALL')) && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">

@@ -15,6 +15,12 @@ import { countUnassignedCompanies } from '../lib/assignmentOrder'
 import { isValidMobileLineNumber, mobileDigits } from '../lib/mobileLine'
 import { OPTICK_TENANT_ID } from '../lib/tenant'
 import { runWithTenant } from '../lib/tenantContext'
+import {
+  previewDepuradoExport,
+  executeDepuradoExport,
+  DepuradoExportEmptyError,
+  DepuradoExportAgentsError,
+} from '../lib/depuradoExport'
 
 function parseFechaConsulta(raw?: string): Date | null {
   if (!raw) return null
@@ -228,6 +234,75 @@ async function getBatchCallLogCount(batchId: string): Promise<number> {
     where: { company: { importBatchId: batchId } },
   })
 }
+
+function parseAgentIdsQuery(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.flatMap((v) => String(v).split(',')).map((s) => s.trim()).filter(Boolean)
+  }
+  if (typeof raw === 'string') {
+    return raw.split(',').map((s) => s.trim()).filter(Boolean)
+  }
+  return []
+}
+
+const depuradoExportBodySchema = z.object({
+  agentIds: z.array(z.string().min(1)).min(1, 'Selecciona al menos un agente'),
+})
+
+function attachmentFilename(filename: string): string {
+  const ascii = filename.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '')
+  const encoded = encodeURIComponent(filename)
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`
+}
+
+// GET /api/imports/depurado-export/preview
+router.get('/depurado-export/preview', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const agentIds = parseAgentIdsQuery(req.query.agentIds)
+  if (agentIds.length === 0) {
+    res.status(400).json({ error: 'Selecciona al menos un agente' })
+    return
+  }
+  try {
+    const preview = await previewDepuradoExport(agentIds)
+    res.json(preview)
+  } catch (err) {
+    if (err instanceof DepuradoExportAgentsError) {
+      res.status(400).json({ error: err.message })
+      return
+    }
+    throw err
+  }
+})
+
+// POST /api/imports/depurado-export
+router.post('/depurado-export', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const parsed = depuradoExportBodySchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Datos inválidos' })
+    return
+  }
+  try {
+    const result = await executeDepuradoExport(parsed.data.agentIds)
+    res.setHeader('Content-Type', result.file.contentType)
+    res.setHeader('Content-Disposition', attachmentFilename(result.file.filename))
+    res.setHeader('X-Exported-Agents', String(result.exportedAgents.length))
+    res.setHeader('X-Skipped-Agents', String(result.skippedAgents.length))
+    res.send(result.file.buffer)
+  } catch (err) {
+    if (err instanceof DepuradoExportEmptyError) {
+      res.status(409).json({
+        error: err.message,
+        skippedAgents: err.skippedAgents,
+      })
+      return
+    }
+    if (err instanceof DepuradoExportAgentsError) {
+      res.status(400).json({ error: err.message })
+      return
+    }
+    throw err
+  }
+})
 
 // GET /api/imports/:id/export
 router.get('/:id/export', requireAuth, async (req: AuthRequest, res: Response) => {

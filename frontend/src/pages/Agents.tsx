@@ -37,15 +37,21 @@ import {
   ArrowLeft,
 } from 'lucide-react'
 import { PresenceDetailPopover, formatTimeAgo, formatPresenceDateTime } from '../components/PresenceDetailPopover'
+import BatchQueueModeCards, {
+  batchQueueModeChip,
+  batchQueueModeChipClass,
+} from '../components/BatchQueueModeCards'
+import type { BatchQueueMode } from '../lib/batchQueuePolicy'
 
 interface FormState {
   name: string
   email: string
   password: string
   role: 'ADMIN' | 'AGENT'
+  batchQueueMode: BatchQueueMode
 }
 
-const emptyForm: FormState = { name: '', email: '', password: '', role: 'AGENT' }
+const emptyForm: FormState = { name: '', email: '', password: '', role: 'AGENT', batchQueueMode: 'FIFO' }
 
 function hasHistory(u: AppUser) {
   return (
@@ -135,6 +141,7 @@ function UserTable({
   onToggleShowTotalCallbacksColumn,
   highlightedUserId = null,
   rowRefs,
+  onQueueModeChange,
 }: {
   users: AppUser[]
   onEdit: (u: AppUser) => void
@@ -154,8 +161,10 @@ function UserTable({
   onToggleShowTotalCallbacksColumn: () => void
   highlightedUserId?: string | null
   rowRefs?: MutableRefObject<Map<string, HTMLTableRowElement>>
+  onQueueModeChange?: (u: AppUser, mode: BatchQueueMode) => void
 }) {
   const [expandedPresenceId, setExpandedPresenceId] = useState<string | null>(null)
+  const [queueEditorId, setQueueEditorId] = useState<string | null>(null)
   const [presencePopover, setPresencePopover] = useState<{
     userId: string
     anchor: HTMLElement
@@ -172,7 +181,7 @@ function UserTable({
     ? presenceByUserId?.[presencePopover.userId]
     : undefined
 
-  const columnCount = 8
+  const columnCount = 9
 
   return (
     <>
@@ -181,6 +190,7 @@ function UserTable({
         <tr>
           <th className="text-left px-4 py-3 font-medium text-gray-600">Usuario</th>
           <th className="text-left px-4 py-3 font-medium text-gray-600">Rol</th>
+          <th className="text-left px-4 py-3 font-medium text-gray-600">Cola</th>
           <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
           <th className="text-center px-4 py-3 font-medium text-gray-600" title="Empresas con contactos asignados">Empresas</th>
           <th className="text-center px-4 py-3 font-medium text-gray-600">
@@ -298,6 +308,23 @@ function UserTable({
                     )}
                     {roleLabel(u, currentUserIsSystemOwner)}
                   </span>
+                </td>
+                <td className="px-4 py-3">
+                  {onQueueModeChange ? (
+                    <button
+                      type="button"
+                      onClick={() => setQueueEditorId((id) => (id === u.id ? null : u.id))}
+                      aria-expanded={queueEditorId === u.id}
+                      title="Cambiar cola de lotes"
+                      className={`badge ${batchQueueModeChipClass(u.batchQueueMode)} hover:opacity-90 cursor-pointer`}
+                    >
+                      {batchQueueModeChip(u.batchQueueMode)}
+                    </button>
+                  ) : (
+                    <span className={`badge ${batchQueueModeChipClass(u.batchQueueMode)}`}>
+                      {batchQueueModeChip(u.batchQueueMode)}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   {!showPresence ? (
@@ -437,6 +464,24 @@ function UserTable({
                 </div>
               </td>
             </tr>
+            {queueEditorId === u.id && onQueueModeChange && (
+              <tr key={`${u.id}-queue`} className="bg-slate-50/80">
+                <td colSpan={columnCount} className="px-4 py-3">
+                  <BatchQueueModeCards
+                    name={`batchQueueMode-${u.id}`}
+                    value={
+                      u.batchQueueMode === 'LIFO' || u.batchQueueMode === 'ALL'
+                        ? u.batchQueueMode
+                        : 'FIFO'
+                    }
+                    onChange={(mode) => {
+                      onQueueModeChange(u, mode)
+                      setQueueEditorId(null)
+                    }}
+                  />
+                </td>
+              </tr>
+            )}
             {expandedPresenceId === u.id && presence && presence.sessions.length > 0 && (
               <tr key={`${u.id}-sessions`} className="bg-gray-50/80">
                 <td colSpan={columnCount} className="px-4 py-3">
@@ -511,7 +556,7 @@ function UserTable({
 }
 
 export default function Agents() {
-  const { user } = useAuth()
+  const { user, updateUser: patchAuthUser } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
   const returnToDashboard = searchParams.get('from') === 'dashboard'
   const isAdmin = user?.role === 'ADMIN'
@@ -704,10 +749,19 @@ export default function Agents() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: object }) => updateUser(id, data),
-    onSuccess: () => {
+    onSuccess: (updated: AppUser, variables) => {
       toast.success('Usuario actualizado')
       qc.invalidateQueries({ queryKey: ['users'] })
-      setEditId(null)
+      const keys = Object.keys(variables.data as object)
+      if (!(keys.length === 1 && keys[0] === 'batchQueueMode')) {
+        setEditId(null)
+      }
+      if (variables.id === user?.id && updated) {
+        patchAuthUser({
+          batchQueueMode: updated.batchQueueMode,
+          workingBatchId: updated.workingBatchId ?? user.workingBatchId,
+        })
+      }
     },
     onError: (err: { response?: { data?: { error?: string } } }) => {
       toast.error(err?.response?.data?.error ?? 'Error al actualizar')
@@ -775,16 +829,35 @@ export default function Agents() {
 
   const handleEdit = (u: AppUser) => {
     setEditId(u.id)
-    setForm({ name: u.name, email: u.email, password: '', role: u.role })
+    setForm({
+      name: u.name,
+      email: u.email,
+      password: '',
+      role: u.role,
+      batchQueueMode:
+        u.batchQueueMode === 'LIFO' || u.batchQueueMode === 'ALL' ? u.batchQueueMode : 'FIFO',
+    })
     setShowForm(false)
   }
 
   const handleUpdate = (e: React.FormEvent) => {
     e.preventDefault()
     if (!editId) return
-    const payload: Partial<FormState> = { name: form.name, email: form.email, role: form.role }
+    const payload: Partial<FormState> = {
+      name: form.name,
+      email: form.email,
+      role: form.role,
+      batchQueueMode: form.batchQueueMode,
+    }
     if (form.password) payload.password = form.password
     updateMutation.mutate({ id: editId, data: payload })
+  }
+
+  const handleQueueModeChange = (u: AppUser, mode: BatchQueueMode) => {
+    const current =
+      u.batchQueueMode === 'LIFO' || u.batchQueueMode === 'ALL' ? u.batchQueueMode : 'FIFO'
+    if (current === mode) return
+    updateMutation.mutate({ id: u.id, data: { batchQueueMode: mode } })
   }
 
   const handleDeactivate = (u: AppUser) => {
@@ -913,6 +986,12 @@ export default function Agents() {
                 <p className="text-xs text-amber-600 mt-1">Límite de agentes alcanzado ({MAX_AGENTS} máximo)</p>
               )}
             </div>
+            <div className="md:col-span-2">
+              <BatchQueueModeCards
+                value={form.batchQueueMode}
+                onChange={(mode) => setForm({ ...form, batchQueueMode: mode })}
+              />
+            </div>
             <div className="md:col-span-2 flex gap-3">
               <button
                 type="submit"
@@ -961,6 +1040,7 @@ export default function Agents() {
             onToggleShowTotalCallbacksColumn={toggleShowTotalCallbacksColumn}
             highlightedUserId={highlightedUserId}
             rowRefs={rowRefs}
+            onQueueModeChange={handleQueueModeChange}
           />
         )}
       </div>
@@ -1002,6 +1082,7 @@ export default function Agents() {
                 onToggleShowTotalCallbacksColumn={toggleShowTotalCallbacksColumn}
                 highlightedUserId={highlightedUserId}
                 rowRefs={rowRefs}
+                onQueueModeChange={handleQueueModeChange}
               />
             </div>
           )}

@@ -61,6 +61,8 @@ api.interceptors.response.use(
 export const login = (email: string, password: string) =>
   api.post('/auth/login', { email, password }).then((r) => r.data)
 
+export type BatchQueueMode = 'FIFO' | 'LIFO' | 'ALL'
+
 export type AuthUser = {
   id: string
   name: string
@@ -71,10 +73,16 @@ export type AuthUser = {
   hasAvatar?: boolean
   /** Client-only cache buster after avatar upload. */
   avatarVersion?: number
+  batchQueueMode?: BatchQueueMode
+  workingBatchId?: string | null
 }
 
 export const getMe = () =>
   api.get<AuthUser & { active?: boolean; billing?: unknown }>('/auth/me').then((r) => r.data)
+
+/** Agent (or admin-as-self) pin for lote queue. Mode is admin-only via updateUser. */
+export const patchMe = (data: { workingBatchId: string | null }) =>
+  api.patch<AuthUser>('/auth/me', data).then((r) => r.data)
 
 export const uploadAvatar = (file: File) => {
   const form = new FormData()
@@ -180,6 +188,8 @@ export type AppUser = {
   lastAssignmentAt?: string | null
   callsToday?: number
   callbacksToday?: number
+  batchQueueMode?: BatchQueueMode
+  workingBatchId?: string | null
   _count: {
     assignments: number
     callLogs: number
@@ -373,6 +383,71 @@ export const downloadImportOriginal = async (id: string) => {
   const filename = filenameFromContentDisposition(disposition) ?? 'import.xlsx'
   const blob = new Blob([response.data])
   return saveBlobWithPicker(blob, filename)
+}
+
+export type DepuradoExportPreview = {
+  agents: {
+    agentId: string
+    agentName: string
+    firstName: string
+    companyCount: number
+    contactCount: number
+    sample: { ruc: string; razonSocial: string | null }[]
+    sharedWithOtherAgentCount: number
+  }[]
+  skippedAgents: { agentId: string; agentName: string }[]
+  totalCompanies: number
+  totalContacts: number
+  totalSharedWithOtherAgent: number
+}
+
+export const previewDepuradoExport = (agentIds: string[]) =>
+  api
+    .get<DepuradoExportPreview>('/imports/depurado-export/preview', {
+      params: { agentIds: agentIds.join(',') },
+    })
+    .then((r) => r.data)
+
+async function readBlobErrorMessage(err: unknown): Promise<string | undefined> {
+  const data = (err as { response?: { data?: unknown } })?.response?.data
+  if (data instanceof Blob) {
+    try {
+      const parsed = JSON.parse(await data.text()) as { error?: string }
+      return parsed.error
+    } catch {
+      return undefined
+    }
+  }
+  if (data && typeof data === 'object' && 'error' in data) {
+    return (data as { error?: string }).error
+  }
+  return undefined
+}
+
+export const downloadDepuradoExport = async (agentIds: string[]) => {
+  try {
+    const response = await api.post(
+      '/imports/depurado-export',
+      { agentIds },
+      { responseType: 'blob', timeout: 120000 }
+    )
+    const disposition = response.headers['content-disposition'] as string | undefined
+    const contentType = String(response.headers['content-type'] ?? '')
+    const fallback = contentType.includes('zip') ? 'nocontestadodep.zip' : 'nocontestadodep.xlsx'
+    const filename = filenameFromContentDisposition(disposition) ?? fallback
+    const blob = new Blob([response.data], {
+      type: contentType || 'application/octet-stream',
+    })
+    const saved = await saveBlobWithPicker(blob, filename)
+    return { saved, filename }
+  } catch (err) {
+    const message = await readBlobErrorMessage(err)
+    const wrapped = err as { response?: { data?: { error?: string } } }
+    if (message && wrapped.response) {
+      wrapped.response.data = { ...(wrapped.response.data as object), error: message }
+    }
+    throw err
+  }
 }
 
 // ─── Assignments ──────────────────────────────────────────

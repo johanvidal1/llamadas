@@ -1,12 +1,14 @@
 import { useState, useRef, useMemo, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getImports, getImport, uploadImport, deleteImport, patchImport, downloadImportExport, downloadImportOriginal } from '../api/client'
-import type { DuplicateFileWarning, ImportBatch } from '../api/client'
+import { getImports, getImport, uploadImport, deleteImport, patchImport, downloadImportExport, downloadImportOriginal, getUsers, previewDepuradoExport, downloadDepuradoExport } from '../api/client'
+import type { DuplicateFileWarning, ImportBatch, AppUser, DepuradoExportPreview } from '../api/client'
 import toast from 'react-hot-toast'
 import { useAuth } from '../contexts/AuthContext'
 import {
   Upload, FileSpreadsheet, ChevronRight, ChevronDown, Clock, X,
   Phone, Mail, UserCheck, UserX, Search, Trash2, AlertTriangle, Building2, List, Ban, ShieldCheck, Download,
+  Filter, CheckCircle2,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -129,6 +131,238 @@ function duplicateWarningStyle(severity: DuplicateFileWarning['severity']) {
   return { iconBg: 'bg-amber-100', iconColor: 'text-amber-600' }
 }
 
+function DepuradoExportPanel() {
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set())
+  const [preview, setPreview] = useState<DepuradoExportPreview | null>(null)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [loadingPreview, setLoadingPreview] = useState(false)
+  const [exporting, setExporting] = useState(false)
+
+  const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: getUsers })
+  const agents = (users as AppUser[]).filter((u) => u.role === 'AGENT' && u.active)
+
+  const toggleAgent = (id: string) => {
+    setPreview(null)
+    setConfirmOpen(false)
+    setSelectedAgentIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const selectedIds = [...selectedAgentIds]
+
+  const handlePreview = async () => {
+    if (selectedIds.length === 0) {
+      toast.error('Selecciona al menos un agente')
+      return
+    }
+    setLoadingPreview(true)
+    try {
+      const data = await previewDepuradoExport(selectedIds)
+      setPreview(data)
+      if (data.agents.length === 0) {
+        toast('Ningún agente seleccionado tiene empresas No contesta — depurado', { icon: 'ℹ️' })
+        return
+      }
+      setConfirmOpen(true)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(msg ?? 'Error al preparar la vista previa')
+    } finally {
+      setLoadingPreview(false)
+    }
+  }
+
+  const handleConfirmExport = async () => {
+    if (!preview || preview.agents.length === 0) return
+    setExporting(true)
+    try {
+      const { saved, filename } = await downloadDepuradoExport(preview.agents.map((a) => a.agentId))
+      if (saved) {
+        toast.success(`Exportado: ${filename}`)
+        if (preview.skippedAgents.length > 0) {
+          toast(
+            `Sin archivo para: ${preview.skippedAgents.map((a) => a.agentName).join(', ')} (0 depurados)`,
+            { icon: 'ℹ️', duration: 5000 }
+          )
+        }
+      }
+      setConfirmOpen(false)
+      setPreview(null)
+      qc.invalidateQueries({ queryKey: ['clients'] })
+      qc.invalidateQueries({ queryKey: ['imports'] })
+      qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['assignmentRuns'] })
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(msg ?? 'Error al exportar')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="card overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          aria-expanded={open}
+          className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50/80 transition-colors"
+        >
+          <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+            <Filter size={15} className="text-slate-500" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-medium text-gray-800 text-sm">Exportar No contesta — depurado</h2>
+            <p className="text-xs text-gray-500 truncate">
+              Recupera empresas de la cola depurada para reimportarlas como lote nuevo
+            </p>
+          </div>
+          {open ? (
+            <ChevronDown size={16} className="text-gray-400 shrink-0" />
+          ) : (
+            <ChevronRight size={16} className="text-gray-400 shrink-0" />
+          )}
+        </button>
+
+        {open && (
+          <div className="px-4 pb-4 pt-1 border-t border-gray-100">
+            <p className="text-xs text-gray-500 mb-3">
+              Un Excel por agente (formato de importación). Si eliges varios, se descarga un ZIP.
+            </p>
+            {agents.length === 0 ? (
+              <p className="text-sm text-gray-400">No hay agentes activos.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
+                {agents.map((agent) => {
+                  const checked = selectedAgentIds.has(agent.id)
+                  return (
+                    <label
+                      key={agent.id}
+                      className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm cursor-pointer transition-colors ${
+                        checked
+                          ? 'border-blue-300 bg-blue-50 text-blue-900'
+                          : 'border-gray-200 hover:border-gray-300 text-gray-700'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleAgent(agent.id)}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="truncate font-medium">{agent.name}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-3 mt-4">
+              <button
+                type="button"
+                onClick={handlePreview}
+                disabled={loadingPreview || selectedIds.length === 0}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loadingPreview ? 'Calculando...' : 'Vista previa'}
+              </button>
+              <p className="text-xs text-gray-400">
+                {selectedIds.length === 0
+                  ? 'Selecciona agentes para continuar'
+                  : `${selectedIds.length} agente${selectedIds.length !== 1 ? 's' : ''} seleccionado${selectedIds.length !== 1 ? 's' : ''}`}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {confirmOpen && preview && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center shrink-0">
+                <Download size={20} className="text-slate-700" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900">Confirmar exportación</h3>
+                <p className="text-sm text-gray-500">
+                  {preview.totalCompanies} empresa{preview.totalCompanies !== 1 ? 's' : ''} ·{' '}
+                  {preview.totalContacts} contacto{preview.totalContacts !== 1 ? 's' : ''}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3 mb-4">
+              {preview.agents.map((agent) => (
+                <div key={agent.agentId} className="bg-gray-50 rounded-lg px-3 py-2 text-sm">
+                  <p className="font-medium text-gray-900">{agent.agentName}</p>
+                  <p className="text-gray-600 text-xs mt-0.5">
+                    {agent.companyCount} empresa{agent.companyCount !== 1 ? 's' : ''} ·{' '}
+                    {agent.contactCount} contacto{agent.contactCount !== 1 ? 's' : ''}
+                    {' · '}archivo {agent.firstName}.xlsx
+                  </p>
+                  {agent.sample.length > 0 && (
+                    <p className="text-xs text-gray-500 mt-1 truncate">
+                      Muestra: {agent.sample.map((s) => s.ruc).join(', ')}
+                      {agent.companyCount > agent.sample.length ? '…' : ''}
+                    </p>
+                  )}
+                  {agent.sharedWithOtherAgentCount > 0 && (
+                    <p className="text-xs text-amber-700 mt-1">
+                      {agent.sharedWithOtherAgentCount} de estas también las tiene otro agente hoy
+                    </p>
+                  )}
+                </div>
+              ))}
+              {preview.skippedAgents.length > 0 && (
+                <p className="text-xs text-gray-500">
+                  Sin archivo (0 depurados): {preview.skippedAgents.map((a) => a.agentName).join(', ')}
+                </p>
+              )}
+            </div>
+
+            <p className="text-sm text-gray-700 mb-2">
+              Al confirmar, estas empresas saldrán de la cola <strong>No contesta — depurado</strong> de
+              ese agente y no se volverán a exportar.
+            </p>
+            <p className="text-xs text-gray-500 mb-6">
+              No quedarán disponibles para asignar en el lote original. Las llamadas y métricas del
+              agente se conservan. El Excel no incluye columnas de campaña: al reimportarlo serán
+              empresas pendientes nuevas.
+            </p>
+
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                disabled={exporting}
+                className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmExport}
+                disabled={exporting}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                {exporting ? 'Exportando...' : 'Exportar y retirar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 function duplicateWarningCopy(severity: DuplicateFileWarning['severity']) {
   switch (severity) {
     case 'filename_and_size':
@@ -172,6 +406,10 @@ export default function Imports() {
   const [downloadingOriginalId, setDownloadingOriginalId] = useState<string | null>(null)
   const [collapsedQuincenas, setCollapsedQuincenas] = useState<Set<QuincenaKey>>(() => new Set())
   const [quincenaCollapseSeeded, setQuincenaCollapseSeeded] = useState(false)
+  const [importSuccess, setImportSuccess] = useState<{
+    imported: number
+    label: string
+  } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const qc = useQueryClient()
   const { user } = useAuth()
@@ -254,7 +492,8 @@ export default function Imports() {
       setDuplicateWarning(null)
       setDuplicateDisplayName('')
       const label = data.displayName?.trim() || data.filename
-      toast.success(`✅ Importados ${data.imported} registros de "${label}"`)
+      setImportSuccess({ imported: data.imported, label })
+      toast.success(`Importados ${data.imported} empresas de «${label}»`)
       if (data.withoutPhone && data.withoutPhone > 0) {
         toast(`⚠️ ${data.withoutPhone} registro(s) sin teléfono`, { icon: '⚠️' })
       }
@@ -296,6 +535,7 @@ export default function Imports() {
       return
     }
     setDuplicateDisplayName('')
+    setImportSuccess(null)
     mutation.mutate({ file })
   }
 
@@ -394,6 +634,36 @@ export default function Imports() {
         )}
       </div>
 
+      {importSuccess && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 sm:px-5 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
+            <CheckCircle2 size={20} className="text-emerald-700" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-emerald-950">Importación completada</p>
+            <p className="text-sm text-emerald-800 mt-0.5">
+              {importSuccess.imported} empresa{importSuccess.imported !== 1 ? 's' : ''} en «{importSuccess.label}».
+              El siguiente paso es asignarlas a los agentes.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link
+              to="/assignments"
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors"
+            >
+              Asignar a agentes
+            </Link>
+            <button
+              type="button"
+              onClick={() => setImportSuccess(null)}
+              className="px-3 py-2 rounded-lg text-sm font-medium text-emerald-800 hover:bg-emerald-100 transition-colors"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Columns hint */}
       <div className="card p-5">
         <p className="text-sm text-gray-600 mb-3">
@@ -437,6 +707,8 @@ export default function Imports() {
           <span><strong>Renta c/desc:</strong> renta_basica_con_desc</span>
         </div>
       </div>
+
+      <DepuradoExportPanel />
 
       {/* History */}
       <div>

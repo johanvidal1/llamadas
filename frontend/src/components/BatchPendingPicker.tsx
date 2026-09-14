@@ -22,6 +22,8 @@ export type BatchPendingPickerProps = {
   id?: string
   className?: string
   label?: string
+  /** FIFO/LIFO pin — optional “Lote en curso” on that row. */
+  workingBatchId?: string
 }
 
 /**
@@ -315,6 +317,7 @@ export function BatchPendingPicker({
   id,
   className = '',
   label,
+  workingBatchId,
 }: BatchPendingPickerProps) {
   const [open, setOpen] = useState(false)
   const [showCompleted, setShowCompleted] = useState(false)
@@ -510,8 +513,8 @@ export function BatchPendingPicker({
 
       {open && (
         <div
-          className={`absolute z-50 mt-1 rounded-lg border border-gray-200 bg-white shadow-lg overflow-hidden ${
-            isHeader ? 'left-0 min-w-[280px] w-[min(320px,90vw)]' : 'left-0 right-0 min-w-[260px] sm:min-w-[280px]'
+          className={`absolute top-full left-0 z-50 mt-1 rounded-lg border border-gray-200 bg-white shadow-lg overflow-hidden ${
+            isHeader ? 'min-w-[280px] w-[min(320px,90vw)]' : 'right-0 min-w-[260px] sm:min-w-[280px]'
           }`}
         >
           <ul
@@ -593,15 +596,22 @@ export function BatchPendingPicker({
                       {s.isNewest ? '★ ' : ''}
                       {s.label}
                     </span>
-                    <span
-                      className={`text-xs tabular-nums shrink-0 font-medium transition-colors duration-300 ${
-                        isLowPendingAlert(s.pending, s.total)
-                          ? 'motion-safe:animate-queue-soft-pulse'
-                          : ''
-                      }`}
-                      style={{ color: tone.metric }}
-                    >
-                      {metricLabel(s.pending, s.total)}
+                    <span className="flex items-center gap-1.5 shrink-0">
+                      {workingBatchId && s.id === workingBatchId && (
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-blue-700 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5">
+                          Lote en curso
+                        </span>
+                      )}
+                      <span
+                        className={`text-xs tabular-nums shrink-0 font-medium transition-colors duration-300 ${
+                          isLowPendingAlert(s.pending, s.total)
+                            ? 'motion-safe:animate-queue-soft-pulse'
+                            : ''
+                        }`}
+                        style={{ color: tone.metric }}
+                      >
+                        {metricLabel(s.pending, s.total)}
+                      </span>
                     </span>
                   </div>
                   <ProgressBar done={s.done} total={s.total} pending={s.pending} />

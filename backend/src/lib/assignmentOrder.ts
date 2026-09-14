@@ -36,8 +36,13 @@ export type OrderedCompany = {
   createdAt: Date
 }
 
+/** Recovered companies stay out of leftover / assignable pools. */
+export const notRecoveredWhere = { recoveredAt: null } as const
+
 function companyScopeWhere(batchId?: string): Record<string, unknown> {
-  return batchId ? { importBatchId: batchId } : { importBatch: { blocked: false } }
+  return batchId
+    ? { importBatchId: batchId, ...notRecoveredWhere }
+    : { importBatch: { blocked: false }, ...notRecoveredWhere }
 }
 
 /** Companies with at least one contact and zero assignments on any contact. */
@@ -132,7 +137,10 @@ export async function getContactIdsForCompanies(
   const contacts = await prisma.contact.findMany({
     where: {
       companyId: { in: companyIds },
-      ...(batchId ? { company: { importBatchId: batchId } } : {}),
+      company: {
+        ...notRecoveredWhere,
+        ...(batchId ? { importBatchId: batchId } : {}),
+      },
     },
     select: { id: true },
     orderBy: [{ company: { createdAt: 'asc' } }, { createdAt: 'asc' }, { id: 'asc' }],
@@ -172,8 +180,8 @@ export async function getUnassignedContactsOrdered(
   return prisma.contact.findMany({
     where: {
       ...(batchId
-        ? { company: { importBatchId: batchId } }
-        : { company: { importBatch: { blocked: false } } }),
+        ? { company: { importBatchId: batchId, ...notRecoveredWhere } }
+        : { company: { importBatch: { blocked: false }, ...notRecoveredWhere } }),
       ...(assignedIds.length > 0 ? { id: { notIn: assignedIds } } : {}),
     },
     select: {

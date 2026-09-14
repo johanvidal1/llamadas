@@ -54,6 +54,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           isSystemOwner: me.isSystemOwner,
           hasAvatar: me.hasAvatar,
           avatarVersion: prev?.avatarVersion,
+          batchQueueMode: me.batchQueueMode,
+          workingBatchId: me.workingBatchId ?? null,
         }
         persistUser(next)
         return next

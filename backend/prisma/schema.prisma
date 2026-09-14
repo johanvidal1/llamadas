@@ -77,6 +77,10 @@ model User {
   isArchivedAgent  Boolean  @default(false)
   active           Boolean  @default(true)
   tokenVersion     Int      @default(0)
+  /// Agent lote queue: FIFO | LIFO | ALL. Default FIFO (finish current lote first).
+  batchQueueMode   String   @default("FIFO")
+  /// Pinned lote while FIFO/LIFO. Null = not pinned (ALL, or no pending lote).
+  workingBatchId   String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -92,6 +96,7 @@ model User {
   agentResetsPerformed   AgentResetLog[]     @relation("AgentResetBy")
   supportTicketsCreated  SupportTicket[]     @relation("SupportTicketCreatedBy")
   supportTicketsElevated SupportTicket[]     @relation("SupportTicketElevatedBy")
+  companiesRecovered     Company[]           @relation("CompanyRecoveredFrom")
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -181,6 +186,11 @@ model Company {
   importBatch   ImportBatch @relation(fields: [importBatchId], references: [id])
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
+  /// Recovered from an agent's No contesta — depurado export. Hidden from
+  /// working queues and the unassigned/assignable pool; call logs stay.
+  recoveredAt          DateTime?
+  recoveredFromAgentId String?
+  recoveredFromAgent   User?     @relation("CompanyRecoveredFrom", fields: [recoveredFromAgentId], references: [id], onDelete: SetNull)
 
   contacts    Contact[]
   callLogs    CallLog[]
@@ -190,6 +200,8 @@ model Company {
   @@index([tenantId])
   @@index([tenantId, ruc])
   @@index([tenantId, createdAt])
+  @@index([recoveredAt])
+  @@index([recoveredFromAgentId])
 }
 
 model MobileLine {

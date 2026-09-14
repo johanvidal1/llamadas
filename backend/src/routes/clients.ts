@@ -362,7 +362,7 @@ async function buildClientsFilterContext(
     !agentScopedNoContestaDepurado &&
     isValidDisposition(effectiveDisposition)
 
-  const where: Record<string, unknown> = {}
+  const where: Record<string, unknown> = { recoveredAt: null }
   const contactWhere = contactFilterForRole(req.user!.role, req.user!.id, agentId)
 
   if (contactWhere) {

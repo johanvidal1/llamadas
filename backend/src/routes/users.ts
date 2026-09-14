@@ -64,6 +64,8 @@ const userSelect = {
   isSystemOwner: true,
   active: true,
   createdAt: true,
+  batchQueueMode: true,
+  workingBatchId: true,
 } as const
 
 const createUserSchema = z.object({
@@ -71,6 +73,7 @@ const createUserSchema = z.object({
   email: z.string().email('Email inválido'),
   password: z.string().min(6, 'Contraseña mínimo 6 caracteres'),
   role: z.enum(['ADMIN', 'AGENT']).default('AGENT'),
+  batchQueueMode: z.enum(['FIFO', 'LIFO', 'ALL']).optional(),
 })
 
 const updateUserSchema = z.object({
@@ -79,6 +82,8 @@ const updateUserSchema = z.object({
   password: z.string().min(6).optional(),
   role: z.enum(['ADMIN', 'AGENT']).optional(),
   active: z.boolean().optional(),
+  batchQueueMode: z.enum(['FIFO', 'LIFO', 'ALL']).optional(),
+  workingBatchId: z.union([z.string().min(1), z.null()]).optional(),
 })
 
 // GET /api/users — list all users
@@ -207,6 +212,7 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
       role: data.role,
       isSuperAdmin: false,
       isSystemOwner: false,
+      ...(data.batchQueueMode ? { batchQueueMode: data.batchQueueMode } : {}),
     },
     select: userSelect,
   })
@@ -291,6 +297,8 @@ router.put('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
       isSuperAdmin: true,
       isSystemOwner: true,
       active: true,
+      batchQueueMode: true,
+      workingBatchId: true,
     },
   })
   invalidateAuthUserCache(targetId)

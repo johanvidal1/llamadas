@@ -34,6 +34,8 @@ function mimeTypeForExtension(ext: string): string {
       return 'application/vnd.ms-excel'
     case 'csv':
       return 'text/csv'
+    case 'zip':
+      return 'application/zip'
     default:
       return 'application/octet-stream'
   }
@@ -83,6 +85,14 @@ export async function saveBlobWithPicker(blob: Blob, suggestedName: string): Pro
 
 export function filenameFromContentDisposition(disposition: string | undefined): string | null {
   if (!disposition) return null
+  const rfc5987 = disposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (rfc5987?.[1]) {
+    try {
+      return decodeURIComponent(rfc5987[1])
+    } catch {
+      return rfc5987[1]
+    }
+  }
   const quoted = disposition.match(/filename="([^"]+)"/)
   if (quoted?.[1]) return quoted[1]
   const unquoted = disposition.match(/filename=([^;\s]+)/)

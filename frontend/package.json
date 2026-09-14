@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "release-notes": "node scripts/add-release-notes.mjs"
+    "release-notes": "node scripts/add-release-notes.mjs",
+    "test:batch-queue": "npx tsx src/lib/batchQueuePolicy.test.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.45.0",
