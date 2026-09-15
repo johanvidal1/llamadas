@@ -19,6 +19,25 @@ import {
   getQuincenaKey,
   type QuincenaKey,
 } from '../lib/quincena'
+import {
+  CONTACTOS_IMPORT_COLUMNS,
+  CONTACTOS_SHEET_NAME,
+  DETALLE_PLAN_IMPORT_COLUMNS,
+  DETALLE_PLAN_SHEET_NAME,
+  PRODUCTOS_MOVIL_IMPORT_COLUMNS,
+  PRODUCTOS_MOVIL_SHEET_NAME,
+  type ImportSheetName,
+} from '../lib/importWorkbookColumns'
+
+const IMPORT_SHEET_TABS: {
+  name: ImportSheetName
+  columns: readonly string[]
+  required: boolean
+}[] = [
+  { name: CONTACTOS_SHEET_NAME, columns: CONTACTOS_IMPORT_COLUMNS, required: true },
+  { name: PRODUCTOS_MOVIL_SHEET_NAME, columns: PRODUCTOS_MOVIL_IMPORT_COLUMNS, required: false },
+  { name: DETALLE_PLAN_SHEET_NAME, columns: DETALLE_PLAN_IMPORT_COLUMNS, required: false },
+]
 
 function batchLabel(batch: { displayName?: string | null; filename: string }) {
   return batch.displayName?.trim() || batch.filename
@@ -129,6 +148,84 @@ function duplicateWarningStyle(severity: DuplicateFileWarning['severity']) {
     return { iconBg: 'bg-orange-100', iconColor: 'text-orange-600' }
   }
   return { iconBg: 'bg-amber-100', iconColor: 'text-amber-600' }
+}
+
+function ImportSheetHeadersHelp() {
+  const [activeSheet, setActiveSheet] = useState<ImportSheetName>(CONTACTOS_SHEET_NAME)
+  const active = IMPORT_SHEET_TABS.find((sheet) => sheet.name === activeSheet) ?? IMPORT_SHEET_TABS[0]
+
+  return (
+    <div className="card p-5">
+      <p className="text-sm text-gray-600 mb-3">
+        El Excel necesita las hojas <strong>Contactos</strong> (obligatoria),{' '}
+        <strong>ProductosMovil</strong> y <strong>DetallePlan</strong> (opcionales). CSV: los
+        mismos encabezados en la fila 1, sin hojas.
+      </p>
+
+      <div className="rounded-md border border-gray-300 overflow-hidden bg-[#f3f3f3]">
+        <div
+          className="flex items-end gap-px bg-[#d9d9d9] px-1 pt-1 border-b border-gray-300"
+          role="tablist"
+          aria-label="Hojas del Excel"
+        >
+          {IMPORT_SHEET_TABS.map((sheet) => {
+            const selected = sheet.name === active.name
+            return (
+              <button
+                key={sheet.name}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                onClick={() => setActiveSheet(sheet.name)}
+                className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-t-md border border-b-0 transition-colors ${
+                  selected
+                    ? 'bg-white border-gray-300 text-gray-900 -mb-px z-10 shadow-[0_-1px_0_#fff]'
+                    : 'bg-[#efefef] border-transparent text-gray-600 hover:bg-[#f7f7f7]'
+                }`}
+              >
+                {selected && (
+                  <span className="absolute inset-x-0 top-0 h-0.5 rounded-t-md bg-green-600" />
+                )}
+                <span className="font-mono">{sheet.name}</span>
+                <span
+                  className={`text-[10px] font-sans font-medium leading-none px-1 py-0.5 rounded ${
+                    sheet.required
+                      ? 'bg-green-50 text-green-800'
+                      : 'bg-gray-200/80 text-gray-500'
+                  }`}
+                >
+                  {sheet.required ? 'obligatoria' : 'opcional'}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        <div className="overflow-x-auto bg-white">
+          <div className="flex min-w-max border-b border-gray-300" role="row">
+            {active.columns.map((column) => (
+              <div
+                key={column}
+                role="columnheader"
+                className="shrink-0 px-2.5 py-1.5 text-xs font-mono text-gray-700 bg-[#f2f2f2] border-r border-gray-300 whitespace-nowrap last:border-r-0"
+              >
+                {column}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <details className="mt-3">
+        <summary className="text-xs text-gray-500 cursor-pointer select-none hover:text-gray-700">
+          También aceptamos estos nombres
+        </summary>
+        <p className="text-xs text-gray-500 mt-2 leading-relaxed">
+          El importador también reconoce sinónimos habituales (tel, celular, name…).
+        </p>
+      </details>
+    </div>
+  )
 }
 
 function DepuradoExportPanel() {
@@ -664,49 +761,7 @@ export default function Imports() {
         </div>
       )}
 
-      {/* Columns hint */}
-      <div className="card p-5">
-        <p className="text-sm text-gray-600 mb-3">
-          Los archivos <strong>Excel</strong> deben incluir una hoja llamada{' '}
-          <strong>Contactos</strong> con los datos (no se usa la primera hoja). Opcionalmente pueden
-          incluir <strong>ProductosMovil</strong> (líneas móviles por RUC) y{' '}
-          <strong>DetallePlan</strong> (rentas por RUC + número de teléfono). Los{' '}
-          <strong>CSV</strong> no requieren hoja; la primera fila son los encabezados.
-        </p>
-        <p className="text-sm font-semibold text-gray-700 mb-2">
-          📋 Columnas reconocidas automáticamente (hoja Contactos):
-        </p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-gray-500">
-          <span><strong>RUC:</strong> ruc</span>
-          <span><strong>Razón social:</strong> razon_social, razonsocial</span>
-          <span><strong>Contacto:</strong> nombre, name, contacto, cliente</span>
-          <span><strong>Teléfono:</strong> telefono, tel, phone, celular, móvil</span>
-          <span><strong>2º teléfono:</strong> telefono2, tel2, celular2, phone2</span>
-          <span><strong>Email:</strong> email, correo</span>
-          <span><strong>DNI:</strong> dni, documento</span>
-          <span><strong>Tipo contacto:</strong> tipo_contacto, tipo, cargo</span>
-          <span><strong>Estado:</strong> estado</span>
-          <span><strong>Fecha consulta:</strong> fecha_consulta, fecha</span>
-        </div>
-        <p className="text-sm font-semibold text-gray-700 mt-4 mb-2">
-          📱 Columnas hoja ProductosMovil (opcional):
-        </p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-gray-500">
-          <span><strong>RUC:</strong> ruc</span>
-          <span><strong>Número:</strong> numero_telefono, telefono, celular, móvil</span>
-          <span><strong>Estado línea:</strong> estado_linea</span>
-          <span><strong>Plan:</strong> plan</span>
-        </div>
-        <p className="text-sm font-semibold text-gray-700 mt-4 mb-2">
-          💰 Columnas hoja DetallePlan (opcional; se une a ProductosMovil por RUC + teléfono):
-        </p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-gray-500">
-          <span><strong>RUC:</strong> ruc</span>
-          <span><strong>Número:</strong> numero_telefono, telefono, celular, móvil</span>
-          <span><strong>Renta básica:</strong> renta_basica</span>
-          <span><strong>Renta c/desc:</strong> renta_basica_con_desc</span>
-        </div>
-      </div>
+      <ImportSheetHeadersHelp />
 
       <DepuradoExportPanel />
 

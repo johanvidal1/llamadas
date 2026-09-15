@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
 
 export type BatchPendingOption = {
@@ -253,6 +253,40 @@ function metricLabel(pending: number, total: number) {
   return `${pending} pendientes · ${total} total`
 }
 
+/** Open-panel lote name: full filename, wrap; break only a huge underscored token. */
+function BatchOptionName({ children }: { children: ReactNode }) {
+  return (
+    <div className="text-sm font-medium text-gray-900 leading-snug [overflow-wrap:anywhere]">
+      {children}
+    </div>
+  )
+}
+
+function BatchOptionMeta({
+  pending,
+  total,
+  badge,
+}: {
+  pending: number
+  total: number
+  badge?: ReactNode
+}) {
+  const tone = queueTone(pending, total)
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      {badge}
+      <span
+        className={`text-xs tabular-nums shrink-0 font-medium transition-colors duration-300 ${
+          isLowPendingAlert(pending, total) ? 'motion-safe:animate-queue-soft-pulse' : ''
+        }`}
+        style={{ color: tone.metric }}
+      >
+        {metricLabel(pending, total)}
+      </span>
+    </div>
+  )
+}
+
 /**
  * Compact lote progress meter for the Detalle header (replaces nav arrows slot).
  * Bar width = % done; label shows remaining pendientes.
@@ -364,8 +398,6 @@ export function BatchPendingPicker({
     () => queueTone(selectedStats.pending, selectedStats.total),
     [selectedStats]
   )
-
-  const allTone = useMemo(() => queueTone(allPending, allTotal), [allPending, allTotal])
 
   const selectedLabel = useMemo(() => {
     if (!value) {
@@ -514,7 +546,9 @@ export function BatchPendingPicker({
       {open && (
         <div
           className={`absolute top-full left-0 z-50 mt-1 rounded-lg border border-gray-200 bg-white shadow-lg overflow-hidden ${
-            isHeader ? 'min-w-[280px] w-[min(320px,90vw)]' : 'right-0 min-w-[260px] sm:min-w-[280px]'
+            isHeader
+              ? 'min-w-[280px] w-[min(320px,90vw)]'
+              : 'min-w-[22rem] w-[min(32rem,calc(100vw-2rem))]'
           }`}
         >
           <ul
@@ -534,7 +568,7 @@ export function BatchPendingPicker({
               aria-selected={!value}
               onMouseEnter={() => setActiveIdx(0)}
               onClick={() => selectRow(0)}
-              className={`mx-1 my-0.5 px-2.5 py-2 rounded cursor-pointer border ${
+              className={`mx-1 my-0.5 px-3 py-2.5 rounded cursor-pointer border ${
                 !value
                   ? 'border-blue-400 bg-blue-50/50'
                   : activeIdx === 0
@@ -542,36 +576,21 @@ export function BatchPendingPicker({
                     : 'border-transparent hover:bg-slate-50'
               }`}
             >
-              <div className="flex items-center justify-between gap-2 mb-1.5">
-                <span
-                  className="text-sm font-medium text-gray-900 truncate"
-                  title="Todos los lotes"
-                >
-                  Todos los lotes
-                </span>
-                <span
-                  className={`text-xs tabular-nums shrink-0 font-medium transition-colors duration-300 ${
-                    isLowPendingAlert(allPending, allTotal)
-                      ? 'motion-safe:animate-queue-soft-pulse'
-                      : ''
-                  }`}
-                  style={{ color: allTone.metric }}
-                >
-                  {metricLabel(allPending, allTotal)}
-                </span>
+              <div className="min-w-0 space-y-1.5">
+                <BatchOptionName>Todos los lotes</BatchOptionName>
+                <BatchOptionMeta pending={allPending} total={allTotal} />
+                <ProgressBar
+                  done={Math.max(0, allTotal - allPending)}
+                  total={allTotal}
+                  pending={allPending}
+                />
               </div>
-              <ProgressBar
-                done={Math.max(0, allTotal - allPending)}
-                total={allTotal}
-                pending={allPending}
-              />
             </li>
 
             {visibleBatches.map((s, i) => {
               const rowIdx = i + 1
               const selected = value === s.id
               const active = activeIdx === rowIdx
-              const tone = queueTone(s.pending, s.total)
               return (
                 <li
                   key={s.id}
@@ -580,7 +599,7 @@ export function BatchPendingPicker({
                   aria-selected={selected}
                   onMouseEnter={() => setActiveIdx(rowIdx)}
                   onClick={() => selectRow(rowIdx)}
-                  className={`mx-1 my-0.5 px-2.5 py-2 rounded cursor-pointer border ${
+                  className={`mx-1 my-0.5 px-3 py-2.5 rounded cursor-pointer border ${
                     selected
                       ? 'border-blue-400 bg-blue-50/50'
                       : active
@@ -588,40 +607,31 @@ export function BatchPendingPicker({
                         : 'border-transparent hover:bg-slate-50'
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <span
-                      className="text-sm font-medium text-gray-900 truncate"
-                      title={`${s.isNewest ? '★ ' : ''}${s.label}`}
-                    >
+                  <div className="min-w-0 space-y-1.5">
+                    <BatchOptionName>
                       {s.isNewest ? '★ ' : ''}
                       {s.label}
-                    </span>
-                    <span className="flex items-center gap-1.5 shrink-0">
-                      {workingBatchId && s.id === workingBatchId && (
-                        <span className="text-[10px] font-semibold uppercase tracking-wide text-blue-700 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5">
-                          Lote en curso
-                        </span>
-                      )}
-                      <span
-                        className={`text-xs tabular-nums shrink-0 font-medium transition-colors duration-300 ${
-                          isLowPendingAlert(s.pending, s.total)
-                            ? 'motion-safe:animate-queue-soft-pulse'
-                            : ''
-                        }`}
-                        style={{ color: tone.metric }}
-                      >
-                        {metricLabel(s.pending, s.total)}
-                      </span>
-                    </span>
+                    </BatchOptionName>
+                    <BatchOptionMeta
+                      pending={s.pending}
+                      total={s.total}
+                      badge={
+                        workingBatchId && s.id === workingBatchId ? (
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-blue-700 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 shrink-0">
+                            Lote en curso
+                          </span>
+                        ) : undefined
+                      }
+                    />
+                    <ProgressBar done={s.done} total={s.total} pending={s.pending} />
                   </div>
-                  <ProgressBar done={s.done} total={s.total} pending={s.pending} />
                 </li>
               )
             })}
           </ul>
 
           {completedHidden.length > 0 && (
-            <div className="border-t border-gray-100 px-2.5 py-1.5">
+            <div className="border-t border-gray-100 px-3 py-1.5">
               <button
                 type="button"
                 className="w-full text-left text-xs text-blue-600 hover:text-blue-800 hover:underline py-1"
