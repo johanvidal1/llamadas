@@ -11,7 +11,6 @@ import {
   updateContact,
   getCallbacks,
   updateCallback,
-  downloadImportExport,
   patchMe,
   type GetClientsParams,
 } from '../api/client'
@@ -927,7 +926,6 @@ export default function MyLeads() {
   const [respuestaError, setRespuestaError] = useState(false)
   const [agendaConfirm, setAgendaConfirm] = useState<{ dateStr: string } | null>(null)
   const agendaConfirmResolveRef = useRef<((conservar: boolean) => void) | null>(null)
-  const [exporting, setExporting] = useState(false)
   const [saveNotice, setSaveNotice] = useState<{ message: string; variant?: 'success' | 'info' } | null>(null)
   const saveNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const savedContactRef = useRef<{ id: string; telefono: string; email: string; dni: string } | null>(null)
@@ -2606,26 +2604,8 @@ export default function MyLeads() {
     return () => window.removeEventListener('keydown', handleSaveKeyDown)
   }, [viewMode, saveMutation, canSaveCallResult, nextPendingTarget])
 
-  const exportBatchId = selectedBatchId || detail?.importBatch?.id
   const toolbarHasExtras =
     viewMode === 'detail' || (viewMode === 'list' && returnToDashboard)
-
-  const handleExport = async () => {
-    if (!exportBatchId) {
-      toast.error('Selecciona un lote para exportar')
-      return
-    }
-    setExporting(true)
-    try {
-      const saved = await downloadImportExport(exportBatchId, isAdmin ? undefined : user?.id)
-      if (saved) toast.success('Archivo guardado')
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-      toast.error(msg ?? 'Error al exportar')
-    } finally {
-      setExporting(false)
-    }
-  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -2633,7 +2613,7 @@ export default function MyLeads() {
       {/* ══════════════════════ PAGE TOOLBAR (3-zone: left | extras | toggle) ══════════════════════ */}
       <div className="bg-white border-b border-gray-200 text-gray-800 px-3 lg:px-6 py-2 shrink-0">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 lg:gap-x-4 gap-y-2">
-          {/* Left: title + lote picker + export — never includes view toggle or N clientes.
+          {/* Left: title + lote picker — never includes view toggle or N clientes.
               No overflow here: it would clip the lote picker popover. Children shrink + truncate. */}
           <div className="col-start-1 row-start-1 flex items-center gap-2 lg:gap-4 min-w-0 text-sm">
             <div className="min-w-0 max-w-[11rem] sm:max-w-[14rem]">
@@ -2651,18 +2631,6 @@ export default function MyLeads() {
                 className="self-center min-w-0 lg:min-w-[12rem] max-w-[16rem]"
                 workingBatchId={pickerWorkingBatchId}
               />
-            )}
-
-            {exportBatchId && (
-              <button
-                type="button"
-                onClick={handleExport}
-                disabled={exporting}
-                className="flex items-center justify-center p-1.5 bg-white hover:bg-blue-50 disabled:opacity-50 text-blue-700 border border-blue-200 rounded transition-colors shrink-0"
-                title="Descargar mis registros"
-              >
-                <Save size={13} />
-              </button>
             )}
           </div>
 

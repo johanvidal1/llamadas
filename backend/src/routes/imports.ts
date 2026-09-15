@@ -304,11 +304,10 @@ router.post('/depurado-export', requireAdmin, async (req: AuthRequest, res: Resp
   }
 })
 
-// GET /api/imports/:id/export
-router.get('/:id/export', requireAuth, async (req: AuthRequest, res: Response) => {
+// GET /api/imports/:id/export — admin only (agents cannot download lote Excel)
+router.get('/:id/export', requireAdmin, async (req: AuthRequest, res: Response) => {
   const batchId = req.params.id
   const { agentId: agentIdQuery } = req.query as { agentId?: string }
-  const isAgent = req.user!.role === 'AGENT'
 
   const batch = await prisma.importBatch.findUnique({
     where: { id: batchId },
@@ -320,7 +319,7 @@ router.get('/:id/export', requireAuth, async (req: AuthRequest, res: Response) =
     return
   }
 
-  const filterAgentId = isAgent ? req.user!.id : agentIdQuery || undefined
+  const filterAgentId = agentIdQuery || undefined
 
   const contactWhere: Prisma.ContactWhereInput = {
     company: { importBatchId: batchId },
@@ -426,7 +425,7 @@ router.get('/:id/export', requireAuth, async (req: AuthRequest, res: Response) =
 
   const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
 
-  const suffix = filterAgentId && !isAgent ? '-agente' : isAgent ? '-mis-registros' : '-actualizado'
+  const suffix = filterAgentId ? '-agente' : '-actualizado'
   const filename = `${sanitizeFilename(batchLabel)}${suffix}-${exportDate.toISOString().slice(0, 10)}.xlsx`
 
   res.setHeader(
