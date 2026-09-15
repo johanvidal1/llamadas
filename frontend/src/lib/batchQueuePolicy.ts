@@ -65,3 +65,51 @@ export function shouldAutoAdvancePinnedBatch(opts: {
   const current = batches.find((b) => b.id === selectedBatchId)
   return !current || current.pending <= 0
 }
+
+/**
+ * FIFO/LIFO must wait until pending counts exist; otherwise every lote looks empty
+ * and hydration pins "Todos los lotes" / persists null. ALL can pin Todos as soon
+ * as the lote list is known.
+ */
+export function canHydrateBatchQueue(opts: {
+  mode: BatchQueueMode
+  batchListReady: boolean
+  pendingCountsReady: boolean
+}): boolean {
+  if (!opts.batchListReady) return false
+  if (opts.mode === 'ALL') return true
+  return opts.pendingCountsReady
+}
+
+/**
+ * First hydration must not persist workingBatchId=null while pending counts are still
+ * unknown (all zeros from unloaded clients). A real empty queue (counts loaded) may persist null.
+ */
+export function canPersistHydratedWorkingBatch(opts: {
+  mode: BatchQueueMode
+  resolvedBatchId: string
+  pendingCountsReady: boolean
+}): boolean {
+  if (opts.mode === 'ALL') return false
+  if (opts.resolvedBatchId) return true
+  return opts.pendingCountsReady
+}
+
+/**
+ * After a premature Todos hydration (selected ''), re-resolve when real pendientes appear.
+ * Explicit Todos and URL deep links must keep winning.
+ */
+export function shouldRehydrateEmptyTodos(opts: {
+  mode: BatchQueueMode
+  selectedBatchId: string
+  explicitTodos: boolean
+  deepLinkWins: boolean
+  pendingCountsReady: boolean
+  resolvedBatchId: string
+}): boolean {
+  if (opts.deepLinkWins || opts.explicitTodos) return false
+  if (opts.mode === 'ALL') return false
+  if (!opts.pendingCountsReady) return false
+  if (opts.selectedBatchId) return false
+  return Boolean(opts.resolvedBatchId)
+}

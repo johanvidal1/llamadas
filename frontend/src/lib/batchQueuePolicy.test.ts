@@ -4,6 +4,9 @@ import {
   pickNextBatchByPolicy,
   resolveWorkingBatchId,
   shouldAutoAdvancePinnedBatch,
+  canHydrateBatchQueue,
+  canPersistHydratedWorkingBatch,
+  shouldRehydrateEmptyTodos,
   type QueueBatchInput,
 } from './batchQueuePolicy.ts'
 
@@ -167,6 +170,166 @@ assert.equal(
     ],
   }),
   ''
+)
+
+section('do not hydrate FIFO/LIFO until pending counts exist')
+assert.equal(
+  canHydrateBatchQueue({ mode: 'FIFO', batchListReady: true, pendingCountsReady: false }),
+  false
+)
+assert.equal(
+  canHydrateBatchQueue({ mode: 'LIFO', batchListReady: true, pendingCountsReady: false }),
+  false
+)
+assert.equal(
+  canHydrateBatchQueue({ mode: 'FIFO', batchListReady: true, pendingCountsReady: true }),
+  true
+)
+assert.equal(
+  canHydrateBatchQueue({ mode: 'FIFO', batchListReady: false, pendingCountsReady: true }),
+  false
+)
+
+section('ALL hydrates to Todos without waiting for pending counts')
+assert.equal(
+  canHydrateBatchQueue({ mode: 'ALL', batchListReady: true, pendingCountsReady: false }),
+  true
+)
+assert.equal(
+  canHydrateBatchQueue({ mode: 'ALL', batchListReady: false, pendingCountsReady: false }),
+  false
+)
+
+section('race: cached batches + pending 0 must not persist null')
+const unloaded: QueueBatchInput[] = [
+  { ...oldest, pending: 0 },
+  { ...newest, pending: 0 },
+]
+assert.equal(
+  resolveWorkingBatchId({ mode: 'FIFO', workingBatchId: 'old', batches: unloaded }),
+  ''
+)
+assert.equal(
+  canPersistHydratedWorkingBatch({
+    mode: 'FIFO',
+    resolvedBatchId: '',
+    pendingCountsReady: false,
+  }),
+  false
+)
+assert.equal(
+  canPersistHydratedWorkingBatch({
+    mode: 'FIFO',
+    resolvedBatchId: 'old',
+    pendingCountsReady: false,
+  }),
+  true
+)
+assert.equal(
+  canPersistHydratedWorkingBatch({
+    mode: 'FIFO',
+    resolvedBatchId: '',
+    pendingCountsReady: true,
+  }),
+  true
+)
+assert.equal(
+  canPersistHydratedWorkingBatch({
+    mode: 'ALL',
+    resolvedBatchId: '',
+    pendingCountsReady: true,
+  }),
+  false
+)
+
+section('re-resolve Todos when real pending counts appear')
+assert.equal(
+  shouldRehydrateEmptyTodos({
+    mode: 'FIFO',
+    selectedBatchId: '',
+    explicitTodos: false,
+    deepLinkWins: false,
+    pendingCountsReady: true,
+    resolvedBatchId: 'old',
+  }),
+  true
+)
+assert.equal(
+  shouldRehydrateEmptyTodos({
+    mode: 'LIFO',
+    selectedBatchId: '',
+    explicitTodos: false,
+    deepLinkWins: false,
+    pendingCountsReady: true,
+    resolvedBatchId: 'new',
+  }),
+  true
+)
+assert.equal(
+  shouldRehydrateEmptyTodos({
+    mode: 'FIFO',
+    selectedBatchId: '',
+    explicitTodos: true,
+    deepLinkWins: false,
+    pendingCountsReady: true,
+    resolvedBatchId: 'old',
+  }),
+  false
+)
+assert.equal(
+  shouldRehydrateEmptyTodos({
+    mode: 'FIFO',
+    selectedBatchId: '',
+    explicitTodos: false,
+    deepLinkWins: true,
+    pendingCountsReady: true,
+    resolvedBatchId: 'old',
+  }),
+  false
+)
+assert.equal(
+  shouldRehydrateEmptyTodos({
+    mode: 'FIFO',
+    selectedBatchId: 'old',
+    explicitTodos: false,
+    deepLinkWins: false,
+    pendingCountsReady: true,
+    resolvedBatchId: 'mid',
+  }),
+  false
+)
+assert.equal(
+  shouldRehydrateEmptyTodos({
+    mode: 'ALL',
+    selectedBatchId: '',
+    explicitTodos: false,
+    deepLinkWins: false,
+    pendingCountsReady: true,
+    resolvedBatchId: '',
+  }),
+  false
+)
+assert.equal(
+  shouldRehydrateEmptyTodos({
+    mode: 'FIFO',
+    selectedBatchId: '',
+    explicitTodos: false,
+    deepLinkWins: false,
+    pendingCountsReady: false,
+    resolvedBatchId: '',
+  }),
+  false
+)
+
+section('auto-advance still refuses Todos (the stuck-picker case)')
+assert.equal(
+  shouldAutoAdvancePinnedBatch({
+    mode: 'FIFO',
+    selectedBatchId: '',
+    workingBatchId: null,
+    batches: [oldest, newest],
+  }),
+  false
 )
 
 console.log('\nbatchQueuePolicy tests passed')

@@ -59,6 +59,9 @@ import {
   parseBatchQueueMode,
   resolveWorkingBatchId,
   shouldAutoAdvancePinnedBatch,
+  canHydrateBatchQueue,
+  canPersistHydratedWorkingBatch,
+  shouldRehydrateEmptyTodos,
   type QueueBatchInput,
 } from '../lib/batchQueuePolicy'
 import { DuplicateRucBanner } from '../components/DuplicateRucBanner'
@@ -1062,7 +1065,8 @@ export default function MyLeads() {
       }),
     [batches, allClients]
   )
-  const batchesReady = isAdmin ? allClientsData !== undefined : myBatches !== undefined
+  const batchListReady = isAdmin ? allClientsData !== undefined : myBatches !== undefined
+  const pendingCountsReady = allClientsData !== undefined
   const pickerWorkingBatchId = queueMode === 'ALL' ? undefined : workingBatchId ?? undefined
 
   const persistWorkingBatch = useCallback(
@@ -1806,7 +1810,15 @@ export default function MyLeads() {
       queueHydratedRef.current = true
       return
     }
-    if (!batchesReady) return
+    if (
+      !canHydrateBatchQueue({
+        mode: queueMode,
+        batchListReady,
+        pendingCountsReady,
+      })
+    ) {
+      return
+    }
     if (queueMode === 'ALL') {
       if (!queueHydratedRef.current) {
         setSelectedBatchId('')
@@ -1826,9 +1838,32 @@ export default function MyLeads() {
     })
 
     if (!queueHydratedRef.current) {
-      queueHydratedRef.current = true
       if (resolved !== selectedBatchId) applyQueueBatch(resolved)
-      persistWorkingBatchRef.current(resolved || null)
+      if (
+        canPersistHydratedWorkingBatch({
+          mode: queueMode,
+          resolvedBatchId: resolved,
+          pendingCountsReady,
+        })
+      ) {
+        persistWorkingBatchRef.current(resolved || null)
+      }
+      queueHydratedRef.current = true
+      return
+    }
+
+    if (
+      shouldRehydrateEmptyTodos({
+        mode: queueMode,
+        selectedBatchId,
+        explicitTodos: explicitTodosRef.current,
+        deepLinkWins: queueDeepLinkWins,
+        pendingCountsReady,
+        resolvedBatchId: resolved,
+      })
+    ) {
+      applyQueueBatch(resolved)
+      persistWorkingBatchRef.current(resolved)
       return
     }
 
@@ -1846,7 +1881,8 @@ export default function MyLeads() {
     persistWorkingBatchRef.current(resolved || null)
   }, [
     applyQueueBatch,
-    batchesReady,
+    batchListReady,
+    pendingCountsReady,
     queueBatches,
     queueDeepLinkWins,
     queueMode,
