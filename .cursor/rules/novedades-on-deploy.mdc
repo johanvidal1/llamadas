@@ -1,0 +1,18 @@
+---
+description: Publicar Novedades del sistema en cada deploy a pruebacrm/crm (staging y prod)
+alwaysApply: true
+---
+
+# Novedades del sistema en cada deploy
+
+Al enviar cambios visibles del CRM a **pruebacrm** (`staging` + `deploy-staging.sh`) y/o **crm** (`main` + `deploy-prod.sh`), **debes** publicar **Novedades del sistema** en el mismo conjunto de cambios.
+
+## Cómo
+
+- Migración Prisma `INSERT INTO "ReleaseNote"` como `backend/prisma/migrations/20260914180000_release_notes_20260914_depurado_lote_fifo/migration.sql`.
+- Upsert idempotente: `ON CONFLICT ("date") DO UPDATE`.
+- Copy: 1–4 viñetas en español; nombres de UI en **negrita** (`**Mis clientes**`); `dateLabel` tipo `15 de septiembre de 2026`.
+- No omitir por ser “solo frontend”. UI-only también lleva migración de notas (INSERT, sin schema de negocio).
+- Dashboard **Añadir** (dueño del sistema) es solo preview en staging; **no** sustituye la migración cuando se despliega prod.
+
+Do not skip Novedades for frontend-only deploys. Do not change `schema.prisma` for notes-only ships.
