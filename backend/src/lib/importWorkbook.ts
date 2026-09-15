@@ -101,7 +101,7 @@ export function rowFromColumns<C extends readonly string[]>(
 ): Record<C[number], string> {
   const row = emptyImportRow(columns)
   for (const [key, value] of Object.entries(values)) {
-    if (value != null) row[key as C[number]] = value
+    if (typeof value === 'string') row[key as C[number]] = value
   }
   return row
 }

@@ -275,13 +275,13 @@ function fillEmptyFromSource<T extends Record<string, string>>(
   columns: readonly string[]
 ): T {
   if (!source) return target
-  const next = { ...target }
+  const next: Record<string, string> = { ...target }
   for (const col of columns) {
     if (String(next[col] ?? '').trim()) continue
     const value = String(source[col] ?? '').trim()
     if (value) next[col] = value
   }
-  return next
+  return next as T
 }
 
 function mergeOriginalRows(rows: Array<Record<string, string>>): Record<string, string> | undefined {
