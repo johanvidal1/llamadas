@@ -8,6 +8,12 @@ import * as XLSX from 'xlsx'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
 import { parseExcel, parseCsv, ParsedCompany, ParseResult, MissingContactosSheetError } from '../lib/parseFile'
+import { MissingMovistarResumenSheetError } from '../lib/parseMovistarWorkbook'
+import {
+  assertFilenameMatchesOperator,
+  FilenameOperatorError,
+  parseImportOperator,
+} from '../lib/operator'
 import { requireAdmin, requireAuth, AuthRequest } from '../middleware/auth'
 import { getDispositionLabel } from '../lib/responseOptions'
 import { isSuperAdminOrOwner } from '../lib/userPermissions'
@@ -152,8 +158,10 @@ async function findDuplicateBatch(filename: string, fileSizeBytes: number) {
 }
 
 // GET /api/imports
-router.get('/', requireAdmin, async (_req: AuthRequest, res: Response) => {
+router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const operator = parseImportOperator(req.query.operator)
   const batches = await prisma.importBatch.findMany({
+    where: operator ? { operator } : undefined,
     include: {
       importedBy: { select: { name: true } },
     },
@@ -247,7 +255,16 @@ function parseAgentIdsQuery(raw: unknown): string[] {
 
 const depuradoExportBodySchema = z.object({
   agentIds: z.array(z.string().min(1)).min(1, 'Selecciona al menos un agente'),
+  operator: z.enum(['CLARO', 'MOVISTAR']).optional(),
 })
+
+function parseOptionalOperatorQuery(raw: unknown): { ok: true; operator?: 'CLARO' | 'MOVISTAR' } | { ok: false } {
+  if (raw == null || raw === '') return { ok: true }
+  const value = Array.isArray(raw) ? raw[0] : raw
+  const parsed = parseImportOperator(value)
+  if (!parsed) return { ok: false }
+  return { ok: true, operator: parsed }
+}
 
 function attachmentFilename(filename: string): string {
   const ascii = filename.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '')
@@ -262,8 +279,13 @@ router.get('/depurado-export/preview', requireAdmin, async (req: AuthRequest, re
     res.status(400).json({ error: 'Selecciona al menos un agente' })
     return
   }
+  const operatorQuery = parseOptionalOperatorQuery(req.query.operator)
+  if (!operatorQuery.ok) {
+    res.status(400).json({ error: 'Operador inválido. Usa CLARO o MOVISTAR.' })
+    return
+  }
   try {
-    const preview = await previewDepuradoExport(agentIds)
+    const preview = await previewDepuradoExport(agentIds, operatorQuery.operator)
     res.json(preview)
   } catch (err) {
     if (err instanceof DepuradoExportAgentsError) {
@@ -282,7 +304,7 @@ router.post('/depurado-export', requireAdmin, async (req: AuthRequest, res: Resp
     return
   }
   try {
-    const result = await executeDepuradoExport(parsed.data.agentIds)
+    const result = await executeDepuradoExport(parsed.data.agentIds, parsed.data.operator)
     res.setHeader('Content-Type', result.file.contentType)
     res.setHeader('Content-Disposition', attachmentFilename(result.file.filename))
     res.setHeader('X-Exported-Agents', String(result.exportedAgents.length))
@@ -561,6 +583,30 @@ router.post(
       const confirmDuplicate = parseConfirmDuplicate(req.body?.confirmDuplicate)
       const displayNameRaw = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : ''
       const displayName = displayNameRaw || null
+      const operator = parseImportOperator(req.body?.operator)
+      if (!operator) {
+        res.status(400).json({
+          error: 'Elige operador (Claro o Movistar) antes de importar.',
+        })
+        return
+      }
+
+      try {
+        assertFilenameMatchesOperator(filename, operator)
+      } catch (err) {
+        if (err instanceof FilenameOperatorError) {
+          res.status(400).json({ error: err.message })
+          return
+        }
+        throw err
+      }
+
+      if (filename.match(/\.csv$/i) && operator === 'MOVISTAR') {
+        res.status(400).json({
+          error: 'La plantilla Movistar es Excel (Resumen / Usuarios / Productos). El CSV solo se usa para Claro.',
+        })
+        return
+      }
 
       if (!confirmDuplicate) {
         const duplicate = await findDuplicateBatch(filename, fileSizeBytes)
@@ -580,10 +626,17 @@ router.post(
         if (filename.match(/\.csv$/i)) {
           parseResult = await parseCsv(buffer)
         } else {
-          parseResult = await parseExcel(buffer)
+          parseResult = await parseExcel(buffer, operator)
         }
       } catch (err) {
         if (err instanceof MissingContactosSheetError) {
+          res.status(400).json({
+            error: err.message,
+            availableSheets: err.availableSheets,
+          })
+          return
+        }
+        if (err instanceof MissingMovistarResumenSheetError) {
           res.status(400).json({
             error: err.message,
             availableSheets: err.availableSheets,
@@ -604,6 +657,7 @@ router.post(
       }
 
       const withoutContacts = parsed.filter((c) => c.contacts.length === 0).length
+      const withoutUsers = parsed.filter((c) => c.hasUsuarios === false).length
       const withoutPhone = parsed.filter(
         (c) => c.contacts.length === 0 || !c.contacts.some((ct) => ct.telefono)
       ).length
@@ -618,6 +672,7 @@ router.post(
               fileSizeBytes,
               sourceRowCount,
               totalRecords: parsed.length,
+              operator,
               importedById: req.user!.id,
             },
           })
@@ -696,11 +751,14 @@ router.post(
         id: batch.id,
         filename: batch.filename,
         displayName: batch.displayName,
+        operator: batch.operator,
         totalRecords: batch.totalRecords,
         sourceRowCount: batch.sourceRowCount,
         imported: parsed.length,
         withoutContacts,
+        withoutUsers,
         withoutPhone,
+        skippedVacioCount: parseResult.skippedVacioCount ?? 0,
         mobileLineCount: mobileLines.length,
       })
     })

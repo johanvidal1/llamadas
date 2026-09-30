@@ -15,6 +15,7 @@ import {
 import { FUNNEL_PIPELINE_KEYS, pipelineBucketForDisposition } from './companyDisposition'
 import { RESPONSE_OPTIONS, SALES_FUNNEL_DISPOSITIONS } from './responseOptions'
 import { resolveTenantIdForSql, sqlAndTenant } from './tenant'
+import { sqlCallLogCompanyOperatorFilter, type ImportOperator } from './operator'
 
 /** Zero-progress dispositions agents can select (excludes audit-only e.g. AGENDA_COMPLETADA). */
 const ZERO_PROGRESS_CALL_DISPOSITIONS = RESPONSE_OPTIONS.filter(
@@ -103,6 +104,7 @@ export async function fetchAgentCallsByPeriod(params: {
   date?: string
   from?: string
   to?: string
+  operator?: ImportOperator | null
 }): Promise<{ period: ReportPeriod; date: string; from: string; to: string; agents: AgentCallRow[] }> {
   const period = parseReportPeriod(params.period)
   const { from, to, date } =
@@ -133,6 +135,7 @@ export async function fetchAgentCallsByPeriod(params: {
       AND cl."calledAt" <= ${to}
       ${sqlAndTenant('cl')}
       AND (r.reset_at IS NULL OR cl."calledAt" >= r.reset_at)
+      ${sqlCallLogCompanyOperatorFilter(params.operator, Prisma.sql`cl."companyId"`)}
     GROUP BY cl."agentId"
   `
 
@@ -177,6 +180,7 @@ export async function fetchFunnelByPeriod(params: {
   from?: string
   to?: string
   agentId?: string
+  operator?: ImportOperator | null
 }): Promise<{
   from: string
   to: string
@@ -201,6 +205,7 @@ export async function fetchFunnelByPeriod(params: {
         AND cl."calledAt" <= ${to}
         ${sqlAndTenant('cl')}
         ${agentFilter}
+        ${sqlCallLogCompanyOperatorFilter(params.operator, Prisma.sql`cl."companyId"`)}
       ORDER BY cl."companyId", cl."calledAt" DESC
     )
     SELECT
@@ -239,6 +244,7 @@ export async function fetchZeroResponsesByPeriod(params: {
   from?: string
   to?: string
   agentId?: string
+  operator?: ImportOperator | null
 }): Promise<{
   from: string
   to: string
@@ -263,6 +269,7 @@ export async function fetchZeroResponsesByPeriod(params: {
         AND cl."calledAt" <= ${to}
         ${sqlAndTenant('cl')}
         ${agentFilter}
+        ${sqlCallLogCompanyOperatorFilter(params.operator, Prisma.sql`cl."companyId"`)}
       ORDER BY cl."companyId", cl."calledAt" DESC
     )
     SELECT
@@ -305,6 +312,7 @@ export async function fetchCallHeatmap(params: {
   from?: string
   to?: string
   agentId?: string
+  operator?: ImportOperator | null
 }): Promise<{ from: string; to: string; cells: HeatmapCell[] }> {
   let fromDate: Date
   let toDate: Date
@@ -337,6 +345,7 @@ export async function fetchCallHeatmap(params: {
       AND cl."calledAt" <= ${toDate}
       ${sqlAndTenant('cl')}
       ${agentFilter}
+      ${sqlCallLogCompanyOperatorFilter(params.operator, Prisma.sql`cl."companyId"`)}
       AND EXTRACT(HOUR FROM ${localCalledAt}) >= 9
       AND EXTRACT(HOUR FROM ${localCalledAt}) <= 18
     GROUP BY dow, hour

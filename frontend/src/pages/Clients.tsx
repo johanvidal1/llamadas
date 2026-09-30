@@ -1,7 +1,14 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueries, keepPreviousData } from '@tanstack/react-query'
-import { getClients, getClientsPipelineSummary, getClientsDaySummary, getUsers, getImports, type AppUser, type ClientsListResponse, type ClientListItem } from '../api/client'
+import { getClients, getClientsPipelineSummary, getClientsDaySummary, getUsers, getImports, type AppUser, type ClientsListResponse, type ClientListItem, type ImportBatch } from '../api/client'
+import {
+  operatorFilterFromQuery,
+  operatorLabelEs,
+  resolveImportOperator,
+  type ImportOperator,
+} from '../lib/operator'
+import OperatorChip from '../components/OperatorChip'
 import { DispositionBadge } from '../components/StatusBadge'
 import {
   AGENT_PIPELINE_FUNNEL,
@@ -1166,13 +1173,16 @@ function ClientTableRow({
         </td>
       )}
       {showBatch && (
-        <td className="px-3 py-2 text-xs text-gray-500 max-w-[130px]">
+        <td className="px-3 py-2 text-xs text-gray-500 max-w-[180px]">
           {c.importBatch ? (
-            <span title={c.importBatch.filename} className="truncate block">
-              {c.importBatch.filename.replace(/\.[^.]+$/, '').slice(0, 16)}
-              <span className="text-gray-400 ml-1">
-                {format(new Date(c.importBatch.createdAt), 'd MMM', { locale: es })}
+            <span title={c.importBatch.filename} className="flex items-center gap-1 min-w-0">
+              <span className="truncate">
+                {c.importBatch.filename.replace(/\.[^.]+$/, '').slice(0, 16)}
+                <span className="text-gray-400 ml-1">
+                  {format(new Date(c.importBatch.createdAt), 'd MMM', { locale: es })}
+                </span>
               </span>
+              <OperatorChip operator={resolveImportOperator(c.importBatch.operator)} />
             </span>
           ) : (
             '—'
@@ -1374,6 +1384,9 @@ export default function Clients() {
   const [pipelineFilter, setPipelineFilter] = useState(deepLinkFilter)
   const [agentId, setAgentId] = useState(initialAgentId)
   const [batchId, setBatchId] = useState('')
+  const [operatorFilter, setOperatorFilter] = useState<ImportOperator | ''>(
+    operatorFilterFromQuery(searchParams.get('operator'))
+  )
   const [registeredFrom, setRegisteredFrom] = useState(defaultRegisteredFrom)
   const [registeredTo, setRegisteredTo] = useState(defaultRegisteredTo)
   const [page, setPage] = useState(1)
@@ -1431,8 +1444,23 @@ export default function Clients() {
     return map
   }, [agents])
 
-  const { data: imports = [] } = useQuery({ queryKey: ['imports'], queryFn: getImports })
-  const batches = imports as { id: string; filename: string; createdAt: string; totalRecords: number }[]
+  const { data: imports = [] } = useQuery({ queryKey: ['imports'], queryFn: () => getImports() })
+  const allBatches = imports as ImportBatch[]
+  const batches = useMemo(
+    () =>
+      operatorFilter
+        ? allBatches.filter((b) => resolveImportOperator(b.operator) === operatorFilter)
+        : allBatches,
+    [allBatches, operatorFilter]
+  )
+
+  useEffect(() => {
+    if (!batchId || !operatorFilter) return
+    const selected = allBatches.find((b) => b.id === batchId)
+    if (!selected || resolveImportOperator(selected.operator) !== operatorFilter) {
+      setBatchId('')
+    }
+  }, [allBatches, batchId, operatorFilter])
 
   const effectiveGroupBy =
     groupMode === 'agent' ||
@@ -1447,6 +1475,7 @@ export default function Clients() {
     search: search || undefined,
     agentId: agentId || undefined,
     batchId: batchId || undefined,
+    operator: operatorFilter || undefined,
     registeredFrom: registeredFrom || undefined,
     registeredTo: registeredTo || undefined,
     ...pipelineFilterToParams(pipelineFilter),
@@ -1483,6 +1512,7 @@ export default function Clients() {
         pipelineFilter,
         agentId,
         batchId,
+        operatorFilter,
         registeredFrom,
         registeredTo,
         page: effectiveGroupBy ? 1 : page,
@@ -1529,7 +1559,7 @@ export default function Clients() {
   const hasDateFilter = !!(registeredFrom || registeredTo)
   const selectedBatch = batchId ? batches.find((b) => b.id === batchId) : null
   const selectedAgent = agentId ? agents.find((a) => a.id === agentId) : null
-  const hasActiveFilters = !!(search || pipelineFilter || agentId || batchId || hasDateFilter)
+  const hasActiveFilters = !!(search || pipelineFilter || agentId || batchId || operatorFilter || hasDateFilter)
   const showAgentColumn = !agentId
   const showBatchColumn = !batchId
   const displayGroups = useMemo((): DisplayGroup[] => {
@@ -1585,7 +1615,7 @@ export default function Clients() {
         'clients',
         'agent-group',
         id,
-        { search, batchId, registeredFrom, registeredTo, effectiveLimit, pipelineFilter },
+        { search, batchId, operatorFilter, registeredFrom, registeredTo, effectiveLimit, pipelineFilter },
       ],
       queryFn: () =>
         getClients({
@@ -1606,7 +1636,7 @@ export default function Clients() {
         'clients',
         'day-group',
         dayKey,
-        { search, agentId, batchId, effectiveLimit, pipelineFilter },
+        { search, agentId, batchId, operatorFilter, effectiveLimit, pipelineFilter },
       ],
       queryFn: () =>
         getClients({
@@ -1743,6 +1773,13 @@ export default function Clients() {
       onClear: () => { setAgentId(''); setPage(1) },
     })
   }
+  if (operatorFilter) {
+    activeFilterChips.push({
+      key: 'operator',
+      label: `Operador: ${operatorLabelEs(operatorFilter)}`,
+      onClear: () => { setOperatorFilter(''); setPage(1) },
+    })
+  }
   if (batchId && selectedBatch) {
     activeFilterChips.push({
       key: 'batch',
@@ -1792,6 +1829,9 @@ export default function Clients() {
                 <span className="font-semibold text-gray-700">{selectedBatch.totalRecords}</span>
                 {' clientes en '}
                 <span className="text-gray-600 italic">{selectedBatch.filename}</span>
+                <span className="ml-1.5 align-middle inline-flex">
+                  <OperatorChip operator={resolveImportOperator(selectedBatch.operator)} />
+                </span>
                 {hasActiveFilters && ` · filtrados`}
               </>
             ) : (
@@ -1882,6 +1922,30 @@ export default function Clients() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-gray-50" role="group" aria-label="Filtrar por operador">
+              {([
+                { id: '' as const, label: 'Todos' },
+                { id: 'CLARO' as const, label: 'Claro' },
+                { id: 'MOVISTAR' as const, label: 'Movistar' },
+              ]).map((opt) => (
+                <button
+                  key={opt.id || 'all'}
+                  type="button"
+                  onClick={() => {
+                    setOperatorFilter(opt.id)
+                    setPage(1)
+                  }}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                    operatorFilter === opt.id
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
             {agents.length > 0 && (
               <select
                 className="input w-auto min-w-[150px] py-2"
@@ -1904,7 +1968,7 @@ export default function Clients() {
               </select>
             )}
 
-            {batches.length > 0 && (
+            {allBatches.length > 0 && (
               <select
                 className="input w-auto min-w-[170px] py-2"
                 value={batchId}
@@ -1913,7 +1977,9 @@ export default function Clients() {
                 <option value="">Todos los lotes</option>
                 {batches.map((b, i) => (
                   <option key={b.id} value={b.id}>
-                    {i === 0 ? '★ ' : ''}{b.filename.replace(/\.[^.]+$/, '')} · {format(new Date(b.createdAt), 'd MMM yy', { locale: es })}
+                    {i === 0 ? '★ ' : ''}
+                    {!operatorFilter ? `${operatorLabelEs(resolveImportOperator(b.operator))} · ` : ''}
+                    {b.filename.replace(/\.[^.]+$/, '')} · {format(new Date(b.createdAt), 'd MMM yy', { locale: es })}
                   </option>
                 ))}
               </select>

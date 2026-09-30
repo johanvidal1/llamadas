@@ -4,6 +4,7 @@ import {
   clearStoredElevation,
   getStoredElevation,
 } from '../lib/adminElevation'
+import type { ImportOperator } from '../lib/operator'
 
 // Ubuntu multi-tenant: dejar VITE_API_URL vacío → BASE_URL = '/api' (same-origin).
 // Si se fija (legado Render / API en otro origen), axios usa `${VITE_API_URL}/api`.
@@ -75,14 +76,20 @@ export type AuthUser = {
   avatarVersion?: number
   batchQueueMode?: BatchQueueMode
   workingBatchId?: string | null
+  workingBatchIdClaro?: string | null
+  workingBatchIdMovistar?: string | null
 }
 
 export const getMe = () =>
   api.get<AuthUser & { active?: boolean; billing?: unknown }>('/auth/me').then((r) => r.data)
 
 /** Agent (or admin-as-self) pin for lote queue. Mode is admin-only via updateUser. */
-export const patchMe = (data: { workingBatchId: string | null }) =>
-  api.patch<AuthUser>('/auth/me', data).then((r) => r.data)
+export const patchMe = (data: {
+  workingBatchId?: string | null
+  workingBatchIdClaro?: string | null
+  workingBatchIdMovistar?: string | null
+  operator?: 'CLARO' | 'MOVISTAR'
+}) => api.patch<AuthUser>('/auth/me', data).then((r) => r.data)
 
 export const uploadAvatar = (file: File) => {
   const form = new FormData()
@@ -190,6 +197,8 @@ export type AppUser = {
   callbacksToday?: number
   batchQueueMode?: BatchQueueMode
   workingBatchId?: string | null
+  workingBatchIdClaro?: string | null
+  workingBatchIdMovistar?: string | null
   _count: {
     assignments: number
     callLogs: number
@@ -207,6 +216,8 @@ export const reactivateUser = (id: string) => updateUser(id, { active: true })
 export const deleteUser = (id: string) => api.delete(`/users/${id}`).then((r) => r.data)
 
 // ─── Imports ──────────────────────────────────────────────
+export type { ImportOperator } from '../lib/operator'
+
 export type ImportBatch = {
   id: string
   filename: string
@@ -215,6 +226,7 @@ export type ImportBatch = {
   sourceRowCount?: number | null
   totalRecords: number
   blocked?: boolean
+  operator?: ImportOperator | string
   companyCount: number
   contactCount: number
   unassignedCompanyCount?: number
@@ -224,7 +236,8 @@ export type ImportBatch = {
   importedBy: { name: string }
 }
 
-export const getImports = () => api.get<ImportBatch[]>('/imports').then((r) => r.data)
+export const getImports = (operator?: ImportOperator) =>
+  api.get<ImportBatch[]>('/imports', { params: operator ? { operator } : {} }).then((r) => r.data)
 export const getImport = (id: string) => api.get(`/imports/${id}`).then((r) => r.data)
 export const patchImport = (id: string, data: { blocked: boolean }) =>
   api.patch(`/imports/${id}`, data).then((r) => r.data)
@@ -233,6 +246,7 @@ export const deleteImport = (id: string) => api.delete(`/imports/${id}`).then((r
 export type UploadImportOptions = {
   confirmDuplicate?: boolean
   displayName?: string
+  operator: ImportOperator
 }
 
 export type DuplicateFileWarning = {
@@ -249,13 +263,14 @@ export type DuplicateFileWarning = {
   }
 }
 
-export const uploadImport = (file: File, options?: UploadImportOptions) => {
+export const uploadImport = (file: File, options: UploadImportOptions) => {
   const form = new FormData()
   form.append('file', file)
-  if (options?.confirmDuplicate) {
+  form.append('operator', options.operator)
+  if (options.confirmDuplicate) {
     form.append('confirmDuplicate', 'true')
   }
-  if (options?.displayName?.trim()) {
+  if (options.displayName?.trim()) {
     form.append('displayName', options.displayName.trim())
   }
   return api.post('/imports', form).then((r) => r.data)
@@ -269,6 +284,7 @@ export type GetClientsParams = {
   status?: string
   disposition?: string
   batchId?: string
+  operator?: ImportOperator
   agentId?: string
   unassigned?: boolean
   registeredFrom?: string
@@ -328,7 +344,7 @@ export type ClientListItem = {
     telefono?: string
     assignment?: { agent?: { id?: string; name: string } }
   }[]
-  importBatch?: { filename: string; createdAt: string }
+  importBatch?: { id?: string; filename: string; createdAt: string; operator?: string }
   callbacks?: { scheduledAt: string; notes?: string }[]
   _count: { callLogs: number }
 }
@@ -392,6 +408,8 @@ export type DepuradoExportPreview = {
     firstName: string
     companyCount: number
     contactCount: number
+    claroCount: number
+    movistarCount: number
     sample: { ruc: string; razonSocial: string | null }[]
     sharedWithOtherAgentCount: number
   }[]
@@ -399,12 +417,22 @@ export type DepuradoExportPreview = {
   totalCompanies: number
   totalContacts: number
   totalSharedWithOtherAgent: number
+  totalClaro: number
+  totalMovistar: number
+  fileCount: number
+  operatorFilter: 'CLARO' | 'MOVISTAR' | null
 }
 
-export const previewDepuradoExport = (agentIds: string[]) =>
+export const previewDepuradoExport = (
+  agentIds: string[],
+  operator?: 'CLARO' | 'MOVISTAR'
+) =>
   api
     .get<DepuradoExportPreview>('/imports/depurado-export/preview', {
-      params: { agentIds: agentIds.join(',') },
+      params: {
+        agentIds: agentIds.join(','),
+        ...(operator ? { operator } : {}),
+      },
     })
     .then((r) => r.data)
 
@@ -424,11 +452,14 @@ async function readBlobErrorMessage(err: unknown): Promise<string | undefined> {
   return undefined
 }
 
-export const downloadDepuradoExport = async (agentIds: string[]) => {
+export const downloadDepuradoExport = async (
+  agentIds: string[],
+  operator?: 'CLARO' | 'MOVISTAR'
+) => {
   try {
     const response = await api.post(
       '/imports/depurado-export',
-      { agentIds },
+      { agentIds, ...(operator ? { operator } : {}) },
       { responseType: 'blob', timeout: 120000 }
     )
     const disposition = response.headers['content-disposition'] as string | undefined
@@ -472,6 +503,7 @@ export type AssignmentPreview = {
 export const previewAssignment = (data: {
   agentId: string
   batchId?: string
+  operator?: ImportOperator
   count?: number
 }) => api.post<AssignmentPreview>('/assignments/preview', data).then((r) => r.data)
 
@@ -487,6 +519,7 @@ export type AssignmentRun = {
   assignedAt: string
   importBatchId: string | null
   filename: string | null
+  operator?: ImportOperator | string
   companyCount: number
   contactCount: number
   assignedBy: { id: string; name: string }
@@ -521,10 +554,18 @@ export type AssignmentRunCompany = {
   callLogCount?: number
 }
 
-export const getAssignmentRuns = (agentId: string, batchId?: string) =>
+export const getAssignmentRuns = (
+  agentId: string,
+  batchId?: string,
+  operator?: ImportOperator
+) =>
   api
     .get<AssignmentRunsResponse>('/assignments/runs', {
-      params: { agentId, ...(batchId ? { batchId } : {}) },
+      params: {
+        agentId,
+        ...(batchId ? { batchId } : {}),
+        ...(operator ? { operator } : {}),
+      },
     })
     .then((r) => r.data)
 
@@ -588,6 +629,7 @@ export const releaseLegacyRemainder = (agentId: string, batchId: string, reason?
 export const createAssignment = (data: {
   agentId: string
   batchId?: string
+  operator?: ImportOperator
   count?: number
   clientIds?: string[]
   contactIds?: string[]
@@ -636,7 +678,14 @@ export const updateCall = (id: string, data: object) =>
 export const deleteCall = (id: string) => api.delete(`/calls/${id}`).then((r) => r.data)
 
 // ─── Callbacks ────────────────────────────────────────────
-export const getCallbacks = (params?: object) =>
+export type GetCallbacksParams = {
+  agentId?: string
+  completed?: boolean
+  date?: string
+  operator?: ImportOperator
+}
+
+export const getCallbacks = (params?: GetCallbacksParams) =>
   api.get('/callbacks', { params }).then((r) => r.data)
 export const createCallback = (data: object) =>
   api.post('/callbacks', data).then((r) => r.data)
@@ -684,11 +733,15 @@ export type DashboardStats = {
   prevActiveDayYmd?: string | null
 }
 
-export const getDashboardStats = (batchId?: string, options?: { refresh?: boolean }) =>
+export const getDashboardStats = (
+  batchId?: string,
+  options?: { refresh?: boolean; operator?: ImportOperator }
+) =>
   api
     .get<DashboardStats>('/dashboard/stats', {
       params: {
         ...(batchId ? { batchId } : {}),
+        ...(options?.operator ? { operator: options.operator } : {}),
         ...(options?.refresh ? { refresh: 'true' } : {}),
       },
       ...(options?.refresh ? { headers: { 'x-refresh': 'true' } } : {}),
@@ -754,12 +807,13 @@ export type GetReportTrendsParams = {
   to?: string
   agentId?: string
   granularity?: CallActivityGranularity
+  operator?: ImportOperator
 }
 
 export const getReportTrends = (params?: GetReportTrendsParams) =>
   api.get<ReportTrendsResponse>('/dashboard/reports/trends', { params }).then((r) => r.data)
 
-export const getReportHourly = (params: { date?: string; agentId: string }) =>
+export const getReportHourly = (params: { date?: string; agentId: string; operator?: ImportOperator }) =>
   api.get<ReportHourlyResponse>('/dashboard/reports/hourly', { params }).then((r) => r.data)
 
 export type ReportChartPeriod = 'day' | 'week' | 'month' | 'range'
@@ -814,22 +868,39 @@ export const getReportAgentCalls = (params?: {
   date?: string
   from?: string
   to?: string
+  operator?: ImportOperator
 }) =>
   api
     .get<AgentCallsChartResponse>('/dashboard/reports/agent-calls', { params })
     .then((r) => r.data)
 
-export const getReportFunnelByPeriod = (params: { from: string; to: string; agentId?: string }) =>
+export const getReportFunnelByPeriod = (params: {
+  from: string
+  to: string
+  agentId?: string
+  operator?: ImportOperator
+}) =>
   api
     .get<FunnelByPeriodResponse>('/dashboard/reports/funnel-by-period', { params })
     .then((r) => r.data)
 
-export const getReportZeroByPeriod = (params: { from: string; to: string; agentId?: string }) =>
+export const getReportZeroByPeriod = (params: {
+  from: string
+  to: string
+  agentId?: string
+  operator?: ImportOperator
+}) =>
   api
     .get<ZeroByPeriodResponse>('/dashboard/reports/zero-by-period', { params })
     .then((r) => r.data)
 
-export const getReportCallHeatmap = (params?: { from?: string; to?: string; weeks?: number; agentId?: string }) =>
+export const getReportCallHeatmap = (params?: {
+  from?: string
+  to?: string
+  weeks?: number
+  agentId?: string
+  operator?: ImportOperator
+}) =>
   api
     .get<CallHeatmapResponse>('/dashboard/reports/call-heatmap', { params })
     .then((r) => r.data)
@@ -854,23 +925,32 @@ export type ReportsBatchesResponse = Pick<ReportsResponse, 'batchProgress'>
 
 export const getReports = (
   agentId?: string,
-  options?: { refresh?: boolean; sections?: ReportsSection[] }
+  options?: { refresh?: boolean; sections?: ReportsSection[]; operator?: ImportOperator }
 ) =>
   api
     .get<Partial<ReportsResponse>>('/dashboard/reports', {
       params: {
         ...(agentId ? { agentId } : {}),
+        ...(options?.operator ? { operator: options.operator } : {}),
         ...(options?.refresh ? { refresh: 'true' } : {}),
         ...(options?.sections?.length ? { sections: options.sections.join(',') } : {}),
       },
     })
     .then((r) => r.data)
 
-export const getAgentReportRuns = (agentId: string, options?: { refresh?: boolean }) =>
+export const getAgentReportRuns = (
+  agentId: string,
+  options?: { refresh?: boolean; operator?: ImportOperator }
+) =>
   api
     .get<{ assignmentRuns: BatchAssignmentRunMetrics[] }>(
       `/dashboard/reports/agent/${agentId}/runs`,
-      { params: options?.refresh ? { refresh: 'true' } : undefined }
+      {
+        params: {
+          ...(options?.refresh ? { refresh: 'true' } : {}),
+          ...(options?.operator ? { operator: options.operator } : {}),
+        },
+      }
     )
     .then((r) => r.data)
 
@@ -901,6 +981,7 @@ export type BatchProgressRow = {
   id: string
   filename: string
   createdAt: string
+  operator?: ImportOperator | string
   batchTotalCompanies: number
   assignedCompanies: number
   assignedToAgentCompanies: number | null
@@ -1000,6 +1081,7 @@ export type BatchAssignmentRunMetrics = {
   companyCount: number
   assignedBy: { name: string }
   batchLabel?: string
+  operator?: ImportOperator | string
   callCount: number
   contactedCompanies: number
   contactedPct: number
@@ -1045,7 +1127,8 @@ export const getBatchDetail = (batchId: string, agentId?: string) =>
     })
     .then((r) => r.data)
 
-export const getMyBatches = () => api.get('/dashboard/my-batches').then((r) => r.data)
+export const getMyBatches = (operator?: ImportOperator) =>
+  api.get('/dashboard/my-batches', { params: operator ? { operator } : {} }).then((r) => r.data)
 
 // ─── Admin ─────────────────────────────────────────────────────────────────────
 export const getResetPreview = () => api.get('/admin/reset-campaign/preview').then((r) => r.data)

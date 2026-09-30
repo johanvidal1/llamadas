@@ -1,8 +1,9 @@
 /**
- * Canonical Richard Excel headers, in template order.
+ * Canonical Richard / Movistar Excel headers, in template order.
  * Keep in sync with `backend/src/lib/importWorkbook.ts`
  * (`CONTACTOS_IMPORT_COLUMNS`, `PRODUCTOS_MOVIL_IMPORT_COLUMNS`,
- * `DETALLE_PLAN_IMPORT_COLUMNS`).
+ * `DETALLE_PLAN_IMPORT_COLUMNS`, `MOVISTAR_RESUMEN_COLUMNS`,
+ * `MOVISTAR_USUARIOS_COLUMNS`, `MOVISTAR_PRODUCTOS_COLUMNS`).
  */
 
 export const CONTACTOS_IMPORT_COLUMNS = [
@@ -61,6 +62,49 @@ export const DETALLE_PLAN_IMPORT_COLUMNS = [
 export const CONTACTOS_SHEET_NAME = 'Contactos'
 export const PRODUCTOS_MOVIL_SHEET_NAME = 'ProductosMovil'
 export const DETALLE_PLAN_SHEET_NAME = 'DetallePlan'
+
+export const MOVISTAR_RESUMEN_SHEET_NAME = 'Resumen'
+export const MOVISTAR_USUARIOS_SHEET_NAME = 'Usuarios'
+export const MOVISTAR_PRODUCTOS_SHEET_NAME = 'Productos'
+
+export const MOVISTAR_RESUMEN_COLUMNS = [
+  'ruc',
+  'razon_social',
+  'estado',
+  'mensaje',
+  'n_usuarios',
+  'n_productos',
+  'Móviles activos',
+  'Internet móvil activos',
+  'Dúos activos',
+  'Monoproductos activos',
+  'Tríos activos',
+  'fecha_consulta',
+] as const
+
+export const MOVISTAR_USUARIOS_COLUMNS = [
+  'razon_social',
+  'ruc',
+  'nombres_apellidos',
+  'dni',
+  'correo',
+  'celular',
+  'rol_canal_online',
+  'fecha_alta',
+  'fecha_consulta',
+] as const
+
+export const MOVISTAR_PRODUCTOS_COLUMNS = [
+  'razon_social',
+  'ruc',
+  'codigo_producto',
+  'plan',
+  'cuenta_financiera',
+  'subtipo_producto',
+  'fecha_activacion',
+  'caja',
+  'fecha_consulta',
+] as const
 
 export type ImportSheetName =
   | typeof CONTACTOS_SHEET_NAME

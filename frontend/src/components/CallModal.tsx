@@ -135,6 +135,11 @@ export default function CallModal({
       toast.error('Selecciona la fecha del callback')
       return
     }
+    const selectedContact = contacts.find((c) => c.id === contactId) ?? contacts[0]
+    if (!selectedContact?.telefono?.trim()) {
+      toast.error('Sin teléfono de usuario: no se puede guardar el resultado de la llamada.')
+      return
+    }
 
     const payload: Record<string, unknown> = {
       clientId: client.id,

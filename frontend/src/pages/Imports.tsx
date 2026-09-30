@@ -24,10 +24,22 @@ import {
   CONTACTOS_SHEET_NAME,
   DETALLE_PLAN_IMPORT_COLUMNS,
   DETALLE_PLAN_SHEET_NAME,
+  MOVISTAR_PRODUCTOS_COLUMNS,
+  MOVISTAR_PRODUCTOS_SHEET_NAME,
+  MOVISTAR_RESUMEN_COLUMNS,
+  MOVISTAR_RESUMEN_SHEET_NAME,
+  MOVISTAR_USUARIOS_COLUMNS,
+  MOVISTAR_USUARIOS_SHEET_NAME,
   PRODUCTOS_MOVIL_IMPORT_COLUMNS,
   PRODUCTOS_MOVIL_SHEET_NAME,
   type ImportSheetName,
 } from '../lib/importWorkbookColumns'
+import {
+  filenameOperatorError,
+  operatorLabelEs,
+  type ImportOperator,
+} from '../lib/operator'
+import OperatorChip from '../components/OperatorChip'
 
 const IMPORT_SHEET_TABS: {
   name: ImportSheetName
@@ -150,16 +162,43 @@ function duplicateWarningStyle(severity: DuplicateFileWarning['severity']) {
   return { iconBg: 'bg-amber-100', iconColor: 'text-amber-600' }
 }
 
-function ImportSheetHeadersHelp() {
-  const [activeSheet, setActiveSheet] = useState<ImportSheetName>(CONTACTOS_SHEET_NAME)
-  const active = IMPORT_SHEET_TABS.find((sheet) => sheet.name === activeSheet) ?? IMPORT_SHEET_TABS[0]
+const MOVISTAR_SHEET_TABS: {
+  name: string
+  columns: readonly string[]
+  required: boolean
+}[] = [
+  { name: MOVISTAR_RESUMEN_SHEET_NAME, columns: MOVISTAR_RESUMEN_COLUMNS, required: true },
+  { name: MOVISTAR_USUARIOS_SHEET_NAME, columns: MOVISTAR_USUARIOS_COLUMNS, required: false },
+  { name: MOVISTAR_PRODUCTOS_SHEET_NAME, columns: MOVISTAR_PRODUCTOS_COLUMNS, required: false },
+]
+
+function ImportSheetHeadersHelp({ operator }: { operator: ImportOperator }) {
+  const tabs = operator === 'MOVISTAR' ? MOVISTAR_SHEET_TABS : IMPORT_SHEET_TABS
+  const [activeSheet, setActiveSheet] = useState<string>(tabs[0].name)
+  const active = tabs.find((sheet) => sheet.name === activeSheet) ?? tabs[0]
+
+  useEffect(() => {
+    setActiveSheet(tabs[0].name)
+  }, [operator])
 
   return (
     <div className="card p-5">
       <p className="text-sm text-gray-600 mb-3">
-        El Excel necesita las hojas <strong>Contactos</strong> (obligatoria),{' '}
-        <strong>ProductosMovil</strong> y <strong>DetallePlan</strong> (opcionales). CSV: los
-        mismos encabezados en la fila 1, sin hojas.
+        {operator === 'MOVISTAR' ? (
+          <>
+            Plantilla <strong>Movistar</strong>: hojas <strong>Resumen</strong> (obligatoria),{' '}
+            <strong>Usuarios</strong> y <strong>Productos</strong>. Los RUC con estado{' '}
+            <strong>VACIO</strong> no se importan. El teléfono del contacto sale de{' '}
+            <strong>celular</strong>; el MSISDN de 9 dígitos en <strong>codigo_producto</strong> va
+            a líneas móviles.
+          </>
+        ) : (
+          <>
+            Plantilla <strong>Claro</strong>: hojas <strong>Contactos</strong> (obligatoria),{' '}
+            <strong>ProductosMovil</strong> y <strong>DetallePlan</strong> (opcionales). CSV: los
+            mismos encabezados en la fila 1, sin hojas.
+          </>
+        )}
       </p>
 
       <div className="rounded-md border border-gray-300 overflow-hidden bg-[#f3f3f3]">
@@ -168,7 +207,7 @@ function ImportSheetHeadersHelp() {
           role="tablist"
           aria-label="Hojas del Excel"
         >
-          {IMPORT_SHEET_TABS.map((sheet) => {
+          {tabs.map((sheet) => {
             const selected = sheet.name === active.name
             return (
               <button
@@ -228,10 +267,19 @@ function ImportSheetHeadersHelp() {
   )
 }
 
+function recoveredOperatorsLabel(preview: DepuradoExportPreview): string {
+  const parts: string[] = []
+  if (preview.agents.some((a) => a.claroCount > 0)) parts.push('Claro')
+  if (preview.agents.some((a) => a.movistarCount > 0)) parts.push('Movistar')
+  if (parts.length === 2) return 'Claro y Movistar'
+  return parts[0] ?? ''
+}
+
 function DepuradoExportPanel() {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set())
+  const [operatorFilter, setOperatorFilter] = useState<ImportOperator | ''>('')
   const [preview, setPreview] = useState<DepuradoExportPreview | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [loadingPreview, setLoadingPreview] = useState(false)
@@ -251,7 +299,14 @@ function DepuradoExportPanel() {
     })
   }
 
+  const changeOperatorFilter = (next: ImportOperator | '') => {
+    setOperatorFilter(next)
+    setPreview(null)
+    setConfirmOpen(false)
+  }
+
   const selectedIds = [...selectedAgentIds]
+  const exportOperator = operatorFilter || undefined
 
   const handlePreview = async () => {
     if (selectedIds.length === 0) {
@@ -260,10 +315,15 @@ function DepuradoExportPanel() {
     }
     setLoadingPreview(true)
     try {
-      const data = await previewDepuradoExport(selectedIds)
+      const data = await previewDepuradoExport(selectedIds, exportOperator)
       setPreview(data)
       if (data.agents.length === 0) {
-        toast('Ningún agente seleccionado tiene empresas No contesta — depurado', { icon: 'ℹ️' })
+        toast(
+          exportOperator
+            ? `Ningún agente seleccionado tiene depurados de ${operatorLabelEs(exportOperator)}`
+            : 'Ningún agente seleccionado tiene empresas No contesta — depurado',
+          { icon: 'ℹ️' }
+        )
         return
       }
       setConfirmOpen(true)
@@ -279,7 +339,10 @@ function DepuradoExportPanel() {
     if (!preview || preview.agents.length === 0) return
     setExporting(true)
     try {
-      const { saved, filename } = await downloadDepuradoExport(preview.agents.map((a) => a.agentId))
+      const { saved, filename } = await downloadDepuradoExport(
+        preview.agents.map((a) => a.agentId),
+        exportOperator
+      )
       if (saved) {
         toast.success(`Exportado: ${filename}`)
         if (preview.skippedAgents.length > 0) {
@@ -303,6 +366,8 @@ function DepuradoExportPanel() {
     }
   }
 
+  const recoveredOps = preview ? recoveredOperatorsLabel(preview) : ''
+
   return (
     <>
       <div className="card overflow-hidden">
@@ -318,7 +383,7 @@ function DepuradoExportPanel() {
           <div className="min-w-0 flex-1">
             <h2 className="font-medium text-gray-800 text-sm">Exportar No contesta — depurado</h2>
             <p className="text-xs text-gray-500 truncate">
-              Recupera empresas de la cola depurada para reimportarlas como lote nuevo
+              Recupera empresas de la cola depurada, un Excel por agente y operador
             </p>
           </div>
           {open ? (
@@ -331,8 +396,33 @@ function DepuradoExportPanel() {
         {open && (
           <div className="px-4 pb-4 pt-1 border-t border-gray-100">
             <p className="text-xs text-gray-500 mb-3">
-              Un Excel por agente (formato de importación). Si eliges varios, se descarga un ZIP.
+              Claro y Movistar nunca se mezclan: cada archivo usa su plantilla de importación.
+              Si hay más de un archivo, se descarga un ZIP. El filtro deja al otro operador en cola.
             </p>
+            <div
+              className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-gray-50 mb-3 w-fit"
+              role="group"
+              aria-label="Filtrar por operador"
+            >
+              {([
+                { id: '' as const, label: 'Todos' },
+                { id: 'CLARO' as const, label: 'Claro' },
+                { id: 'MOVISTAR' as const, label: 'Movistar' },
+              ]).map((opt) => (
+                <button
+                  key={opt.id || 'all'}
+                  type="button"
+                  onClick={() => changeOperatorFilter(opt.id)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    operatorFilter === opt.id
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
             {agents.length === 0 ? (
               <p className="text-sm text-gray-400">No hay agentes activos.</p>
             ) : (
@@ -373,7 +463,9 @@ function DepuradoExportPanel() {
               <p className="text-xs text-gray-400">
                 {selectedIds.length === 0
                   ? 'Selecciona agentes para continuar'
-                  : `${selectedIds.length} agente${selectedIds.length !== 1 ? 's' : ''} seleccionado${selectedIds.length !== 1 ? 's' : ''}`}
+                  : `${selectedIds.length} agente${selectedIds.length !== 1 ? 's' : ''} seleccionado${selectedIds.length !== 1 ? 's' : ''}${
+                      operatorFilter ? ` · ${operatorLabelEs(operatorFilter)}` : ''
+                    }`}
               </p>
             </div>
           </div>
@@ -392,21 +484,30 @@ function DepuradoExportPanel() {
                 <p className="text-sm text-gray-500">
                   {preview.totalCompanies} empresa{preview.totalCompanies !== 1 ? 's' : ''} ·{' '}
                   {preview.totalContacts} contacto{preview.totalContacts !== 1 ? 's' : ''}
+                  {(preview.fileCount ?? 1) > 1
+                    ? ` · ZIP (${preview.fileCount} archivos)`
+                    : ' · 1 Excel'}
                 </p>
               </div>
             </div>
 
             <div className="space-y-3 mb-4">
               {preview.agents.map((agent) => (
-                <div key={agent.agentId} className="bg-gray-50 rounded-lg px-3 py-2 text-sm">
+                <div key={agent.agentId} className="bg-gray-50 rounded-xl px-3 py-2.5 text-sm">
                   <p className="font-medium text-gray-900">{agent.agentName}</p>
-                  <p className="text-gray-600 text-xs mt-0.5">
-                    {agent.companyCount} empresa{agent.companyCount !== 1 ? 's' : ''} ·{' '}
-                    {agent.contactCount} contacto{agent.contactCount !== 1 ? 's' : ''}
-                    {' · '}archivo {agent.firstName}.xlsx
-                  </p>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5">
+                    <span className="inline-flex items-center gap-1.5">
+                      <OperatorChip operator="CLARO" />
+                      <span className="text-xs text-gray-600 tabular-nums">{agent.claroCount}</span>
+                    </span>
+                    <span className="text-gray-300 text-xs">·</span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <OperatorChip operator="MOVISTAR" />
+                      <span className="text-xs text-gray-600 tabular-nums">{agent.movistarCount}</span>
+                    </span>
+                  </div>
                   {agent.sample.length > 0 && (
-                    <p className="text-xs text-gray-500 mt-1 truncate">
+                    <p className="text-xs text-gray-500 mt-1.5 truncate">
                       Muestra: {agent.sample.map((s) => s.ruc).join(', ')}
                       {agent.companyCount > agent.sample.length ? '…' : ''}
                     </p>
@@ -426,12 +527,15 @@ function DepuradoExportPanel() {
             </div>
 
             <p className="text-sm text-gray-700 mb-2">
-              Al confirmar, estas empresas saldrán de la cola <strong>No contesta — depurado</strong> de
-              ese agente y no se volverán a exportar.
+              Al confirmar, estas empresas{recoveredOps ? ` de ${recoveredOps}` : ''} saldrán de la cola{' '}
+              <strong>No contesta — depurado</strong> de ese agente y no se volverán a exportar.
+              {operatorFilter
+                ? ` El resto (${operatorFilter === 'CLARO' ? 'Movistar' : 'Claro'}) permanece en cola.`
+                : ''}
             </p>
             <p className="text-xs text-gray-500 mb-6">
               No quedarán disponibles para asignar en el lote original. Las llamadas y métricas del
-              agente se conservan. El Excel no incluye columnas de campaña: al reimportarlo serán
+              agente se conservan. Cada Excel usa la plantilla de su operador; al reimportarlo serán
               empresas pendientes nuevas.
             </p>
 
@@ -506,7 +610,13 @@ export default function Imports() {
   const [importSuccess, setImportSuccess] = useState<{
     imported: number
     label: string
+    withoutUsers?: number
+    withoutPhone?: number
+    skippedVacioCount?: number
+    operator?: string
   } | null>(null)
+  const [importOperator, setImportOperator] = useState<ImportOperator | null>(null)
+  const [historyOperator, setHistoryOperator] = useState<'ALL' | ImportOperator>('ALL')
   const fileRef = useRef<HTMLInputElement>(null)
   const qc = useQueryClient()
   const { user } = useAuth()
@@ -514,10 +624,17 @@ export default function Imports() {
 
   const { data: batches = [], isLoading } = useQuery({
     queryKey: ['imports'],
-    queryFn: getImports,
+    queryFn: () => getImports(),
   })
+  const visibleBatches = useMemo(
+    () =>
+      historyOperator === 'ALL'
+        ? batches
+        : batches.filter((b) => (b.operator ?? 'CLARO') === historyOperator),
+    [batches, historyOperator]
+  )
 
-  const quincenaGroups = useMemo(() => groupBatchesByQuincena(batches), [batches])
+  const quincenaGroups = useMemo(() => groupBatchesByQuincena(visibleBatches), [visibleBatches])
 
   useEffect(() => {
     if (quincenaCollapseSeeded || quincenaGroups.length === 0) return
@@ -580,19 +697,31 @@ export default function Imports() {
       file,
       confirmDuplicate,
       displayName,
+      operator,
     }: {
       file: File
       confirmDuplicate?: boolean
       displayName?: string
-    }) => uploadImport(file, { confirmDuplicate, displayName }),
+      operator: ImportOperator
+    }) => uploadImport(file, { confirmDuplicate, displayName, operator }),
     onSuccess: (data) => {
       setDuplicateWarning(null)
       setDuplicateDisplayName('')
       const label = data.displayName?.trim() || data.filename
-      setImportSuccess({ imported: data.imported, label })
+      setImportSuccess({
+        imported: data.imported,
+        label,
+        withoutUsers: data.withoutUsers,
+        withoutPhone: data.withoutPhone,
+        skippedVacioCount: data.skippedVacioCount,
+        operator: data.operator,
+      })
       toast.success(`Importados ${data.imported} empresas de «${label}»`)
+      if (data.withoutUsers && data.withoutUsers > 0) {
+        toast(`⚠️ ${data.withoutUsers} empresa(s) sin usuario`, { icon: '⚠️' })
+      }
       if (data.withoutPhone && data.withoutPhone > 0) {
-        toast(`⚠️ ${data.withoutPhone} registro(s) sin teléfono`, { icon: '⚠️' })
+        toast(`⚠️ ${data.withoutPhone} empresa(s) no llamables (sin teléfono)`, { icon: '⚠️' })
       }
       if (data.withoutContacts && data.withoutContacts > 0) {
         toast(`⚠️ ${data.withoutContacts} registro(s) sin contactos`, { icon: '⚠️' })
@@ -631,17 +760,31 @@ export default function Imports() {
       toast.error('Solo se permiten archivos Excel (.xlsx, .xls) o CSV (.csv)')
       return
     }
+    if (!importOperator) {
+      toast.error('Elige operador (Claro o Movistar) antes de importar.')
+      return
+    }
+    const tokenError = filenameOperatorError(file.name, importOperator)
+    if (tokenError) {
+      toast.error(tokenError, { duration: 6000 })
+      return
+    }
+    if (file.name.match(/\.csv$/i) && importOperator === 'MOVISTAR') {
+      toast.error('La plantilla Movistar es Excel (Resumen / Usuarios / Productos). El CSV solo se usa para Claro.')
+      return
+    }
     setDuplicateDisplayName('')
     setImportSuccess(null)
-    mutation.mutate({ file })
+    mutation.mutate({ file, operator: importOperator })
   }
 
   const handleConfirmDuplicate = () => {
-    if (!duplicateWarning) return
+    if (!duplicateWarning || !importOperator) return
     mutation.mutate({
       file: duplicateWarning.file,
       confirmDuplicate: true,
       displayName: duplicateDisplayName || undefined,
+      operator: importOperator,
     })
   }
 
@@ -683,16 +826,51 @@ export default function Imports() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Importar base de datos</h1>
         <p className="text-gray-500 text-sm mt-1">
-          Sube archivos Excel o CSV con los clientes potenciales para migración
+          Campaña Migración de Operador: elige Claro o Movistar y sube la plantilla correspondiente
         </p>
+      </div>
+
+      <div className="card p-4">
+        <p className="text-sm font-medium text-gray-800 mb-2">Operador del archivo</p>
+        <p className="text-xs text-gray-500 mb-3">
+          Obligatorio. El nombre del archivo debe incluir <span className="font-mono">claro</span> o{' '}
+          <span className="font-mono">movistar</span> como segmento (p. ej. PLANTILLA_movistar_20260928.xlsx).
+        </p>
+        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Operador">
+          {(['CLARO', 'MOVISTAR'] as const).map((op) => {
+            const selected = importOperator === op
+            return (
+              <button
+                key={op}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() => setImportOperator(op)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                  selected
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
+                }`}
+              >
+                {operatorLabelEs(op)}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       {/* Upload zone */}
       <div
-        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+        onDragOver={(e) => { e.preventDefault(); if (importOperator) setDragging(true) }}
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}
-        onClick={() => fileRef.current?.click()}
+        onClick={() => {
+          if (!importOperator) {
+            toast.error('Elige operador (Claro o Movistar) antes de importar.')
+            return
+          }
+          fileRef.current?.click()
+        }}
         className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors ${
           dragging
             ? 'border-blue-500 bg-blue-50'
@@ -725,7 +903,11 @@ export default function Imports() {
               Arrastra tu archivo aquí, o <span className="text-blue-600">haz clic para seleccionar</span>
             </p>
             <p className="text-sm text-gray-400 mt-1">
-              Excel (.xlsx, .xls) con hoja &quot;Contactos&quot; (opcional: &quot;ProductosMovil&quot;, &quot;DetallePlan&quot;) · CSV (.csv) · Máximo 20 MB
+              {importOperator === 'MOVISTAR'
+                ? 'Excel Movistar (.xlsx) con hojas Resumen / Usuarios / Productos · Máximo 20 MB'
+                : importOperator === 'CLARO'
+                  ? 'Excel Claro (.xlsx) con hoja Contactos (opcional ProductosMovil, DetallePlan) · CSV · Máximo 20 MB'
+                  : 'Elige Claro o Movistar arriba para habilitar la carga'}
             </p>
           </>
         )}
@@ -742,6 +924,13 @@ export default function Imports() {
               {importSuccess.imported} empresa{importSuccess.imported !== 1 ? 's' : ''} en «{importSuccess.label}».
               El siguiente paso es asignarlas a los agentes.
             </p>
+            {(importSuccess.withoutUsers || importSuccess.withoutPhone) ? (
+              <p className="text-sm text-amber-800 mt-1">
+                {importSuccess.withoutUsers ? `${importSuccess.withoutUsers} sin usuario` : null}
+                {importSuccess.withoutUsers && importSuccess.withoutPhone ? ' · ' : null}
+                {importSuccess.withoutPhone ? `${importSuccess.withoutPhone} no llamables (sin teléfono)` : null}
+              </p>
+            ) : null}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <Link
@@ -761,23 +950,49 @@ export default function Imports() {
         </div>
       )}
 
-      <ImportSheetHeadersHelp />
+      <ImportSheetHeadersHelp operator={importOperator ?? 'CLARO'} />
 
       <DepuradoExportPanel />
 
       {/* History */}
       <div>
-        <h2 className="font-semibold text-gray-900 mb-4">Historial de importaciones</h2>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+          <h2 className="font-semibold text-gray-900">Historial de importaciones</h2>
+          <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-gray-50" role="group" aria-label="Filtrar por operador">
+            {([
+              { id: 'ALL' as const, label: 'Todos' },
+              { id: 'CLARO' as const, label: 'Claro' },
+              { id: 'MOVISTAR' as const, label: 'Movistar' },
+            ]).map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setHistoryOperator(opt.id)}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                  historyOperator === opt.id
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
         {isLoading ? (
           <div className="space-y-3">
             {[...Array(3)].map((_, i) => (
               <div key={i} className="h-20 bg-gray-100 rounded-xl animate-pulse" />
             ))}
           </div>
-        ) : batches.length === 0 ? (
+        ) : visibleBatches.length === 0 ? (
           <div className="card p-10 text-center text-gray-400">
             <FileSpreadsheet size={40} className="mx-auto mb-2" />
-            <p>No hay importaciones todavía</p>
+            <p>
+              {batches.length === 0
+                ? 'No hay importaciones todavía'
+                : `No hay lotes ${historyOperator === 'ALL' ? '' : operatorLabelEs(historyOperator)}`}
+            </p>
           </div>
         ) : (
           <div className="space-y-6">
@@ -828,6 +1043,15 @@ export default function Imports() {
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <p className="font-medium text-gray-900 truncate">{batchLabel(batch)}</p>
+                                  <span
+                                    className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${
+                                      (batch.operator ?? 'CLARO') === 'MOVISTAR'
+                                        ? 'bg-sky-100 text-sky-800'
+                                        : 'bg-red-50 text-red-700'
+                                    }`}
+                                  >
+                                    {operatorLabelEs((batch.operator === 'MOVISTAR' ? 'MOVISTAR' : 'CLARO'))}
+                                  </span>
                                   {batch.blocked && (
                                     <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-red-100 text-red-700">
                                       Bloqueado

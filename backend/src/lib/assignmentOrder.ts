@@ -1,4 +1,5 @@
 import { prisma } from './prisma'
+import type { ImportOperator } from './operator'
 
 export class BatchBlockedError extends Error {
   constructor() {
@@ -39,22 +40,27 @@ export type OrderedCompany = {
 /** Recovered companies stay out of leftover / assignable pools. */
 export const notRecoveredWhere = { recoveredAt: null } as const
 
-function companyScopeWhere(batchId?: string): Record<string, unknown> {
-  return batchId
-    ? { importBatchId: batchId, ...notRecoveredWhere }
-    : { importBatch: { blocked: false }, ...notRecoveredWhere }
+function companyScopeWhere(batchId?: string, operator?: ImportOperator | null): Record<string, unknown> {
+  if (batchId) {
+    return { importBatchId: batchId, ...notRecoveredWhere }
+  }
+  return {
+    importBatch: { blocked: false, ...(operator ? { operator } : {}) },
+    ...notRecoveredWhere,
+  }
 }
 
 /** Companies with at least one contact and zero assignments on any contact. */
 export async function getUnassignedCompaniesOrdered(
   batchId?: string,
-  limit?: number
+  limit?: number,
+  operator?: ImportOperator | null
 ): Promise<OrderedCompany[]> {
   if (batchId) {
     await assertBatchNotBlocked(batchId)
   }
 
-  const scope = companyScopeWhere(batchId)
+  const scope = companyScopeWhere(batchId, batchId ? undefined : operator)
 
   const assignedCompanyIds = (
     await prisma.contact.findMany({
@@ -94,13 +100,14 @@ export async function getUnassignedCompaniesOrdered(
 }
 
 export async function countUnassignedCompanies(
-  batchId?: string
+  batchId?: string,
+  operator?: ImportOperator | null
 ): Promise<{ companies: number; contactCount: number }> {
   if (batchId) {
     await assertBatchNotBlocked(batchId)
   }
 
-  const scope = companyScopeWhere(batchId)
+  const scope = companyScopeWhere(batchId, batchId ? undefined : operator)
 
   const assignedCompanyIds = (
     await prisma.contact.findMany({

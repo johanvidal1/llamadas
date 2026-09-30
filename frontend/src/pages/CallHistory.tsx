@@ -162,7 +162,7 @@ export default function CallHistory() {
 
   const { data: myBatches } = useQuery({
     queryKey: ['my-batches'],
-    queryFn: getMyBatches,
+    queryFn: () => getMyBatches(),
     enabled: !isAdmin,
   })
 

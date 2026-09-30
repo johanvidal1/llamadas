@@ -40,6 +40,9 @@ import {
   parseReportsSearchParams,
   syncReportsSearchParams,
 } from '../config/reportsNavigation'
+import OperatorChip from '../components/OperatorChip'
+import OperatorFilterGroup, { type OperatorFilterValue } from '../components/OperatorFilterGroup'
+import { operatorFilterFromQuery, resolveImportOperator } from '../lib/operator'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,6 +69,7 @@ interface BatchAssignmentRun {
   companyCount: number
   assignedBy: { name: string }
   batchLabel?: string
+  operator?: string
   callCount: number
   contactedCompanies: number
   contactedPct: number
@@ -77,6 +81,7 @@ interface BatchAssignmentRun {
 type AgentAssignmentRun = BatchAssignmentRun
 interface BatchProgress {
   id: string; filename: string; createdAt: string
+  operator?: string
   batchTotalCompanies: number
   assignedCompanies: number
   assignedToAgentCompanies: number | null
@@ -123,7 +128,8 @@ function AgentRunSubRowLabel({ run }: { run: AgentAssignmentRun }) {
 
   if (run.isLegacy) {
     return (
-      <span className="inline-flex items-center gap-0 min-w-0 flex-wrap">
+      <span className="inline-flex items-center gap-1.5 min-w-0 flex-wrap">
+        <OperatorChip operator={resolveImportOperator(run.operator)} />
         <span className="truncate max-w-[160px]" title={label}>{label}</span>
         <span className="text-gray-400 shrink-0"> · </span>
         <span>Asignación anterior (sin historial)</span>
@@ -138,7 +144,8 @@ function AgentRunSubRowLabel({ run }: { run: AgentAssignmentRun }) {
   }
 
   return (
-    <span className="inline-flex items-center gap-0 min-w-0 flex-wrap">
+    <span className="inline-flex items-center gap-1.5 min-w-0 flex-wrap">
+      <OperatorChip operator={resolveImportOperator(run.operator)} />
       <span className="truncate max-w-[160px]" title={label}>{label}</span>
       {dateStr && (
         <>
@@ -292,7 +299,12 @@ function StatCard({ label, value, sub, color = 'text-gray-900', icon: Icon, stat
 
 type MetricKey = 'contactRate' | 'avgCallsPerClient' | 'overdueCallbacks'
 
-interface DrillDown { agentId: string; agentName: string; metric: MetricKey }
+interface DrillDown {
+  agentId: string
+  agentName: string
+  metric: MetricKey
+  operator?: OperatorFilterValue
+}
 
 const METRIC_LABELS: Record<MetricKey, string> = {
   contactRate: 'Tasa de contacto (empresas)',
@@ -308,13 +320,23 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
   const isCallbackMetric = drill.metric === 'overdueCallbacks'
 
   const { data: clientsData, isLoading: loadingClients } = useQuery({
-    queryKey: ['drill-clients', drill.agentId],
-    queryFn: () => getClients({ agentId: drill.agentId, limit: 500 }),
+    queryKey: ['drill-clients', drill.agentId, drill.operator || 'all'],
+    queryFn: () =>
+      getClients({
+        agentId: drill.agentId,
+        limit: 500,
+        operator: drill.operator || undefined,
+      }),
     enabled: !isCallbackMetric,
   })
   const { data: callbacksData, isLoading: loadingCallbacks } = useQuery({
-    queryKey: ['drill-callbacks', drill.agentId],
-    queryFn: () => getCallbacks({ agentId: drill.agentId, completed: false }),
+    queryKey: ['drill-callbacks', drill.agentId, drill.operator || 'all'],
+    queryFn: () =>
+      getCallbacks({
+        agentId: drill.agentId,
+        completed: false,
+        operator: drill.operator || undefined,
+      }),
     enabled: isCallbackMetric,
   })
 
@@ -460,10 +482,18 @@ function DrillDownDrawer({ drill, onClose }: { drill: DrillDown; onClose: () => 
   )
 }
 
-function AgentExpandedRuns({ agentId, expanded }: { agentId: string; expanded: boolean }) {
+function AgentExpandedRuns({
+  agentId,
+  expanded,
+  operator,
+}: {
+  agentId: string
+  expanded: boolean
+  operator?: OperatorFilterValue
+}) {
   const { data, isLoading } = useQuery({
-    queryKey: ['agent-report-runs', agentId],
-    queryFn: () => getAgentReportRuns(agentId),
+    queryKey: ['agent-report-runs', agentId, operator || 'all'],
+    queryFn: () => getAgentReportRuns(agentId, { operator: operator || undefined }),
     enabled: expanded,
     staleTime: 300_000,
   })
@@ -1078,6 +1108,9 @@ export default function Reports() {
     const initial = parseReportsSearchParams(searchParams)
     return initial.filterAgentId
   })
+  const [operatorFilter, setOperatorFilter] = useState<OperatorFilterValue>(() =>
+    operatorFilterFromQuery(searchParams.get('operator'))
+  )
   const [drillDown, setDrillDown] = useState<DrillDown | null>(null)
   const [showStatusDetail, setShowStatusDetail] = useState(false)
   const [expandedBatches, setExpandedBatches] = useState<Record<string, boolean>>({})
@@ -1153,6 +1186,7 @@ export default function Reports() {
       registeredFrom: chartRange.from,
       registeredTo: chartRange.to,
       from: 'reports',
+      ...(operatorFilter ? { operator: operatorFilter } : {}),
     }))
   }
 
@@ -1162,6 +1196,7 @@ export default function Reports() {
       registeredFrom: chartRange.from,
       registeredTo: chartRange.to,
       from: 'reports',
+      ...(operatorFilter ? { operator: operatorFilter } : {}),
     }))
   }
 
@@ -1173,7 +1208,7 @@ export default function Reports() {
   }
 
   const drill = (agentId: string, agentName: string, metric: MetricKey) =>
-    setDrillDown({ agentId, agentName, metric })
+    setDrillDown({ agentId, agentName, metric, operator: operatorFilter || undefined })
 
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
@@ -1183,7 +1218,8 @@ export default function Reports() {
 
   const agents = users.filter((u) => u.role === 'AGENT' && u.active)
 
-  const filterKey = filterAgentId || 'all'
+  const filterKey = `${filterAgentId || 'all'}:${operatorFilter || 'all'}`
+  const operatorParam = operatorFilter || undefined
 
   const {
     data: summaryData,
@@ -1191,7 +1227,8 @@ export default function Reports() {
     isFetching: summaryFetching,
   } = useQuery({
     queryKey: ['reports-summary', filterKey],
-    queryFn: () => getReports(filterAgentId || undefined, { sections: ['summary'] }),
+    queryFn: () =>
+      getReports(filterAgentId || undefined, { sections: ['summary'], operator: operatorParam }),
     staleTime: 300_000,
     placeholderData: keepPreviousData,
   })
@@ -1202,7 +1239,8 @@ export default function Reports() {
     isFetching: agentsFetching,
   } = useQuery({
     queryKey: ['reports-agents', filterKey],
-    queryFn: () => getReports(filterAgentId || undefined, { sections: ['agents'] }),
+    queryFn: () =>
+      getReports(filterAgentId || undefined, { sections: ['agents'], operator: operatorParam }),
     staleTime: 300_000,
     placeholderData: keepPreviousData,
   })
@@ -1213,7 +1251,8 @@ export default function Reports() {
     isFetching: batchesFetching,
   } = useQuery({
     queryKey: ['reports-batches', filterKey],
-    queryFn: () => getReports(filterAgentId || undefined, { sections: ['batches'] }),
+    queryFn: () =>
+      getReports(filterAgentId || undefined, { sections: ['batches'], operator: operatorParam }),
     staleTime: 300_000,
     placeholderData: keepPreviousData,
   })
@@ -1223,13 +1262,14 @@ export default function Reports() {
     isLoading: agentCallsLoading,
     isFetching: agentCallsFetching,
   } = useQuery({
-    queryKey: ['reports-agent-calls', chartRange.period, chartRange.date, chartRange.from, chartRange.to],
+    queryKey: ['reports-agent-calls', filterKey, chartRange.period, chartRange.date, chartRange.from, chartRange.to],
     queryFn: () =>
       getReportAgentCalls({
         period: chartRange.period,
         date: chartRange.period === 'range' ? undefined : chartRange.date,
         from: chartRange.period === 'range' ? chartRange.from : undefined,
         to: chartRange.period === 'range' ? chartRange.to : undefined,
+        operator: operatorParam,
       }),
     staleTime: 120_000,
     placeholderData: keepPreviousData,
@@ -1246,6 +1286,7 @@ export default function Reports() {
         from: chartRange.from,
         to: chartRange.to,
         agentId: filterAgentId || undefined,
+        operator: operatorParam,
       }),
     staleTime: 120_000,
     placeholderData: keepPreviousData,
@@ -1262,6 +1303,7 @@ export default function Reports() {
         from: chartRange.from,
         to: chartRange.to,
         agentId: filterAgentId || undefined,
+        operator: operatorParam,
       }),
     staleTime: 120_000,
     placeholderData: keepPreviousData,
@@ -1278,6 +1320,7 @@ export default function Reports() {
         from: chartRange.from,
         to: chartRange.to,
         agentId: filterAgentId || undefined,
+        operator: operatorParam,
       }),
     staleTime: 120_000,
     placeholderData: keepPreviousData,
@@ -1290,15 +1333,30 @@ export default function Reports() {
     const refreshOpts = { refresh: true as const }
     void queryClient.fetchQuery({
       queryKey: ['reports-summary', filterKey],
-      queryFn: () => getReports(filterAgentId || undefined, { ...refreshOpts, sections: ['summary'] }),
+      queryFn: () =>
+        getReports(filterAgentId || undefined, {
+          ...refreshOpts,
+          sections: ['summary'],
+          operator: operatorParam,
+        }),
     })
     void queryClient.fetchQuery({
       queryKey: ['reports-agents', filterKey],
-      queryFn: () => getReports(filterAgentId || undefined, { ...refreshOpts, sections: ['agents'] }),
+      queryFn: () =>
+        getReports(filterAgentId || undefined, {
+          ...refreshOpts,
+          sections: ['agents'],
+          operator: operatorParam,
+        }),
     })
     void queryClient.fetchQuery({
       queryKey: ['reports-batches', filterKey],
-      queryFn: () => getReports(filterAgentId || undefined, { ...refreshOpts, sections: ['batches'] }),
+      queryFn: () =>
+        getReports(filterAgentId || undefined, {
+          ...refreshOpts,
+          sections: ['batches'],
+          operator: operatorParam,
+        }),
     })
     void queryClient.invalidateQueries({ queryKey: ['agent-report-runs'] })
     void queryClient.invalidateQueries({ queryKey: ['reports-agent-calls'] })
@@ -1376,6 +1434,7 @@ export default function Reports() {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          <OperatorFilterGroup value={operatorFilter} onChange={setOperatorFilter} />
           <Filter size={15} className="text-gray-400" />
           <select
             className="input text-sm py-1.5 min-w-[200px]"
@@ -1887,7 +1946,11 @@ export default function Reports() {
                       </td>
                     </tr>
                     {isExpanded && (
-                      <AgentExpandedRuns agentId={a.id} expanded={isExpanded} />
+                      <AgentExpandedRuns
+                        agentId={a.id}
+                        expanded={isExpanded}
+                        operator={operatorFilter}
+                      />
                     )}
                   </Fragment>
                 )
@@ -1969,8 +2032,11 @@ export default function Reports() {
                           />
                         )}
                       </td>
-                      <td className="px-4 py-3 font-medium text-gray-900 max-w-[200px] truncate" title={b.filename}>
-                        {b.filename}
+                      <td className="px-4 py-3 font-medium text-gray-900 max-w-[240px]">
+                        <span className="inline-flex items-center gap-1.5 min-w-0">
+                          <OperatorChip operator={resolveImportOperator(b.operator)} />
+                          <span className="truncate" title={b.filename}>{b.filename}</span>
+                        </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-500">
                         {format(new Date(b.createdAt), 'd MMM yyyy', { locale: es })}

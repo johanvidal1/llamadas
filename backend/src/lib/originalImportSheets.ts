@@ -7,12 +7,26 @@ import {
   CONTACTOS_SHEET_NAME,
   DETALLE_PLAN_IMPORT_COLUMNS,
   DETALLE_PLAN_SHEET_NAME,
+  MOVISTAR_PRODUCTOS_COLUMNS,
+  MOVISTAR_PRODUCTOS_SHEET_NAME,
+  MOVISTAR_RESUMEN_COLUMNS,
+  MOVISTAR_RESUMEN_DUOS_ACTIVOS_COLUMN,
+  MOVISTAR_RESUMEN_INTERNET_MOVIL_ACTIVOS_COLUMN,
+  MOVISTAR_RESUMEN_MONOPRODUCTOS_ACTIVOS_COLUMN,
+  MOVISTAR_RESUMEN_MOVILES_ACTIVOS_COLUMN,
+  MOVISTAR_RESUMEN_SHEET_NAME,
+  MOVISTAR_RESUMEN_TRIOS_ACTIVOS_COLUMN,
+  MOVISTAR_USUARIOS_COLUMNS,
+  MOVISTAR_USUARIOS_SHEET_NAME,
   PRODUCTOS_MOVIL_IMPORT_COLUMNS,
   PRODUCTOS_MOVIL_SHEET_NAME,
   emptyImportRow,
   type ImportContactosRow,
   type ImportDetallePlanRow,
   type ImportMobileRow,
+  type ImportMovistarProductosRow,
+  type ImportMovistarResumenRow,
+  type ImportMovistarUsuariosRow,
 } from './importWorkbook'
 
 export type OriginalImportSheets = {
@@ -385,5 +399,130 @@ export function enrichDepuradoRowsFromOriginal(
         DETALLE_PLAN_IMPORT_COLUMNS
       )
     ),
+  }
+}
+
+export type OriginalMovistarSheets = {
+  resumen: ImportMovistarResumenRow[]
+  usuarios: ImportMovistarUsuariosRow[]
+  productos: ImportMovistarProductosRow[]
+}
+
+export type OriginalMovistarSheetsByBatch = Map<string, OriginalMovistarSheets>
+
+const MOVISTAR_RESUMEN_HEADER_ALIASES: Record<
+  string,
+  (typeof MOVISTAR_RESUMEN_COLUMNS)[number]
+> = {
+  ruc: 'ruc',
+  razon_social: 'razon_social',
+  razonsocial: 'razon_social',
+  estado: 'estado',
+  mensaje: 'mensaje',
+  n_usuarios: 'n_usuarios',
+  n_productos: 'n_productos',
+  fecha_consulta: 'fecha_consulta',
+  fecha: 'fecha_consulta',
+  moviles_activos: MOVISTAR_RESUMEN_MOVILES_ACTIVOS_COLUMN,
+  internet_movil_activos: MOVISTAR_RESUMEN_INTERNET_MOVIL_ACTIVOS_COLUMN,
+  duos_activos: MOVISTAR_RESUMEN_DUOS_ACTIVOS_COLUMN,
+  monoproductos_activos: MOVISTAR_RESUMEN_MONOPRODUCTOS_ACTIVOS_COLUMN,
+  trios_activos: MOVISTAR_RESUMEN_TRIOS_ACTIVOS_COLUMN,
+}
+
+const MOVISTAR_USUARIOS_HEADER_ALIASES: Record<
+  string,
+  (typeof MOVISTAR_USUARIOS_COLUMNS)[number]
+> = {
+  razon_social: 'razon_social',
+  razonsocial: 'razon_social',
+  ruc: 'ruc',
+  nombres_apellidos: 'nombres_apellidos',
+  nombre: 'nombres_apellidos',
+  dni: 'dni',
+  documento: 'dni',
+  correo: 'correo',
+  email: 'correo',
+  celular: 'celular',
+  telefono: 'celular',
+  rol_canal_online: 'rol_canal_online',
+  tipo_contacto: 'rol_canal_online',
+  fecha_alta: 'fecha_alta',
+  fecha_consulta: 'fecha_consulta',
+}
+
+const MOVISTAR_PRODUCTOS_HEADER_ALIASES: Record<
+  string,
+  (typeof MOVISTAR_PRODUCTOS_COLUMNS)[number]
+> = {
+  razon_social: 'razon_social',
+  razonsocial: 'razon_social',
+  ruc: 'ruc',
+  codigo_producto: 'codigo_producto',
+  plan: 'plan',
+  cuenta_financiera: 'cuenta_financiera',
+  subtipo_producto: 'subtipo_producto',
+  fecha_activacion: 'fecha_activacion',
+  caja: 'caja',
+  fecha_consulta: 'fecha_consulta',
+}
+
+export function parseOriginalMovistarWorkbook(buffer: Buffer): OriginalMovistarSheets | null {
+  const wb = XLSX.read(buffer, { type: 'buffer' })
+  const resumenName = findSheetName(wb.SheetNames, MOVISTAR_RESUMEN_SHEET_NAME)
+  if (!resumenName) return null
+  return {
+    resumen: mapSheetRows(
+      wb,
+      MOVISTAR_RESUMEN_SHEET_NAME,
+      MOVISTAR_RESUMEN_COLUMNS,
+      MOVISTAR_RESUMEN_HEADER_ALIASES
+    ),
+    usuarios: mapSheetRows(
+      wb,
+      MOVISTAR_USUARIOS_SHEET_NAME,
+      MOVISTAR_USUARIOS_COLUMNS,
+      MOVISTAR_USUARIOS_HEADER_ALIASES
+    ),
+    productos: mapSheetRows(
+      wb,
+      MOVISTAR_PRODUCTOS_SHEET_NAME,
+      MOVISTAR_PRODUCTOS_COLUMNS,
+      MOVISTAR_PRODUCTOS_HEADER_ALIASES
+    ),
+  }
+}
+
+export async function readOriginalMovistarSheetsFromPath(
+  storagePath: string | null | undefined
+): Promise<OriginalMovistarSheets | null> {
+  if (!storagePath) return null
+  const absolute = resolveImportStoragePath(storagePath)
+  if (!existsSync(absolute)) return null
+  try {
+    const buffer = await readFile(absolute)
+    return parseOriginalMovistarWorkbook(buffer)
+  } catch (err) {
+    console.error('Failed to parse original Movistar import workbook:', storagePath, err)
+    return null
+  }
+}
+
+export function filterMovistarRowsByRuc<T extends { ruc: string }>(rows: T[], ruc: string): T[] {
+  const needle = ruc.trim()
+  if (!needle) return []
+  return rows.filter((row) => (row.ruc ?? '').trim() === needle)
+}
+
+export function originalMovistarRowsForRuc(
+  sheets: OriginalMovistarSheets | null | undefined,
+  ruc: string
+): OriginalMovistarSheets {
+  const empty: OriginalMovistarSheets = { resumen: [], usuarios: [], productos: [] }
+  if (!sheets) return empty
+  return {
+    resumen: filterMovistarRowsByRuc(sheets.resumen, ruc),
+    usuarios: filterMovistarRowsByRuc(sheets.usuarios, ruc),
+    productos: filterMovistarRowsByRuc(sheets.productos, ruc),
   }
 }

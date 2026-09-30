@@ -64,6 +64,20 @@ function resolveAvatarAbsolutePath(
   return absolute
 }
 
+const authUserPublicSelect = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
+  isSuperAdmin: true,
+  isSystemOwner: true,
+  avatarUrl: true,
+  batchQueueMode: true,
+  workingBatchId: true,
+  workingBatchIdClaro: true,
+  workingBatchIdMovistar: true,
+} as const
+
 function publicUserFields(user: {
   id: string
   name: string
@@ -74,7 +88,10 @@ function publicUserFields(user: {
   avatarUrl?: string | null
   batchQueueMode?: string | null
   workingBatchId?: string | null
+  workingBatchIdClaro?: string | null
+  workingBatchIdMovistar?: string | null
 }) {
+  const workingBatchIdClaro = user.workingBatchIdClaro ?? user.workingBatchId ?? null
   return {
     id: user.id,
     name: user.name,
@@ -84,7 +101,9 @@ function publicUserFields(user: {
     isSystemOwner: user.isSystemOwner,
     hasAvatar: Boolean(user.avatarUrl),
     batchQueueMode: user.batchQueueMode === 'LIFO' || user.batchQueueMode === 'ALL' ? user.batchQueueMode : 'FIFO',
-    workingBatchId: user.workingBatchId ?? null,
+    workingBatchId: workingBatchIdClaro,
+    workingBatchIdClaro,
+    workingBatchIdMovistar: user.workingBatchIdMovistar ?? null,
   }
 }
 
@@ -95,6 +114,9 @@ const loginSchema = z.object({
 
 const patchMeSchema = z.object({
   workingBatchId: z.union([z.string().min(1), z.null()]).optional(),
+  workingBatchIdClaro: z.union([z.string().min(1), z.null()]).optional(),
+  workingBatchIdMovistar: z.union([z.string().min(1), z.null()]).optional(),
+  operator: z.enum(['CLARO', 'MOVISTAR']).optional(),
 })
 
 /** Password required; email optional (legacy path when provided). */
@@ -132,6 +154,8 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
       avatarUrl: true,
       batchQueueMode: true,
       workingBatchId: true,
+      workingBatchIdClaro: true,
+      workingBatchIdMovistar: true,
     },
   })
   if (!user || user.isArchivedAgent) {
@@ -261,25 +285,43 @@ router.post('/elevate-admin', requireAuth, async (req: AuthRequest, res: Respons
 // PATCH /api/auth/me — agent (or admin-as-self) pin for lote queue
 router.patch('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const data = patchMeSchema.parse(req.body)
-  if (data.workingBatchId === undefined) {
+  const hasAny =
+    data.workingBatchId !== undefined ||
+    data.workingBatchIdClaro !== undefined ||
+    data.workingBatchIdMovistar !== undefined
+  if (!hasAny) {
     res.status(400).json({ error: 'Nada que actualizar' })
     return
   }
 
+  const updateData: {
+    workingBatchId?: string | null
+    workingBatchIdClaro?: string | null
+    workingBatchIdMovistar?: string | null
+  } = {}
+
+  if (data.workingBatchIdClaro !== undefined) {
+    updateData.workingBatchIdClaro = data.workingBatchIdClaro
+    updateData.workingBatchId = data.workingBatchIdClaro
+  }
+  if (data.workingBatchIdMovistar !== undefined) {
+    updateData.workingBatchIdMovistar = data.workingBatchIdMovistar
+  }
+
+  if (data.workingBatchId !== undefined) {
+    if (data.operator === 'MOVISTAR') {
+      updateData.workingBatchIdMovistar = data.workingBatchId
+    } else {
+      // CLARO, or legacy clients that only send workingBatchId
+      updateData.workingBatchId = data.workingBatchId
+      updateData.workingBatchIdClaro = data.workingBatchId
+    }
+  }
+
   const updated = await prisma.user.update({
     where: { id: req.user!.id },
-    data: { workingBatchId: data.workingBatchId },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
-      isSuperAdmin: true,
-      isSystemOwner: true,
-      avatarUrl: true,
-      batchQueueMode: true,
-      workingBatchId: true,
-    },
+    data: updateData,
+    select: authUserPublicSelect,
   })
   res.json(publicUserFields(updated))
 })
@@ -299,6 +341,8 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
       avatarUrl: true,
       batchQueueMode: true,
       workingBatchId: true,
+      workingBatchIdClaro: true,
+      workingBatchIdMovistar: true,
     },
   })
   if (!user) {
@@ -430,17 +474,7 @@ router.post(
       const updated = await prisma.user.update({
         where: { id: userId },
         data: { avatarUrl: relativePath },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          isSuperAdmin: true,
-          isSystemOwner: true,
-          avatarUrl: true,
-          batchQueueMode: true,
-          workingBatchId: true,
-        },
+        select: authUserPublicSelect,
       })
 
       res.json(publicUserFields(updated))
@@ -469,17 +503,7 @@ router.delete('/me/avatar', requireAuth, async (req: AuthRequest, res: Response)
     const updated = await prisma.user.update({
       where: { id: userId },
       data: { avatarUrl: null },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        isSuperAdmin: true,
-        isSystemOwner: true,
-        avatarUrl: true,
-        batchQueueMode: true,
-        workingBatchId: true,
-      },
+      select: authUserPublicSelect,
     })
     res.json(publicUserFields(updated))
   })

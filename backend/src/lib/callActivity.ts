@@ -10,6 +10,7 @@ import {
   toLocalWallClockSql,
 } from './appTimezone'
 import { sqlAndTenant } from './tenant'
+import { sqlCallLogCompanyOperatorFilter, type ImportOperator } from './operator'
 
 type CallLogRow = { calledAt: Date; agentId: string }
 
@@ -396,11 +397,12 @@ export async function fetchAgentGapStatsSql(
 export async function fetchLastActiveCallDays(params: {
   agentId: string
   batchId?: string
+  operator?: ImportOperator | null
   /** Exclusive upper bound as YMD (typically today); only days strictly before this. */
   beforeExclusiveYmd: string
   limit?: number
 }): Promise<{ ymd: string; count: number }[]> {
-  const { agentId, batchId, beforeExclusiveYmd, limit = 2 } = params
+  const { agentId, batchId, operator, beforeExclusiveYmd, limit = 2 } = params
   const beforeStart = localDayStartUtc(beforeExclusiveYmd)
   const tenantCl = sqlAndTenant('cl')
   const tenantCo = sqlAndTenant('co')
@@ -432,6 +434,7 @@ export async function fetchLastActiveCallDays(params: {
       WHERE cl."calledAt" < ${beforeStart}
         ${tenantCl}
         AND cl."agentId" = ${agentId}
+        ${sqlCallLogCompanyOperatorFilter(operator, Prisma.sql`cl."companyId"`)}
       GROUP BY 1
       HAVING COUNT(*) > 0
       ORDER BY 1 DESC

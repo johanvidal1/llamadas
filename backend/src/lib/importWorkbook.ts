@@ -66,9 +66,67 @@ export const IMPORT_SHEET_NAMES = [
   DETALLE_PLAN_SHEET_NAME,
 ] as const
 
+export const MOVISTAR_RESUMEN_SHEET_NAME = 'Resumen'
+export const MOVISTAR_USUARIOS_SHEET_NAME = 'Usuarios'
+export const MOVISTAR_PRODUCTOS_SHEET_NAME = 'Productos'
+
+export const MOVISTAR_RESUMEN_COLUMNS = [
+  'ruc',
+  'razon_social',
+  'estado',
+  'mensaje',
+  'n_usuarios',
+  'n_productos',
+  'Móviles activos',
+  'Internet móvil activos',
+  'Dúos activos',
+  'Monoproductos activos',
+  'Tríos activos',
+  'fecha_consulta',
+] as const
+
+export const MOVISTAR_USUARIOS_COLUMNS = [
+  'razon_social',
+  'ruc',
+  'nombres_apellidos',
+  'dni',
+  'correo',
+  'celular',
+  'rol_canal_online',
+  'fecha_alta',
+  'fecha_consulta',
+] as const
+
+export const MOVISTAR_PRODUCTOS_COLUMNS = [
+  'razon_social',
+  'ruc',
+  'codigo_producto',
+  'plan',
+  'cuenta_financiera',
+  'subtipo_producto',
+  'fecha_activacion',
+  'caja',
+  'fecha_consulta',
+] as const
+
+export const MOVISTAR_IMPORT_SHEET_NAMES = [
+  MOVISTAR_RESUMEN_SHEET_NAME,
+  MOVISTAR_USUARIOS_SHEET_NAME,
+  MOVISTAR_PRODUCTOS_SHEET_NAME,
+] as const
+
+export const MOVISTAR_RESUMEN_MOVILES_ACTIVOS_COLUMN = MOVISTAR_RESUMEN_COLUMNS[6]
+export const MOVISTAR_RESUMEN_INTERNET_MOVIL_ACTIVOS_COLUMN = MOVISTAR_RESUMEN_COLUMNS[7]
+export const MOVISTAR_RESUMEN_DUOS_ACTIVOS_COLUMN = MOVISTAR_RESUMEN_COLUMNS[8]
+export const MOVISTAR_RESUMEN_MONOPRODUCTOS_ACTIVOS_COLUMN = MOVISTAR_RESUMEN_COLUMNS[9]
+export const MOVISTAR_RESUMEN_TRIOS_ACTIVOS_COLUMN = MOVISTAR_RESUMEN_COLUMNS[10]
+
 export type ImportContactosRow = Record<(typeof CONTACTOS_IMPORT_COLUMNS)[number], string>
 export type ImportMobileRow = Record<(typeof PRODUCTOS_MOVIL_IMPORT_COLUMNS)[number], string>
 export type ImportDetallePlanRow = Record<(typeof DETALLE_PLAN_IMPORT_COLUMNS)[number], string>
+export type ImportMovistarResumenRow = Record<(typeof MOVISTAR_RESUMEN_COLUMNS)[number], string>
+export type ImportMovistarUsuariosRow = Record<(typeof MOVISTAR_USUARIOS_COLUMNS)[number], string>
+export type ImportMovistarProductosRow = Record<(typeof MOVISTAR_PRODUCTOS_COLUMNS)[number], string>
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0')
@@ -175,6 +233,40 @@ export function writeImportWorkbookBuffer(
   detallePlan: ImportDetallePlanRow[] = []
 ): Buffer {
   const wb = buildImportWorkbook(contactos, mobileLines, detallePlan)
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+}
+
+/** Workbook matching the Movistar import plantilla (Resumen / Usuarios / Productos). */
+export function buildMovistarImportWorkbook(
+  resumen: ImportMovistarResumenRow[],
+  usuarios: ImportMovistarUsuariosRow[],
+  productos: ImportMovistarProductosRow[] = []
+): XLSX.WorkBook {
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(
+    wb,
+    sheetFromRows(MOVISTAR_RESUMEN_COLUMNS, resumen),
+    MOVISTAR_RESUMEN_SHEET_NAME
+  )
+  XLSX.utils.book_append_sheet(
+    wb,
+    sheetFromRows(MOVISTAR_USUARIOS_COLUMNS, usuarios),
+    MOVISTAR_USUARIOS_SHEET_NAME
+  )
+  XLSX.utils.book_append_sheet(
+    wb,
+    sheetFromRows(MOVISTAR_PRODUCTOS_COLUMNS, productos),
+    MOVISTAR_PRODUCTOS_SHEET_NAME
+  )
+  return wb
+}
+
+export function writeMovistarImportWorkbookBuffer(
+  resumen: ImportMovistarResumenRow[],
+  usuarios: ImportMovistarUsuariosRow[],
+  productos: ImportMovistarProductosRow[] = []
+): Buffer {
+  const wb = buildMovistarImportWorkbook(resumen, usuarios, productos)
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
 }
 

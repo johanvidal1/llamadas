@@ -19,6 +19,9 @@ import {
   getDispositionBorderColor,
 } from './StatusBadge'
 import { getDispositionLabel } from '../config/responseOptions'
+import OperatorChip from './OperatorChip'
+import OtherOperatorRucBanner from './OtherOperatorRucBanner'
+import { resolveImportOperator, type ImportOperator } from '../lib/operator'
 
 interface CallLogEntry {
   id: string
@@ -66,6 +69,8 @@ interface ClientDetail {
   }[]
   callLogs: CallLogEntry[]
   callbacks: CallbackEntry[]
+  importBatch?: { operator?: string }
+  otherOperatorPresence?: { operator: ImportOperator | string } | null
 }
 
 interface Props {
@@ -183,8 +188,8 @@ export default function ClientRecordModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-3 p-5 border-b shrink-0">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center shrink-0">
               <User size={20} className="text-blue-600" />
             </div>
@@ -201,6 +206,9 @@ export default function ClientRecordModal({
               )}
             </div>
           </div>
+          {client && (
+            <OperatorChip operator={resolveImportOperator(client.importBatch?.operator)} />
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -216,6 +224,11 @@ export default function ClientRecordModal({
           <div className="p-8 text-center text-red-500">No se pudo cargar el registro</div>
         ) : (
           <div className="overflow-y-auto flex-1 p-5 space-y-5">
+            {client.otherOperatorPresence && (
+              <OtherOperatorRucBanner
+                operator={resolveImportOperator(client.otherOperatorPresence.operator)}
+              />
+            )}
             {/* Company info */}
             <section className="space-y-2">
               <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">

@@ -64,9 +64,10 @@ async function buildConflictWarning(
 export async function buildAssignmentPreview(
   agentId: string,
   batchId?: string,
-  count?: number
+  count?: number,
+  operator?: 'CLARO' | 'MOVISTAR' | null
 ): Promise<AssignmentPreviewResult> {
-  const allOrdered = await getUnassignedCompaniesOrdered(batchId)
+  const allOrdered = await getUnassignedCompaniesOrdered(batchId, undefined, operator)
   const requestedCompanyCount = count ?? allOrdered.length
   const selected = count != null ? allOrdered.slice(0, count) : allOrdered
   const companyIds = selected.map((c) => c.id)

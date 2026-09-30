@@ -25,6 +25,14 @@ import BillingBanner from './BillingBanner'
 import CreateSupportTicketModal from './CreateSupportTicketModal'
 import CommandPalette from './CommandPalette'
 import UserAvatarMenu, { UserAvatarChip } from './UserAvatarMenu'
+import {
+  isAgentOperatorChromePath,
+  isImportOperator,
+  MY_LEADS_OPERATOR_CHANGED_EVENT,
+  MY_LEADS_OPERATOR_KEY,
+  readStoredMyLeadsOperator,
+  type ImportOperator,
+} from '../lib/operator'
 
 const adminNav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', end: true },
@@ -85,6 +93,30 @@ function presenceFromLastHeartbeat(lastAt: number | null): PresenceTone {
   return 'offline'
 }
 
+function useStoredMyLeadsOperator(): ImportOperator | null {
+  const [operator, setOperator] = useState<ImportOperator | null>(() => readStoredMyLeadsOperator())
+
+  useEffect(() => {
+    const onChanged = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      setOperator(isImportOperator(detail) ? detail : readStoredMyLeadsOperator())
+    }
+    const onStorage = (e: StorageEvent) => {
+      if (e.storageArea && e.storageArea !== sessionStorage) return
+      if (e.key && e.key !== MY_LEADS_OPERATOR_KEY) return
+      setOperator(readStoredMyLeadsOperator())
+    }
+    window.addEventListener(MY_LEADS_OPERATOR_CHANGED_EVENT, onChanged)
+    window.addEventListener('storage', onStorage)
+    return () => {
+      window.removeEventListener(MY_LEADS_OPERATOR_CHANGED_EVENT, onChanged)
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [])
+
+  return operator
+}
+
 export default function Layout() {
   const { user, isAdmin, logout } = useAuth()
   const navigate = useNavigate()
@@ -96,6 +128,7 @@ export default function Layout() {
   const [presenceTick, setPresenceTick] = useState(0)
   const tabHiddenRef = useRef(document.hidden)
   const mainRef = useRef<HTMLElement>(null)
+  const workingOperator = useStoredMyLeadsOperator()
 
   const isPlatformUser =
     isOptickHost() &&
@@ -107,7 +140,17 @@ export default function Layout() {
     : agentNav
   /** Agents + all admins can create tickets; inbox (/soporte) stays platform-only via platformNavItems. */
   const showSupportFab = true
-  const topBarBg = isAdmin ? 'bg-green-950' : 'bg-blue-950'
+  const movistarCallingChrome =
+    !isAdmin &&
+    workingOperator === 'MOVISTAR' &&
+    isAgentOperatorChromePath(location.pathname)
+  // Role chrome stays admin green-950 / agent blue-950. Movistar brand green is only
+  // for agents in calling context — not Tailwind green-950 (admin bar).
+  const topBarBg = isAdmin
+    ? 'bg-green-950'
+    : movistarCallingChrome
+      ? 'bg-[#01953A]'
+      : 'bg-blue-950'
   const accentBar = isAdmin ? 'before:bg-green-600' : 'before:bg-blue-600'
   const activeNav = isAdmin
     ? 'text-green-700 bg-green-50'
@@ -220,7 +263,7 @@ export default function Layout() {
   return (
     <div className="flex flex-col h-screen bg-gray-50">
       {/* Role-colored top bar — full width above sidebar + content */}
-      <header className={`shrink-0 z-30 ${topBarBg} pt-[env(safe-area-inset-top)]`}>
+      <header className={`shrink-0 z-30 ${topBarBg} pt-[env(safe-area-inset-top)] transition-colors duration-200`}>
         <div
           className={`flex items-center gap-2 sm:gap-3 px-2 sm:px-4 ${
             isMyLeads && !isAdmin ? 'h-11' : 'h-12'

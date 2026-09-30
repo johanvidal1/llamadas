@@ -7,22 +7,44 @@ import { getAppTimezone } from './appTimezone'
 import {
   CONTACTOS_IMPORT_COLUMNS,
   DETALLE_PLAN_IMPORT_COLUMNS,
+  MOVISTAR_PRODUCTOS_COLUMNS,
+  MOVISTAR_RESUMEN_COLUMNS,
+  MOVISTAR_RESUMEN_DUOS_ACTIVOS_COLUMN,
+  MOVISTAR_RESUMEN_INTERNET_MOVIL_ACTIVOS_COLUMN,
+  MOVISTAR_RESUMEN_MONOPRODUCTOS_ACTIVOS_COLUMN,
+  MOVISTAR_RESUMEN_MOVILES_ACTIVOS_COLUMN,
+  MOVISTAR_RESUMEN_TRIOS_ACTIVOS_COLUMN,
+  MOVISTAR_USUARIOS_COLUMNS,
   PRODUCTOS_MOVIL_IMPORT_COLUMNS,
   formatImportContactPhone,
   formatImportFechaConsulta,
   formatImportMobilePhone,
   rowFromColumns,
   writeImportWorkbookBuffer,
+  writeMovistarImportWorkbookBuffer,
   type ImportContactosRow,
   type ImportDetallePlanRow,
   type ImportMobileRow,
+  type ImportMovistarProductosRow,
+  type ImportMovistarResumenRow,
+  type ImportMovistarUsuariosRow,
 } from './importWorkbook'
 import {
   applyOriginalRazonSocial,
   enrichDepuradoRowsFromOriginal,
+  originalMovistarRowsForRuc,
   readOriginalImportSheetsFromPath,
+  readOriginalMovistarSheetsFromPath,
+  type OriginalMovistarSheetsByBatch,
   type OriginalSheetsByBatch,
 } from './originalImportSheets'
+import { operatorFilenameSegment, resolveImportOperator, type ImportOperator } from './operator'
+import {
+  classifyMovistarProductCaja,
+  extractMsisdnFromCodigoProducto,
+  type MovistarCajaCategory,
+} from './parseMovistarWorkbook'
+import { mobileDigits } from './mobileLine'
 import { buildZipBuffer } from './zipFiles'
 
 const SAMPLE_LIMIT = 8
@@ -38,6 +60,8 @@ export type DepuradoAgentPreview = {
   firstName: string
   companyCount: number
   contactCount: number
+  claroCount: number
+  movistarCount: number
   sample: DepuradoCompanySample[]
   sharedWithOtherAgentCount: number
 }
@@ -48,6 +72,10 @@ export type DepuradoExportPreview = {
   totalCompanies: number
   totalContacts: number
   totalSharedWithOtherAgent: number
+  totalClaro: number
+  totalMovistar: number
+  fileCount: number
+  operatorFilter: ImportOperator | null
 }
 
 export type DepuradoExportFile = {
@@ -58,7 +86,12 @@ export type DepuradoExportFile = {
 
 export type DepuradoExportResult = {
   file: DepuradoExportFile
-  exportedAgents: { agentId: string; agentName: string; companyCount: number }[]
+  exportedAgents: {
+    agentId: string
+    agentName: string
+    operator: ImportOperator
+    companyCount: number
+  }[]
   skippedAgents: { agentId: string; agentName: string }[]
 }
 
@@ -109,31 +142,43 @@ export function formatCompactTimestampInAppTz(date: Date, timeZone = getAppTimez
   return `${year}${month}${day}-${hour}${minute}`
 }
 
-export function depuradoExportFilename(date: Date, agentName: string): string {
-  return `${formatCompactTimestampInAppTz(date)}_nocontestadodep_${agentFirstName(agentName)}.xlsx`
+export function depuradoExportFilename(
+  date: Date,
+  agentName: string,
+  operator: ImportOperator
+): string {
+  const stamp = formatCompactTimestampInAppTz(date)
+  const segment = operatorFilenameSegment(operator)
+  return `${stamp}_nocontestadodep_${segment}_${agentFirstName(agentName)}.xlsx`
 }
 
 export function depuradoExportZipFilename(date: Date): string {
   return `${formatCompactTimestampInAppTz(date)}_nocontestadodep.zip`
 }
 
+export function depuradoExportUnitKey(agentId: string, operator: ImportOperator): string {
+  return `${agentId}:${operator}`
+}
+
 export function uniqueExportFilenames(
-  items: { agentId: string; agentName: string }[],
+  items: { agentId: string; agentName: string; operator: ImportOperator }[],
   date: Date
 ): Map<string, string> {
   const used = new Map<string, number>()
   const result = new Map<string, string>()
   for (const item of items) {
-    const base = depuradoExportFilename(date, item.agentName)
+    const key = depuradoExportUnitKey(item.agentId, item.operator)
+    const base = depuradoExportFilename(date, item.agentName, item.operator)
     const count = used.get(base) ?? 0
     used.set(base, count + 1)
     if (count === 0) {
-      result.set(item.agentId, base)
+      result.set(key, base)
       continue
     }
     const first = agentFirstName(item.agentName)
     const stamp = formatCompactTimestampInAppTz(date)
-    result.set(item.agentId, `${stamp}_nocontestadodep_${first}_${count + 1}.xlsx`)
+    const segment = operatorFilenameSegment(item.operator)
+    result.set(key, `${stamp}_nocontestadodep_${segment}_${first}_${count + 1}.xlsx`)
   }
   return result
 }
@@ -161,11 +206,63 @@ export type LoadedDepuradoCompany = {
   id: string
   ruc: string
   razonSocial: string | null
+  notes: string | null
+  plan: string | null
   importBatchId: string
   importStatus: string | null
   fechaConsulta: Date | null
+  importBatch: { operator: string | null } | null
   contacts: LoadedContact[]
   mobileLines: LoadedMobileLine[]
+}
+
+export function companyImportOperator(
+  company: { importBatch?: { operator?: string | null } | null }
+): ImportOperator {
+  return resolveImportOperator(company.importBatch?.operator)
+}
+
+export function filterCompaniesByOperator(
+  companies: LoadedDepuradoCompany[],
+  operator?: ImportOperator | null
+): LoadedDepuradoCompany[] {
+  if (!operator) return companies
+  return companies.filter((company) => companyImportOperator(company) === operator)
+}
+
+export type DepuradoExportUnit = {
+  agentId: string
+  agentName: string
+  operator: ImportOperator
+  companies: LoadedDepuradoCompany[]
+}
+
+export function splitCompaniesByOperator(
+  companies: LoadedDepuradoCompany[]
+): { operator: ImportOperator; companies: LoadedDepuradoCompany[] }[] {
+  const claro = companies.filter((company) => companyImportOperator(company) === 'CLARO')
+  const movistar = companies.filter((company) => companyImportOperator(company) === 'MOVISTAR')
+  const groups: { operator: ImportOperator; companies: LoadedDepuradoCompany[] }[] = []
+  if (claro.length) groups.push({ operator: 'CLARO', companies: claro })
+  if (movistar.length) groups.push({ operator: 'MOVISTAR', companies: movistar })
+  return groups
+}
+
+export function toExportUnits(
+  selected: { agentId: string; agentName: string; companies: LoadedDepuradoCompany[] }[]
+): DepuradoExportUnit[] {
+  const units: DepuradoExportUnit[] = []
+  for (const row of selected) {
+    for (const group of splitCompaniesByOperator(row.companies)) {
+      units.push({
+        agentId: row.agentId,
+        agentName: row.agentName,
+        operator: group.operator,
+        companies: group.companies,
+      })
+    }
+  }
+  return units
 }
 
 export function isDepuradoCompany(
@@ -266,9 +363,12 @@ async function loadAssignedCompaniesForAgent(agentId: string): Promise<LoadedDep
       id: true,
       ruc: true,
       razonSocial: true,
+      notes: true,
+      plan: true,
       importBatchId: true,
       importStatus: true,
       fechaConsulta: true,
+      importBatch: { select: { operator: true } },
       contacts: {
         select: {
           id: true,
@@ -338,7 +438,10 @@ type AgentSelection = {
   companies: LoadedDepuradoCompany[]
 }
 
-async function selectDepuradoByAgents(agentIds: string[]): Promise<{
+async function selectDepuradoByAgents(
+  agentIds: string[],
+  operator?: ImportOperator | null
+): Promise<{
   selected: AgentSelection[]
   skipped: { agentId: string; agentName: string }[]
 }> {
@@ -347,7 +450,10 @@ async function selectDepuradoByAgents(agentIds: string[]): Promise<{
   const skipped: { agentId: string; agentName: string }[] = []
 
   for (const agent of agents) {
-    const companies = await findDepuradoCompaniesForAgent(agent.id)
+    const companies = filterCompaniesByOperator(
+      await findDepuradoCompaniesForAgent(agent.id),
+      operator
+    )
     if (companies.length === 0) {
       skipped.push({ agentId: agent.id, agentName: agent.name })
       continue
@@ -358,18 +464,34 @@ async function selectDepuradoByAgents(agentIds: string[]): Promise<{
   return { selected, skipped }
 }
 
-export async function previewDepuradoExport(agentIds: string[]): Promise<DepuradoExportPreview> {
-  const { selected, skipped } = await selectDepuradoByAgents(agentIds)
+function operatorCounts(companies: LoadedDepuradoCompany[]) {
+  let claroCount = 0
+  let movistarCount = 0
+  for (const company of companies) {
+    if (companyImportOperator(company) === 'MOVISTAR') movistarCount += 1
+    else claroCount += 1
+  }
+  return { claroCount, movistarCount }
+}
+
+export async function previewDepuradoExport(
+  agentIds: string[],
+  operator?: ImportOperator | null
+): Promise<DepuradoExportPreview> {
+  const { selected, skipped } = await selectDepuradoByAgents(agentIds, operator)
 
   const agents: DepuradoAgentPreview[] = selected.map((row) => {
     const contactCount = row.companies.reduce((sum, c) => sum + c.contacts.length, 0)
     const sharedWithOtherAgentCount = countSharedWithOtherAgent(row.companies, row.agentId)
+    const { claroCount, movistarCount } = operatorCounts(row.companies)
     return {
       agentId: row.agentId,
       agentName: row.agentName,
       firstName: agentFirstName(row.agentName),
       companyCount: row.companies.length,
       contactCount,
+      claroCount,
+      movistarCount,
       sample: row.companies.slice(0, SAMPLE_LIMIT).map((c) => ({
         ruc: c.ruc,
         razonSocial: c.razonSocial,
@@ -378,12 +500,22 @@ export async function previewDepuradoExport(agentIds: string[]): Promise<Depurad
     }
   })
 
+  const totalClaro = agents.reduce((sum, a) => sum + a.claroCount, 0)
+  const totalMovistar = agents.reduce((sum, a) => sum + a.movistarCount, 0)
+
   return {
     agents,
     skippedAgents: skipped,
     totalCompanies: agents.reduce((sum, a) => sum + a.companyCount, 0),
     totalContacts: agents.reduce((sum, a) => sum + a.contactCount, 0),
     totalSharedWithOtherAgent: agents.reduce((sum, a) => sum + a.sharedWithOtherAgentCount, 0),
+    totalClaro,
+    totalMovistar,
+    fileCount: agents.reduce(
+      (sum, a) => sum + (a.claroCount > 0 ? 1 : 0) + (a.movistarCount > 0 ? 1 : 0),
+      0
+    ),
+    operatorFilter: operator ?? null,
   }
 }
 
@@ -408,6 +540,168 @@ async function loadOriginalSheetsForCompanies(
   return result
 }
 
+async function loadOriginalMovistarSheetsForCompanies(
+  companies: LoadedDepuradoCompany[]
+): Promise<OriginalMovistarSheetsByBatch> {
+  const result: OriginalMovistarSheetsByBatch = new Map()
+  const batchIds = [...new Set(companies.map((company) => company.importBatchId).filter(Boolean))]
+  if (batchIds.length === 0) return result
+
+  const batches = await prisma.importBatch.findMany({
+    where: { id: { in: batchIds } },
+    select: { id: true, storagePath: true },
+  })
+
+  await Promise.all(
+    batches.map(async (batch) => {
+      const sheets = await readOriginalMovistarSheetsFromPath(batch.storagePath)
+      if (sheets) result.set(batch.id, sheets)
+    })
+  )
+  return result
+}
+
+export function codigoProductoFromNumero(raw: string | null | undefined): string {
+  const extracted = extractMsisdnFromCodigoProducto(raw)
+  if (extracted) return extracted
+  const digits = mobileDigits(raw)
+  if (digits.length === 9) return digits
+  return (raw ?? '').trim()
+}
+
+function fillRowRazonSocial<T extends { razon_social: string }>(row: T, razon: string): T {
+  if (row.razon_social.trim() || !razon) return row
+  return { ...row, razon_social: razon }
+}
+
+function movistarResumenCategoryCounts(
+  lines: LoadedMobileLine[]
+): Record<MovistarCajaCategory, number> {
+  const counts: Record<MovistarCajaCategory, number> = {
+    moviles: 0,
+    internet: 0,
+    duos: 0,
+    mono: 0,
+    trios: 0,
+  }
+  for (const line of lines) {
+    counts[classifyMovistarProductCaja(line.estadoLinea ?? '', '', line.plan ?? '')] += 1
+  }
+  return counts
+}
+
+export function toMovistarResumenRows(companies: LoadedDepuradoCompany[]): ImportMovistarResumenRow[] {
+  return companies.map((company) => {
+    const counts = movistarResumenCategoryCounts(company.mobileLines)
+    return rowFromColumns(MOVISTAR_RESUMEN_COLUMNS, {
+      ruc: company.ruc,
+      razon_social: company.razonSocial ?? '',
+      estado: company.importStatus ?? '',
+      mensaje: company.notes ?? '',
+      n_usuarios: String(company.contacts.length),
+      n_productos: String(company.mobileLines.length),
+      [MOVISTAR_RESUMEN_MOVILES_ACTIVOS_COLUMN]: String(counts.moviles),
+      [MOVISTAR_RESUMEN_INTERNET_MOVIL_ACTIVOS_COLUMN]: String(counts.internet),
+      [MOVISTAR_RESUMEN_DUOS_ACTIVOS_COLUMN]: String(counts.duos),
+      [MOVISTAR_RESUMEN_MONOPRODUCTOS_ACTIVOS_COLUMN]: String(counts.mono),
+      [MOVISTAR_RESUMEN_TRIOS_ACTIVOS_COLUMN]: String(counts.trios),
+      fecha_consulta: formatImportFechaConsulta(company.fechaConsulta),
+    })
+  })
+}
+
+export function toMovistarUsuariosRows(companies: LoadedDepuradoCompany[]): ImportMovistarUsuariosRow[] {
+  const rows: ImportMovistarUsuariosRow[] = []
+  for (const company of companies) {
+    const fechaConsulta = formatImportFechaConsulta(company.fechaConsulta)
+    const razonSocial = company.razonSocial ?? ''
+    for (const contact of company.contacts) {
+      rows.push(
+        rowFromColumns(MOVISTAR_USUARIOS_COLUMNS, {
+          razon_social: razonSocial,
+          ruc: company.ruc,
+          nombres_apellidos: contact.nombre,
+          dni: contact.dni ?? '',
+          correo: contact.email ?? '',
+          celular: contact.telefono ?? '',
+          rol_canal_online: contact.tipoContacto ?? '',
+          fecha_consulta: fechaConsulta,
+        })
+      )
+    }
+  }
+  return rows
+}
+
+export function toMovistarProductosRows(companies: LoadedDepuradoCompany[]): ImportMovistarProductosRow[] {
+  const rows: ImportMovistarProductosRow[] = []
+  for (const company of companies) {
+    const fechaConsulta = formatImportFechaConsulta(company.fechaConsulta)
+    const razonSocial = company.razonSocial ?? ''
+    for (const line of company.mobileLines) {
+      rows.push(
+        rowFromColumns(MOVISTAR_PRODUCTOS_COLUMNS, {
+          razon_social: razonSocial,
+          ruc: company.ruc,
+          codigo_producto: codigoProductoFromNumero(line.numeroTelefono),
+          plan: line.plan ?? '',
+          caja: line.estadoLinea ?? '',
+          fecha_consulta: fechaConsulta,
+        })
+      )
+    }
+  }
+  return rows
+}
+
+export function assembleMovistarExportRows(
+  companies: LoadedDepuradoCompany[],
+  originals: OriginalMovistarSheetsByBatch
+): {
+  resumen: ImportMovistarResumenRow[]
+  usuarios: ImportMovistarUsuariosRow[]
+  productos: ImportMovistarProductosRow[]
+} {
+  const resumen: ImportMovistarResumenRow[] = []
+  const usuarios: ImportMovistarUsuariosRow[] = []
+  const productos: ImportMovistarProductosRow[] = []
+
+  for (const company of companies) {
+    const original = originalMovistarRowsForRuc(originals.get(company.importBatchId), company.ruc)
+    const razonFromOriginal =
+      original.resumen.find((row) => row.razon_social.trim())?.razon_social.trim() ||
+      original.usuarios.find((row) => row.razon_social.trim())?.razon_social.trim() ||
+      original.productos.find((row) => row.razon_social.trim())?.razon_social.trim() ||
+      ''
+    const razon = company.razonSocial?.trim() || razonFromOriginal
+    const resolved =
+      razon && company.razonSocial?.trim() !== razon ? { ...company, razonSocial: razon } : company
+    const reconstructedResumen = toMovistarResumenRows([resolved])
+    const reconstructedUsuarios = toMovistarUsuariosRows([resolved])
+    const reconstructedProductos = toMovistarProductosRows([resolved])
+
+    if (original.resumen.length > 0) {
+      resumen.push(...original.resumen.map((row) => fillRowRazonSocial(row, razon)))
+    } else {
+      resumen.push(...reconstructedResumen)
+    }
+
+    if (original.usuarios.length > 0) {
+      usuarios.push(...original.usuarios.map((row) => fillRowRazonSocial(row, razon)))
+    } else {
+      usuarios.push(...reconstructedUsuarios)
+    }
+
+    if (original.productos.length > 0) {
+      productos.push(...original.productos.map((row) => fillRowRazonSocial(row, razon)))
+    } else {
+      productos.push(...reconstructedProductos)
+    }
+  }
+
+  return { resumen, usuarios, productos }
+}
+
 export async function buildAgentWorkbook(companies: LoadedDepuradoCompany[]): Promise<Buffer> {
   const originals = await loadOriginalSheetsForCompanies(companies)
   const resolved = applyOriginalRazonSocial(companies, originals)
@@ -421,25 +715,52 @@ export async function buildAgentWorkbook(companies: LoadedDepuradoCompany[]): Pr
   return writeImportWorkbookBuffer(enriched.contactos, enriched.mobiles, enriched.detalle)
 }
 
-export async function executeDepuradoExport(agentIds: string[]): Promise<DepuradoExportResult> {
-  const { selected, skipped } = await selectDepuradoByAgents(agentIds)
+export async function buildMovistarAgentWorkbook(companies: LoadedDepuradoCompany[]): Promise<Buffer> {
+  const originals = await loadOriginalMovistarSheetsForCompanies(companies)
+  const rows = assembleMovistarExportRows(companies, originals)
+  return writeMovistarImportWorkbookBuffer(rows.resumen, rows.usuarios, rows.productos)
+}
+
+export async function buildWorkbookForOperator(
+  companies: LoadedDepuradoCompany[],
+  operator: ImportOperator
+): Promise<Buffer> {
+  if (operator === 'MOVISTAR') return buildMovistarAgentWorkbook(companies)
+  return buildAgentWorkbook(companies)
+}
+
+export async function executeDepuradoExport(
+  agentIds: string[],
+  operator?: ImportOperator | null
+): Promise<DepuradoExportResult> {
+  const { selected, skipped } = await selectDepuradoByAgents(agentIds, operator)
   if (selected.length === 0) {
+    throw new DepuradoExportEmptyError(skipped)
+  }
+
+  const units = toExportUnits(selected)
+  if (units.length === 0) {
     throw new DepuradoExportEmptyError(skipped)
   }
 
   const exportedAt = new Date()
   const filenames = uniqueExportFilenames(
-    selected.map((s) => ({ agentId: s.agentId, agentName: s.agentName })),
+    units.map((unit) => ({
+      agentId: unit.agentId,
+      agentName: unit.agentName,
+      operator: unit.operator,
+    })),
     exportedAt
   )
 
   const files = await Promise.all(
-    selected.map(async (row) => ({
-      agentId: row.agentId,
-      agentName: row.agentName,
-      companyCount: row.companies.length,
-      filename: filenames.get(row.agentId)!,
-      buffer: await buildAgentWorkbook(row.companies),
+    units.map(async (unit) => ({
+      agentId: unit.agentId,
+      agentName: unit.agentName,
+      operator: unit.operator,
+      companyCount: unit.companies.length,
+      filename: filenames.get(depuradoExportUnitKey(unit.agentId, unit.operator))!,
+      buffer: await buildWorkbookForOperator(unit.companies, unit.operator),
     }))
   )
 
@@ -462,6 +783,13 @@ export async function executeDepuradoExport(agentIds: string[]): Promise<Depurad
     }
   })
 
+  const exportedAgents = files.map((f) => ({
+    agentId: f.agentId,
+    agentName: f.agentName,
+    operator: f.operator,
+    companyCount: f.companyCount,
+  }))
+
   if (files.length === 1) {
     return {
       file: {
@@ -469,11 +797,7 @@ export async function executeDepuradoExport(agentIds: string[]): Promise<Depurad
         buffer: files[0].buffer,
         contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       },
-      exportedAgents: files.map((f) => ({
-        agentId: f.agentId,
-        agentName: f.agentName,
-        companyCount: f.companyCount,
-      })),
+      exportedAgents,
       skippedAgents: skipped,
     }
   }
@@ -487,11 +811,7 @@ export async function executeDepuradoExport(agentIds: string[]): Promise<Depurad
       ),
       contentType: 'application/zip',
     },
-    exportedAgents: files.map((f) => ({
-      agentId: f.agentId,
-      agentName: f.agentName,
-      companyCount: f.companyCount,
-    })),
+    exportedAgents,
     skippedAgents: skipped,
   }
 }

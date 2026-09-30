@@ -94,6 +94,7 @@ export type BuildClientsUrlOpts = {
   registeredFrom?: string
   registeredTo?: string
   from?: 'reports' | 'dashboard'
+  operator?: 'CLARO' | 'MOVISTAR'
 }
 
 export function buildClientsUrl(opts?: BuildClientsUrlOpts): string {
@@ -103,6 +104,7 @@ export function buildClientsUrl(opts?: BuildClientsUrlOpts): string {
   if (opts?.registeredFrom) params.set('registeredFrom', opts.registeredFrom)
   if (opts?.registeredTo) params.set('registeredTo', opts.registeredTo)
   if (opts?.from) params.set('from', opts.from)
+  if (opts?.operator) params.set('operator', opts.operator)
   const query = params.toString()
   return `/clients${query ? `?${query}` : ''}`
 }

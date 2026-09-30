@@ -27,8 +27,15 @@ import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { DispositionBadge } from '../components/StatusBadge'
 import ClientRecordModal from '../components/ClientRecordModal'
+import OperatorChip from '../components/OperatorChip'
+import OperatorFilterGroup, { type OperatorFilterValue } from '../components/OperatorFilterGroup'
 import { getResponseOption } from '../config/responseOptions'
 import { useAuth } from '../contexts/AuthContext'
+import {
+  operatorFilterFromQuery,
+  operatorLabelEs,
+  resolveImportOperator,
+} from '../lib/operator'
 
 type AgentsViewMode = 'cards' | 'list'
 
@@ -183,7 +190,8 @@ function AssignmentRunCard({
                   {format(new Date(run.assignedAt), 'd MMM yyyy, HH:mm', { locale: es })}
                 </p>
                 <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-gray-200/80 text-xs text-gray-700 truncate max-w-full">
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-gray-200/80 text-xs text-gray-700 truncate max-w-full">
+                    <OperatorChip operator={resolveImportOperator(run.operator)} />
                     {run.filename ?? 'Todas las importaciones'}
                   </span>
                   <span className="text-xs text-gray-400">Por {run.assignedBy.name}</span>
@@ -331,6 +339,7 @@ type AssignableImport = {
   filename: string
   displayName?: string | null
   blocked?: boolean
+  operator?: string
   companyCount: number
   contactCount: number
   unassignedCompanyCount: number
@@ -445,6 +454,9 @@ export default function Assignments() {
   const returnToDashboard = searchParams.get('from') === 'dashboard'
   const [agentId, setAgentId] = useState('')
   const [batchId, setBatchId] = useState('')
+  const [operatorFilter, setOperatorFilter] = useState<OperatorFilterValue>(
+    operatorFilterFromQuery(searchParams.get('operator'))
+  )
   const [count, setCount] = useState<number | ''>('')
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewModal, setPreviewModal] = useState<AssignmentPreview | null>(null)
@@ -635,7 +647,10 @@ export default function Assignments() {
   }
 
   const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: getUsers })
-  const { data: imports = [] } = useQuery({ queryKey: ['imports'], queryFn: getImports })
+  const { data: imports = [] } = useQuery({
+    queryKey: ['imports', operatorFilter || 'all'],
+    queryFn: () => getImports(operatorFilter || undefined),
+  })
 
   const assignableImports = (imports as AssignableImport[]).filter((b) => !b.blocked)
 
@@ -649,22 +664,26 @@ export default function Assignments() {
 
   useEffect(() => {
     if (!batchId) return
-    const selected = imports.find((b: { id: string; blocked?: boolean }) => b.id === batchId)
+    const selected = imports.find((b: { id: string; blocked?: boolean; operator?: string }) => b.id === batchId)
     if (selected?.blocked) {
       setBatchId('')
+      return
     }
-  }, [imports, batchId])
+    if (operatorFilter && selected && resolveImportOperator(selected.operator) !== operatorFilter) {
+      setBatchId('')
+    }
+  }, [imports, batchId, operatorFilter])
 
   const { data: latestRunsData } = useQuery({
-    queryKey: ['assignmentRuns', agentId],
-    queryFn: () => getAssignmentRuns(agentId),
+    queryKey: ['assignmentRuns', agentId, operatorFilter || 'all'],
+    queryFn: () => getAssignmentRuns(agentId, undefined, operatorFilter || undefined),
     enabled: !!agentId,
   })
   const latestRun = latestRunsData?.runs[0] ?? null
 
   const { data: drawerRunsData, isLoading: loadingDrawerRuns } = useQuery({
-    queryKey: ['assignmentRuns', drawerAgentId],
-    queryFn: () => getAssignmentRuns(drawerAgentId!),
+    queryKey: ['assignmentRuns', drawerAgentId, operatorFilter || 'all'],
+    queryFn: () => getAssignmentRuns(drawerAgentId!, undefined, operatorFilter || undefined),
     enabled: !!drawerAgentId,
   })
 
@@ -770,11 +789,12 @@ export default function Assignments() {
 
   // Count of unassigned registros (contacts) in selected batch
   const { data: unassignedData } = useQuery({
-    queryKey: ['clients', 'unassigned', batchId],
+    queryKey: ['clients', 'unassigned', batchId, operatorFilter || 'all'],
     queryFn: () =>
       getClients({
         unassigned: true,
         batchId: batchId || undefined,
+        operator: batchId ? undefined : operatorFilter || undefined,
         limit: 1,
       }),
     enabled: true,
@@ -791,7 +811,7 @@ export default function Assignments() {
       setPendingAssignCount(null)
       setPreviewModal(null)
 
-      const unassignedKey = ['clients', 'unassigned', batchId]
+      const unassignedKey = ['clients', 'unassigned', batchId, operatorFilter || 'all']
       qc.setQueryData(
         unassignedKey,
         (old: { total?: number; contactCount?: number } | undefined) => {
@@ -824,6 +844,7 @@ export default function Assignments() {
   const assignPayload = (opts?: { count?: number; contactIds?: string[] }) => ({
     agentId,
     batchId: batchId || undefined,
+    ...(batchId || !operatorFilter ? {} : { operator: operatorFilter }),
     ...opts,
   })
 
@@ -843,6 +864,7 @@ export default function Assignments() {
       const preview = await previewAssignment({
         agentId,
         batchId: batchId || undefined,
+        operator: batchId ? undefined : operatorFilter || undefined,
         count: count === '' ? undefined : count,
       })
       if (preview.companyIds.length === 0) {
@@ -907,6 +929,8 @@ export default function Assignments() {
         )}
       </div>
 
+      <OperatorFilterGroup value={operatorFilter} onChange={setOperatorFilter} />
+
       {/* Assignment form */}
       <div className="card p-6 space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -933,20 +957,33 @@ export default function Assignments() {
 
           {/* Batch selector */}
           <div>
-            <label className="label">Importación (opcional)</label>
+            <label className="label inline-flex items-center gap-2">
+              Importación (opcional)
+              {selectedBatch ? (
+                <OperatorChip operator={resolveImportOperator(selectedBatch.operator)} />
+              ) : operatorFilter ? (
+                <OperatorChip operator={operatorFilter} />
+              ) : null}
+            </label>
             <select
               className="input"
               value={batchId}
               onChange={(e) => setBatchId(e.target.value)}
             >
               <option value="">
-                Todos los archivos ({importAvailabilityLabel(
-                  assignableImportTotals.unassigned,
-                  assignableImportTotals.total
-                )})
+                {operatorFilter
+                  ? `Todos los archivos ${operatorLabelEs(operatorFilter)} (${importAvailabilityLabel(
+                      assignableImportTotals.unassigned,
+                      assignableImportTotals.total
+                    )})`
+                  : `Todos los archivos (${importAvailabilityLabel(
+                      assignableImportTotals.unassigned,
+                      assignableImportTotals.total
+                    )})`}
               </option>
               {assignableImports.map((b) => (
                 <option key={b.id} value={b.id}>
+                  {!operatorFilter ? `${operatorLabelEs(resolveImportOperator(b.operator))} · ` : ''}
                   {batchLabel(b)} ({importAvailabilityLabel(
                     b.unassignedCompanyCount ?? 0,
                     b.companyCount

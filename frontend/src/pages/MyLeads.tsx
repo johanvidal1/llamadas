@@ -64,6 +64,14 @@ import {
   type QueueBatchInput,
 } from '../lib/batchQueuePolicy'
 import { DuplicateRucBanner } from '../components/DuplicateRucBanner'
+import OtherOperatorRucBanner from '../components/OtherOperatorRucBanner'
+import {
+  operatorLabelEs,
+  readStoredMyLeadsOperator,
+  resolveImportOperator,
+  writeStoredMyLeadsOperator,
+  type ImportOperator,
+} from '../lib/operator'
 import { format, isPast, isToday } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { StatusBadge, DISPOSITION_CONFIG, getDispositionBorderColor, DispositionBadge } from '../components/StatusBadge'
@@ -103,7 +111,7 @@ interface ClientSummary {
     dni?: string
     _count?: { callLogs: number }
   }[]
-  importBatch?: { id: string; filename: string; createdAt: string }
+  importBatch?: { id: string; filename: string; createdAt: string; operator?: string }
   _count?: { callLogs: number }
 }
 
@@ -137,7 +145,7 @@ interface ClientDetail {
   plan?: string
   notes?: string
   status: string
-  importBatch?: { id: string; filename: string; createdAt: string }
+  importBatch?: { id: string; filename: string; createdAt: string; operator?: string }
   contacts: { id: string; nombre: string; tipoContacto?: string; telefono?: string; email?: string; dni?: string }[]
   callLogs: CallLogEntry[]
   callbacks: { id: string; callLogId?: string; scheduledAt: string; notes?: string; completed: boolean }[]
@@ -149,6 +157,10 @@ interface ClientDetail {
     rentaBasica?: string
     rentaBasicaConDesc?: string
   }[]
+  otherOperatorPresence?: {
+    operator: ImportOperator | string
+    batchCount: number
+  } | null
 }
 
 interface Callback {
@@ -156,7 +168,13 @@ interface Callback {
   callLogId?: string
   scheduledAt: string
   notes?: string
-  company: { id: string; ruc: string; razonSocial?: string; contacts: { nombre: string; telefono?: string }[] }
+  company: {
+    id: string
+    ruc: string
+    razonSocial?: string
+    contacts: { nombre: string; telefono?: string }[]
+    importBatch?: { operator?: string }
+  }
   callLog?: { contact?: { id: string; nombre: string; telefono?: string; tipoContacto?: string } | null }
   agent: { id: string; name: string }
 }
@@ -770,6 +788,14 @@ export default function MyLeads() {
   const { user, isAdmin, updateUser: patchAuthUser } = useAuth()
   const isLg = useIsLg()
   const [searchParams, setSearchParams] = useSearchParams()
+  const [selectedOperator, setSelectedOperator] = useState<ImportOperator | null>(() =>
+    readStoredMyLeadsOperator()
+  )
+  const operatorChosen = selectedOperator != null
+  const chooseOperator = useCallback((op: ImportOperator) => {
+    setSelectedOperator(op)
+    writeStoredMyLeadsOperator(op)
+  }, [])
   const initialFilter = searchParams.get('filter') ?? ''
   const initialBatchId = searchParams.get('batchId') ?? ''
   const initialCompanyId = searchParams.get('companyId') ?? ''
@@ -829,7 +855,9 @@ export default function MyLeads() {
     if (initialCompanyId) return ''
     const mode = parseBatchQueueMode(user?.batchQueueMode)
     if (mode === 'ALL') return ''
-    return user?.workingBatchId ?? ''
+    if (!selectedOperator) return ''
+    if (selectedOperator === 'MOVISTAR') return user?.workingBatchIdMovistar ?? ''
+    return user?.workingBatchIdClaro ?? user?.workingBatchId ?? ''
   })
   const queueHydratedRef = useRef(queueDeepLinkWins)
   const explicitTodosRef = useRef(false)
@@ -951,27 +979,30 @@ export default function MyLeads() {
 
   // All assigned clients (paginated) — pending counts, Duplicate RUC, picker stats
   const { data: allClientsData } = useQuery({
-    queryKey: ['clients', 'my-leads', 'all-for-batches'],
-    queryFn: () => fetchAllMyLeadClients(),
+    queryKey: ['clients', 'my-leads', 'all-for-batches', selectedOperator],
+    queryFn: () => fetchAllMyLeadClients({ operator: selectedOperator ?? undefined }),
+    enabled: operatorChosen,
   })
 
   // Agent batch list from dedicated endpoint (not capped by client-list page size)
   const { data: myBatches } = useQuery({
-    queryKey: ['my-batches'],
-    queryFn: getMyBatches,
-    enabled: !isAdmin,
+    queryKey: ['my-batches', selectedOperator],
+    queryFn: () => getMyBatches(selectedOperator ?? undefined),
+    enabled: !isAdmin && operatorChosen,
   })
 
   // Load clients for current batch (server-side filter) — used for detail view navigation.
   // sortBy=registeredCreatedAt: registered first, then pending; within groups by createdAt asc.
   // Pin-by-id after Guardar resultado keeps index on the saved company if order shifts.
   const { data: clientsData, isLoading: loadingList } = useQuery({
-    queryKey: ['clients', 'my-leads', 'nav', selectedBatchId],
+    queryKey: ['clients', 'my-leads', 'nav', selectedBatchId, selectedOperator],
     queryFn: () =>
       fetchAllMyLeadClients({
         batchId: selectedBatchId || undefined,
         sortBy: 'registeredCreatedAt',
+        operator: selectedOperator ?? undefined,
       }),
+    enabled: operatorChosen,
   })
 
   // List view: server-side disposition / pending filters.
@@ -981,14 +1012,15 @@ export default function MyLeads() {
     isLoading: loadingListView,
     error: listViewError,
   } = useQuery({
-    queryKey: ['clients', 'my-leads', 'list', selectedBatchId, listCola, listDrilldown],
+    queryKey: ['clients', 'my-leads', 'list', selectedBatchId, listCola, listDrilldown, selectedOperator],
     queryFn: () =>
       fetchAllMyLeadClients({
         batchId: selectedBatchId || undefined,
         sortBy: 'registeredCreatedAt',
+        operator: selectedOperator ?? undefined,
         ...getListApiParams(listCola, listDrilldown),
       }),
-    enabled: viewMode === 'list',
+    enabled: viewMode === 'list' && operatorChosen,
     retry: (failureCount, err) => {
       const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code
       if (code === 'ADMIN_ELEVATION_REQUIRED') return false
@@ -998,17 +1030,18 @@ export default function MyLeads() {
 
   // Paginated + filtered list (for grid view) — same queue order as Lista/Detalle
   const { data: gridData, isLoading: loadingGrid, isFetching: fetchingGrid } = useQuery({
-    queryKey: ['clients', 'my-leads', 'grid', gridSearch, gridStatus, gridPage, selectedBatchId],
+    queryKey: ['clients', 'my-leads', 'grid', gridSearch, gridStatus, gridPage, selectedBatchId, selectedOperator],
     queryFn: () =>
       getClients({
         search: gridSearch || undefined,
         status: gridStatus || undefined,
         batchId: selectedBatchId || undefined,
+        operator: selectedOperator ?? undefined,
         page: gridPage,
         limit: 30,
         sortBy: 'registeredCreatedAt',
       }),
-    enabled: viewMode === 'grid',
+    enabled: viewMode === 'grid' && operatorChosen,
   })
 
   // All loaded clients (unfiltered) — used for pending counts + Duplicate RUC
@@ -1050,7 +1083,10 @@ export default function MyLeads() {
   )
 
   const queueMode = parseBatchQueueMode(user?.batchQueueMode)
-  const workingBatchId = user?.workingBatchId ?? null
+  const workingBatchId =
+    selectedOperator === 'MOVISTAR'
+      ? user?.workingBatchIdMovistar ?? null
+      : user?.workingBatchIdClaro ?? user?.workingBatchId ?? null
   const queueBatches: QueueBatchInput[] = useMemo(
     () =>
       batches.map((b) => {
@@ -1063,22 +1099,43 @@ export default function MyLeads() {
       }),
     [batches, allClients]
   )
-  const batchListReady = isAdmin ? allClientsData !== undefined : myBatches !== undefined
-  const pendingCountsReady = allClientsData !== undefined
+  const batchListReady =
+    operatorChosen && (isAdmin ? allClientsData !== undefined : myBatches !== undefined)
+  const pendingCountsReady = operatorChosen && allClientsData !== undefined
   const pickerWorkingBatchId = queueMode === 'ALL' ? undefined : workingBatchId ?? undefined
 
   const persistWorkingBatch = useCallback(
     (batchId: string | null) => {
-      if (!user) return
-      if ((user.workingBatchId ?? null) === batchId) return
-      patchAuthUser({ workingBatchId: batchId })
-      void patchMe({ workingBatchId: batchId }).catch(() => {
+      if (!user || !selectedOperator) return
+      const current =
+        selectedOperator === 'MOVISTAR'
+          ? user.workingBatchIdMovistar ?? null
+          : user.workingBatchIdClaro ?? user.workingBatchId ?? null
+      if (current === batchId) return
+      if (selectedOperator === 'MOVISTAR') {
+        patchAuthUser({ workingBatchIdMovistar: batchId })
+      } else {
+        patchAuthUser({ workingBatchIdClaro: batchId, workingBatchId: batchId })
+      }
+      void patchMe({ operator: selectedOperator, workingBatchId: batchId }).catch(() => {
         toast.error('No se pudo guardar el lote en curso')
       })
     },
-    [user, patchAuthUser]
+    [user, patchAuthUser, selectedOperator]
   )
   persistWorkingBatchRef.current = persistWorkingBatch
+
+  const prevOperatorRef = useRef(selectedOperator)
+  useEffect(() => {
+    if (prevOperatorRef.current === selectedOperator) return
+    prevOperatorRef.current = selectedOperator
+    queueHydratedRef.current = false
+    explicitTodosRef.current = false
+    if (!queueDeepLinkWins) {
+      setSelectedBatchId('')
+      setCurrentIndex(0)
+    }
+  }, [selectedOperator, queueDeepLinkWins])
 
   // Load detail for current client — placeholderData keeps previous record visible during nav
   const { data: clientDetail, isFetching: fetchingDetail } = useQuery({
@@ -1804,6 +1861,7 @@ export default function MyLeads() {
   )
 
   useEffect(() => {
+    if (!operatorChosen) return
     if (queueDeepLinkWins) {
       queueHydratedRef.current = true
       return
@@ -1880,6 +1938,7 @@ export default function MyLeads() {
   }, [
     applyQueueBatch,
     batchListReady,
+    operatorChosen,
     pendingCountsReady,
     queueBatches,
     queueDeepLinkWins,
@@ -2034,6 +2093,12 @@ export default function MyLeads() {
   }
 
   const openCallbackFromSidebar = (cb: Callback) => {
+    if (
+      selectedOperator &&
+      resolveImportOperator(cb.company.importBatch?.operator) !== selectedOperator
+    ) {
+      return
+    }
     if (cb.company.id === currentClient?.id) {
       const contactId = cb.callLog?.contact?.id
       if (contactId) {
@@ -2072,10 +2137,10 @@ export default function MyLeads() {
     goToClientById(companyId, { contactId })
   }
 
-  const canSaveCallResult = useMemo(
-    () => disposition !== '' || schedDate !== '',
-    [disposition, schedDate]
-  )
+  const canSaveCallResult = useMemo(() => {
+    const hasPhone = Boolean(editTelefono.trim())
+    return (disposition !== '' || schedDate !== '') && hasPhone
+  }, [disposition, schedDate, editTelefono])
 
   useEffect(() => {
     setSaveNotice(null)
@@ -2220,6 +2285,9 @@ export default function MyLeads() {
         if (requiresCallbackDate(disposition) && !schedDate) {
           throw new Error('Selecciona la fecha para el callback')
         }
+        if (!editTelefono.trim()) {
+          throw new Error('Sin teléfono de usuario: no se puede guardar el resultado de la llamada.')
+        }
         if (!editingCallLogId) {
           const otherContact = findOtherContactWithAgentLog(contactId)
           if (
@@ -2360,11 +2428,12 @@ export default function MyLeads() {
       else if (stayOnRecord && savedCompanyId) {
         // Re-pin by company id so a reorder (or filter change) cannot leave us on the wrong record.
         const fresh = await qc.fetchQuery({
-          queryKey: ['clients', 'my-leads', 'nav', selectedBatchId],
+          queryKey: ['clients', 'my-leads', 'nav', selectedBatchId, selectedOperator],
           queryFn: () =>
             fetchAllMyLeadClients({
               batchId: selectedBatchId || undefined,
               sortBy: 'registeredCreatedAt',
+              operator: selectedOperator ?? undefined,
             }),
         })
         const freshRaw: ClientSummary[] = fresh?.clients ?? []
@@ -2468,9 +2537,42 @@ export default function MyLeads() {
     }
   }, [])
 
-  // Split callbacks: own = current user; team = all (admin only)
-  const ownCallbacks = callbackList.filter((c) => c.agent.id === user?.id)
-  const activeList = cbTab === 'own' || !isAdmin ? ownCallbacks : callbackList
+  // Split callbacks: own = current user; team = same operator (admin only)
+  const operatorCallbacks = useMemo(() => {
+    if (!selectedOperator) return []
+    return callbackList.filter(
+      (c) => resolveImportOperator(c.company.importBatch?.operator) === selectedOperator
+    )
+  }, [callbackList, selectedOperator])
+  const ownCallbacks = useMemo(
+    () => operatorCallbacks.filter((c) => c.agent.id === user?.id),
+    [operatorCallbacks, user?.id]
+  )
+  const activeList = cbTab === 'own' || !isAdmin ? ownCallbacks : operatorCallbacks
+
+  const otherOperatorBanner = useMemo(() => {
+    if (!selectedOperator || !user?.id) return null
+    const other: ImportOperator = selectedOperator === 'MOVISTAR' ? 'CLARO' : 'MOVISTAR'
+    const others = callbackList
+      .filter(
+        (c) =>
+          c.agent.id === user.id && resolveImportOperator(c.company.importBatch?.operator) === other
+      )
+      .slice()
+      .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
+    if (others.length === 0) return null
+    const soonest = new Date(others[0].scheduledAt)
+    const time = format(soonest, 'HH:mm')
+    const when = isToday(soonest)
+      ? `a las ${time}`
+      : `el ${format(soonest, 'd MMM', { locale: es })} a las ${time}`
+    const label = operatorLabelEs(other)
+    const text =
+      others.length === 1
+        ? `Tienes 1 cita ${label} ${when}`
+        : `Tienes ${others.length} citas ${label} (próxima ${when})`
+    return { operator: other, text }
+  }, [callbackList, selectedOperator, user?.id])
 
   const todayCount = activeList.filter((c) => isToday(new Date(c.scheduledAt))).length
   const overdueCount = activeList.filter((c) => isPast(new Date(c.scheduledAt))).length
@@ -2620,7 +2722,24 @@ export default function MyLeads() {
               <span className="font-semibold truncate block text-gray-900">Migración de Operador</span>
             </div>
 
-            {batches.length > 0 && (
+            <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-gray-50 shrink-0" role="group" aria-label="Operador">
+              {(['CLARO', 'MOVISTAR'] as const).map((op) => (
+                <button
+                  key={op}
+                  type="button"
+                  onClick={() => chooseOperator(op)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                    selectedOperator === op
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  {operatorLabelEs(op)}
+                </button>
+              ))}
+            </div>
+
+            {operatorChosen && batches.length > 0 && (
               <BatchPendingPicker
                 batches={batches}
                 clients={allClients}
@@ -2755,6 +2874,19 @@ export default function MyLeads() {
         </div>
       </div>
 
+      {viewMode !== 'detail' && otherOperatorBanner && (
+        <div className="shrink-0 bg-slate-50 border-b border-gray-200 px-3 lg:px-6 py-1.5 flex items-center justify-between gap-3 text-xs text-gray-600">
+          <span>{otherOperatorBanner.text}</span>
+          <button
+            type="button"
+            onClick={() => chooseOperator(otherOperatorBanner.operator)}
+            className="shrink-0 px-2 py-0.5 rounded-md border border-gray-300 bg-white text-gray-700 font-medium hover:bg-gray-100"
+          >
+            Cambiar a {operatorLabelEs(otherOperatorBanner.operator)}
+          </button>
+        </div>
+      )}
+
       {/* ══════════════════════ DETAIL VIEW ══════════════════════════ */}
       {viewMode === 'detail' && (
         <div className="flex flex-col lg:flex-row flex-1 overflow-hidden min-h-0">
@@ -2765,7 +2897,7 @@ export default function MyLeads() {
             className="flex-1 overflow-y-auto [scrollbar-gutter:stable] p-3 lg:p-4 min-h-0"
           >
             {/* Loading state */}
-            {loadingList && (
+            {loadingList && operatorChosen && (
               <div className="flex items-center justify-center h-full text-gray-400">
                 <div className="text-center">
                   <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
@@ -2773,8 +2905,31 @@ export default function MyLeads() {
                 </div>
               </div>
             )}
+            {!operatorChosen && (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center text-gray-400 max-w-sm px-4">
+                  <User size={48} className="mx-auto mb-3" />
+                  <p className="font-medium text-gray-700">Elige operador (Claro / Movistar)</p>
+                  <p className="text-sm mt-1">
+                    Hasta que elijas, no se muestran empresas ni lotes. La cola FIFO es solo de ese operador.
+                  </p>
+                  <div className="mt-4 flex justify-center gap-2">
+                    {(['CLARO', 'MOVISTAR'] as const).map((op) => (
+                      <button
+                        key={op}
+                        type="button"
+                        onClick={() => chooseOperator(op)}
+                        className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+                      >
+                        {operatorLabelEs(op)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
             {/* Empty state — keeps top bar + batch selector visible */}
-            {!loadingList && clients.length === 0 && (
+            {operatorChosen && !loadingList && clients.length === 0 && (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center text-gray-400">
                   <User size={48} className="mx-auto mb-3" />
@@ -2787,7 +2942,7 @@ export default function MyLeads() {
                 </div>
               </div>
             )}
-            {!loadingList && clients.length > 0 && (
+            {operatorChosen && !loadingList && clients.length > 0 && (
               <div className="relative min-h-[480px]">
                 {fetchingDetail && displayDetail && (
                   <div className="absolute top-0 left-0 right-0 z-10 h-0.5 overflow-hidden bg-blue-100">
@@ -2826,6 +2981,15 @@ export default function MyLeads() {
                       </span>
                     )}
                   </div>
+                  {detail && displayDetail.otherOperatorPresence && (
+                    <OtherOperatorRucBanner
+                      operator={
+                        displayDetail.otherOperatorPresence.operator === 'MOVISTAR'
+                          ? 'MOVISTAR'
+                          : 'CLARO'
+                      }
+                    />
+                  )}
                   {detail && (
                     <DuplicateRucBanner
                       ruc={displayDetail.ruc}
@@ -3068,6 +3232,11 @@ export default function MyLeads() {
                 >
                   Guardar y siguiente pendiente <ChevronRight size={15} />
                 </button>
+                {!editTelefono.trim() && (
+                  <p className="text-xs text-amber-700 sm:basis-full">
+                    Sin teléfono de usuario: no se puede guardar el resultado de la llamada.
+                  </p>
+                )}
                 <div className="flex gap-2 sm:ml-auto">
                   <DetailRecordNav
                     onFirstRegistered={navigateWithSave(goToFirstRegistered)}
@@ -3161,7 +3330,20 @@ export default function MyLeads() {
                         : 'text-gray-500 hover:text-gray-700'
                     }`}
                   >
-                    Equipo ({callbackList.length})
+                    Equipo ({operatorCallbacks.length})
+                  </button>
+                </div>
+              )}
+
+              {otherOperatorBanner && (
+                <div className="shrink-0 mx-2 mt-1.5 mb-0.5 px-2.5 py-1.5 rounded-md bg-slate-50 border border-gray-200 text-[11px] text-gray-600 flex items-center justify-between gap-2">
+                  <span>{otherOperatorBanner.text}</span>
+                  <button
+                    type="button"
+                    onClick={() => chooseOperator(otherOperatorBanner.operator)}
+                    className="shrink-0 px-1.5 py-0.5 rounded border border-gray-300 bg-white text-gray-700 font-medium hover:bg-gray-100"
+                  >
+                    Cambiar a {operatorLabelEs(otherOperatorBanner.operator)}
                   </button>
                 </div>
               )}
@@ -3360,7 +3542,15 @@ export default function MyLeads() {
       )}
 
       {/* ══════════════════════ GRID / KANBAN VIEW ═══════════════════ */}
-      {viewMode === 'grid' && (
+      {viewMode === 'grid' && !operatorChosen && (
+        <div className="flex-1 flex items-center justify-center bg-gray-50">
+          <div className="text-center text-gray-400 max-w-sm px-4">
+            <p className="font-medium text-gray-700">Elige operador (Claro / Movistar)</p>
+            <p className="text-sm mt-1">Hasta que elijas, no se muestran empresas ni lotes.</p>
+          </div>
+        </div>
+      )}
+      {viewMode === 'grid' && operatorChosen && (
         <div className="flex-1 overflow-y-auto bg-gray-50 p-4 lg:p-6 space-y-5">
           {/* Search + filters */}
           <div className="flex flex-wrap items-center gap-3">
@@ -3557,7 +3747,15 @@ export default function MyLeads() {
       />
 
       {/* ══════════════════════ LIST VIEW ══════════════════════════ */}
-      {viewMode === 'list' && (() => {
+      {viewMode === 'list' && !operatorChosen && (
+        <div className="flex-1 flex items-center justify-center bg-gray-50">
+          <div className="text-center text-gray-400 max-w-sm px-4">
+            <p className="font-medium text-gray-700">Elige operador (Claro / Movistar)</p>
+            <p className="text-sm mt-1">Hasta que elijas, no se muestran empresas ni lotes.</p>
+          </div>
+        </div>
+      )}
+      {viewMode === 'list' && operatorChosen && (() => {
         // Map id → index in Detalle nav `clients` (same createdAt order as list API).
         const queueIndexById = new Map(clients.map((c, i) => [c.id, i]))
         const listFiltered = listClients.filter((c) => {

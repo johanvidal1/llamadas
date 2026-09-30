@@ -33,6 +33,7 @@ import {
   sortCompanyIdsByRegisteredCreatedAtQueue,
   type LastDispositionMap,
 } from '../lib/companyDisposition'
+import { parseImportOperator } from '../lib/operator'
 import { countUnassignedCompanies, BatchBlockedError } from '../lib/assignmentOrder'
 
 const MAX_CLIENTS_LIMIT = 2000
@@ -175,7 +176,7 @@ async function fetchCompanies(
     where,
     include: {
       contacts: contactsInclude,
-      importBatch: { select: { id: true, filename: true, createdAt: true } },
+      importBatch: { select: { id: true, filename: true, createdAt: true, operator: true } },
       _count: { select: { callLogs: true, callbacks: true } },
       callbacks: {
         where: { completed: false },
@@ -370,6 +371,11 @@ async function buildClientsFilterContext(
   }
 
   if (batchId) where.importBatchId = batchId
+  const operatorFilter =
+    query.operator === 'CLARO' || query.operator === 'MOVISTAR' ? query.operator : null
+  if (operatorFilter) {
+    where.importBatch = { ...(where.importBatch as object | undefined), operator: operatorFilter }
+  }
   if (status && !agentScopedPending) where.status = status
   if (search) {
     where.OR = [
@@ -840,7 +846,11 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     }
 
     try {
-      const { companies, contactCount } = await countUnassignedCompanies(batchId || undefined)
+      const operator = parseImportOperator(query.operator)
+      const { companies, contactCount } = await countUnassignedCompanies(
+        batchId || undefined,
+        batchId ? undefined : operator
+      )
 
       res.json({
         clients: [],
@@ -1030,7 +1040,7 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
       mobileLines: {
         orderBy: { createdAt: 'asc' },
       },
-      importBatch: { select: { id: true, filename: true, createdAt: true } },
+      importBatch: { select: { id: true, filename: true, createdAt: true, operator: true } },
     },
   })
 
@@ -1039,7 +1049,38 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     return
   }
 
-  res.json(company)
+  const currentOperator = company.importBatch?.operator === 'MOVISTAR' ? 'MOVISTAR' : 'CLARO'
+  const otherOperator = currentOperator === 'CLARO' ? 'MOVISTAR' : 'CLARO'
+  const otherOperatorCompanies = await prisma.company.findMany({
+    where: {
+      ruc: company.ruc,
+      id: { not: company.id },
+      importBatch: { operator: otherOperator },
+    },
+    select: {
+      id: true,
+      importBatch: {
+        select: { id: true, filename: true, displayName: true, operator: true },
+      },
+    },
+    take: 20,
+  })
+  const otherOperatorPresence =
+    otherOperatorCompanies.length > 0
+      ? {
+          operator: otherOperator,
+          batchCount: new Set(otherOperatorCompanies.map((c) => c.importBatch?.id).filter(Boolean)).size,
+          batches: otherOperatorCompanies.map((c) => ({
+            companyId: c.id,
+            batchId: c.importBatch?.id,
+            filename: c.importBatch?.filename,
+            displayName: c.importBatch?.displayName,
+            operator: c.importBatch?.operator,
+          })),
+        }
+      : null
+
+  res.json({ ...company, otherOperatorPresence })
 })
 
 // PUT /api/clients/:id — update notes, plan

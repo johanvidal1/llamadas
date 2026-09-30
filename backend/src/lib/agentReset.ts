@@ -4,6 +4,7 @@ import { ensureArchivedAgent, ARCHIVED_AGENT_NAME } from './archivedAgent'
 import { isAdminUser } from './userPermissions'
 import { prisma } from './prisma'
 import { OPTICK_TENANT_ID, sqlAndTenant } from './tenant'
+import { sqlCallLogCompanyOperatorFilter, type ImportOperator } from './operator'
 
 export class AgentResetBlockedError extends Error {
   constructor(message: string) {
@@ -43,7 +44,8 @@ export async function countCallLogsAfterReset(agentId: string): Promise<number> 
 
 /** Batch version: one query for all agents (avoids N+1). */
 export async function countCallLogsAfterResetByAgentIds(
-  agentIds: string[]
+  agentIds: string[],
+  operator?: ImportOperator | null
 ): Promise<Map<string, number>> {
   if (agentIds.length === 0) return new Map()
 
@@ -59,6 +61,7 @@ export async function countCallLogsAfterResetByAgentIds(
     ) r ON true
     WHERE cl."agentId" IN (${Prisma.join(agentIds)})
       ${sqlAndTenant('cl')}
+      ${sqlCallLogCompanyOperatorFilter(operator, Prisma.sql`cl."companyId"`)}
       AND (r.reset_at IS NULL OR cl."calledAt" >= r.reset_at)
     GROUP BY cl."agentId"
   `

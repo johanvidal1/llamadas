@@ -4,6 +4,16 @@ import {
   countCallLogsAfterResetByAgentIds,
   getLatestResetAtByAgentIds,
 } from '../lib/agentReset'
+import {
+  parseImportOperator,
+  resolveImportOperator,
+  assignmentOperatorWhere,
+  callbackOperatorWhere,
+  companyOperatorWhere,
+  contactOperatorWhere,
+  importBatchOperatorWhere,
+  type ImportOperator,
+} from '../lib/operator'
 import { prisma } from '../lib/prisma'
 import { requireAuth, requireAdmin, AuthRequest } from '../middleware/auth'
 import {
@@ -61,10 +71,12 @@ function reportsCacheKey(
   tenantId: string,
   section: ReportsSection | 'agent-runs',
   filterAgentId?: string,
-  agentId?: string
+  agentId?: string,
+  operator?: string
 ) {
-  if (section === 'agent-runs') return `reports:${tenantId}:agent-runs:${agentId ?? ''}`
-  return `reports:${tenantId}:${section}:${filterAgentId ?? 'all'}`
+  const op = operator ?? 'all'
+  if (section === 'agent-runs') return `reports:${tenantId}:agent-runs:${agentId ?? ''}:${op}`
+  return `reports:${tenantId}:${section}:${filterAgentId ?? 'all'}:${op}`
 }
 
 function getCachedReports<T>(cacheKey: string, bypassCache: boolean): T | null {
@@ -90,11 +102,13 @@ function dashboardStatsCacheKey(
   tenantId: string,
   isAdmin: boolean,
   agentId: string,
-  batchId?: string
+  batchId?: string,
+  operator?: string
 ) {
+  const op = operator ?? 'all'
   return isAdmin
-    ? `dashboard:${tenantId}:stats:admin`
-    : `dashboard:${tenantId}:stats:agent:${agentId}:${batchId ?? 'all'}`
+    ? `dashboard:${tenantId}:stats:admin:${op}`
+    : `dashboard:${tenantId}:stats:agent:${agentId}:${batchId ?? 'all'}:${op}`
 }
 
 function getCachedDashboardStats<T>(cacheKey: string, bypassCache: boolean): T | null {
@@ -112,7 +126,7 @@ export function clearDashboardStatsCache() {
   dashboardStatsCache.clear()
 }
 
-function buildScopedCallWhere(filterAgentId?: string) {
+function buildScopedCallWhere(filterAgentId?: string, operator?: ImportOperator | null) {
   const assignmentScope = filterAgentId
     ? { agentId: filterAgentId }
     : { agent: activeAgentUserWhere }
@@ -120,6 +134,7 @@ function buildScopedCallWhere(filterAgentId?: string) {
     contactId: { not: null },
     contact: { assignment: assignmentScope },
     ...(filterAgentId ? { agentId: filterAgentId } : { agent: activeAgentUserWhere }),
+    ...contactOperatorWhere(operator),
   }
 }
 
@@ -132,7 +147,8 @@ type AgentStatusMaps = {
 
 async function buildAgentStatusMaps(
   agentIds: string[],
-  filterAgentId?: string
+  filterAgentId?: string,
+  operator?: ImportOperator | null
 ): Promise<AgentStatusMaps> {
   const empty: AgentStatusMaps = {
     agentContactStatusMap: {},
@@ -146,6 +162,7 @@ async function buildAgentStatusMaps(
     where: {
       agentId: { in: agentIds },
       ...(filterAgentId ? { agentId: filterAgentId } : {}),
+      ...assignmentOperatorWhere(operator),
     },
     select: {
       agentId: true,
@@ -329,8 +346,15 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
   }
   const isAdmin = req.user!.role === 'ADMIN'
   const { batchId } = req.query as Record<string, string>
+  const operator = parseImportOperator(req.query.operator)
   const bypassCache = req.query.refresh === 'true' || req.get('x-refresh') === 'true'
-  const cacheKey = dashboardStatsCacheKey(tenantId, isAdmin, req.user!.id, batchId)
+  const cacheKey = dashboardStatsCacheKey(
+    tenantId,
+    isAdmin,
+    req.user!.id,
+    batchId,
+    operator ?? undefined
+  )
 
   const cached = getCachedDashboardStats<Record<string, unknown>>(cacheKey, bypassCache)
   if (cached) {
@@ -339,7 +363,12 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 
   if (isAdmin) {
-    const assignedCompanyFilter = { contacts: { some: { assignment: { is: {} } } } }
+    const companyOp = companyOperatorWhere(operator)
+    const contactOp = contactOperatorWhere(operator)
+    const assignedCompanyFilter = {
+      contacts: { some: { assignment: { is: {} } } },
+      ...companyOp,
+    }
 
     const [
       totalClients,
@@ -348,20 +377,21 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
       companiesByStatusRows,
       totalAgents,
     ] = await Promise.all([
-      prisma.company.count(),
-      prisma.contact.count(),
-      prisma.contact.groupBy({ by: ['status'], _count: { status: true } }),
-      prisma.company.groupBy({ by: ['status'], _count: { status: true } }),
+      prisma.company.count({ where: companyOp }),
+      prisma.contact.count({ where: contactOp }),
+      prisma.contact.groupBy({ by: ['status'], _count: { status: true }, where: contactOp }),
+      prisma.company.groupBy({ by: ['status'], _count: { status: true }, where: companyOp }),
       prisma.user.count({ where: activeAgentUserWhere }),
     ])
 
     const [totalCalls, pendingCallbacks, recentCalls, assignedCompanyRows, assignedContacts] =
       await Promise.all([
-        prisma.callLog.count(),
-        prisma.callback.count({ where: { completed: false } }),
+        prisma.callLog.count({ where: contactOp }),
+        prisma.callback.count({ where: { completed: false, ...callbackOperatorWhere(operator) } }),
         prisma.callLog.findMany({
           take: 10,
           orderBy: { calledAt: 'desc' },
+          where: contactOp,
           include: {
             company: { select: { id: true, ruc: true, razonSocial: true } },
             contact: { select: { nombre: true } },
@@ -372,7 +402,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
           where: assignedCompanyFilter,
           select: { id: true },
         }),
-        prisma.assignment.count(),
+        prisma.assignment.count({ where: assignmentOperatorWhere(operator) }),
       ])
 
     const contactsByStatus = toStatusMap(contactsByStatusRows)
@@ -409,17 +439,22 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
     setCachedDashboardStats(cacheKey, data)
     res.json(data)
   } else {
-    const batchFilter = batchId ? { contact: { company: { importBatchId: batchId } } } : {}
+    const companyOp = companyOperatorWhere(operator)
+    const batchFilter = batchId
+      ? { contact: { company: { importBatchId: batchId } } }
+      : operator
+        ? { contact: { company: { importBatch: { operator } } } }
+        : {}
     const agentCompanyFilter = {
       contacts: { some: { assignment: { agentId: req.user!.id } } },
-      ...(batchId ? { importBatchId: batchId } : {}),
+      ...(batchId ? { importBatchId: batchId } : companyOp),
     }
     const callFilter = batchId
       ? { agentId: req.user!.id, company: { importBatchId: batchId } }
-      : { agentId: req.user!.id }
+      : { agentId: req.user!.id, ...contactOperatorWhere(operator) }
     const cbFilter = batchId
       ? { agentId: req.user!.id, company: { importBatchId: batchId } }
-      : { agentId: req.user!.id }
+      : { agentId: req.user!.id, ...callbackOperatorWhere(operator) }
 
     const todayYmd = todayYmdInAppTz()
     const todayStart = localDayStartUtc(todayYmd)
@@ -462,6 +497,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
         fetchLastActiveCallDays({
           agentId: req.user!.id,
           batchId: batchId || undefined,
+          operator: batchId ? undefined : operator,
           beforeExclusiveYmd: todayYmd,
           limit: 2,
         }),
@@ -563,6 +599,7 @@ type BatchAssignmentRun = {
   companyCount: number
   assignedBy: { name: string }
   batchLabel: string
+  operator: ImportOperator
   callCount: number
   contactedCompanies: number
   contactedPct: number
@@ -574,7 +611,8 @@ type BatchAssignmentRun = {
 
 async function fetchCallsByDay(
   thirtyDaysAgo: Date,
-  filterAgentId?: string
+  filterAgentId?: string,
+  operator?: ImportOperator | null
 ): Promise<
   {
     date: string
@@ -583,7 +621,7 @@ async function fetchCallsByDay(
     updatedRegistrations: number
   }[]
 > {
-  const rows = await fetchDailyActivityFromSql(thirtyDaysAgo, filterAgentId)
+  const rows = await fetchDailyActivityFromSql(thirtyDaysAgo, filterAgentId, operator)
   return rows.map((r) => ({
     date: r.date,
     count: r.calls,
@@ -660,20 +698,21 @@ async function buildBatchAgentBreakdown(batchId: string): Promise<AgentBreakdown
     .sort((a, b) => b.assignedCompanies - a.assignedCompanies)
 }
 
-async function buildReportsSummary(filterAgentId?: string) {
+async function buildReportsSummary(filterAgentId?: string, operator?: ImportOperator | null) {
+  const companyOp = companyOperatorWhere(operator)
   const companyAgentFilter = filterAgentId
-    ? { contacts: { some: { assignment: { agentId: filterAgentId } } } }
-    : {}
+    ? { contacts: { some: { assignment: { agentId: filterAgentId } } }, ...companyOp }
+    : { ...companyOp }
   const assignedCompanyFilter = filterAgentId
-    ? { contacts: { some: { assignment: { agentId: filterAgentId } } } }
-    : { contacts: { some: { assignment: { is: {} } } } }
+    ? { contacts: { some: { assignment: { agentId: filterAgentId } } }, ...companyOp }
+    : { contacts: { some: { assignment: { is: {} } } }, ...companyOp }
   const thirtyDaysAgo = new Date()
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-  const scopedCallWhere = buildScopedCallWhere(filterAgentId)
+  const scopedCallWhere = buildScopedCallWhere(filterAgentId, operator)
 
   const [callsByDay, dispositionBreakdown, totalCompanies, assignedCompanyRows, funnelCompanyStatuses] =
     await Promise.all([
-      fetchCallsByDay(thirtyDaysAgo, filterAgentId),
+      fetchCallsByDay(thirtyDaysAgo, filterAgentId, operator),
       prisma.callLog.groupBy({
         by: ['disposition'],
         _count: { disposition: true },
@@ -721,9 +760,10 @@ async function buildReportsSummary(filterAgentId?: string) {
   }
 }
 
-async function buildReportsAgents(filterAgentId?: string) {
-  const scopedCallWhere = buildScopedCallWhere(filterAgentId)
+async function buildReportsAgents(filterAgentId?: string, operator?: ImportOperator | null) {
+  const scopedCallWhere = buildScopedCallWhere(filterAgentId, operator)
   const now = new Date()
+  const cbOp = callbackOperatorWhere(operator)
 
   const [agents, callsByAgentContact, pendingCallbacks, overdueCallbacks] = await Promise.all([
     prisma.user.findMany({
@@ -738,12 +778,12 @@ async function buildReportsAgents(filterAgentId?: string) {
     prisma.callback.groupBy({
       by: ['agentId'],
       _count: { agentId: true },
-      where: { completed: false },
+      where: { completed: false, ...cbOp },
     }),
     prisma.callback.groupBy({
       by: ['agentId'],
       _count: { agentId: true },
-      where: { completed: false, scheduledAt: { lt: now } },
+      where: { completed: false, scheduledAt: { lt: now }, ...cbOp },
     }),
   ])
 
@@ -765,9 +805,9 @@ async function buildReportsAgents(filterAgentId?: string) {
 
   const agentIds = agents.map((a) => a.id)
   const [statusMaps, sparklinesByAgent, callCountsAfterReset] = await Promise.all([
-    buildAgentStatusMaps(agentIds, filterAgentId),
-    fetchAgentSparklines(agentIds, 7),
-    countCallLogsAfterResetByAgentIds(agentIds),
+    buildAgentStatusMaps(agentIds, filterAgentId, operator),
+    fetchAgentSparklines(agentIds, 7, operator),
+    countCallLogsAfterResetByAgentIds(agentIds, operator),
   ])
   const {
     agentContactStatusMap,
@@ -777,10 +817,10 @@ async function buildReportsAgents(filterAgentId?: string) {
   } = statusMaps
 
   const agentPerformance = agents.map((a) => {
-    const assigned = a._count.assignments
+    const contactStatuses = agentContactStatusMap[a.id] ?? {}
+    const assigned = Object.values(contactStatuses).reduce((s, n) => s + n, 0)
     const totalCalls = callCountsAfterReset.get(a.id) ?? 0
     const calledContacts = calledByAgent[a.id]?.size ?? 0
-    const contactStatuses = agentContactStatusMap[a.id] ?? {}
     const companyStatuses = agentCompanyStatusMap[a.id] ?? {}
     const companyPipeline = agentCompanyPipelineMap[a.id] ?? {}
     const assignedCompanies = agentAssignedCompaniesMap[a.id] ?? 0
@@ -850,7 +890,7 @@ async function buildReportsAgents(filterAgentId?: string) {
   return { agentPerformance }
 }
 
-async function buildReportsBatches(filterAgentId?: string) {
+async function buildReportsBatches(filterAgentId?: string, operator?: ImportOperator | null) {
   const agentFilter = filterAgentId ? { agentId: filterAgentId } : {}
   const globalAssignedCompanyFilter = { contacts: { some: { assignment: { is: {} } } } }
   const scopedCompanyFilter = filterAgentId
@@ -858,7 +898,8 @@ async function buildReportsBatches(filterAgentId?: string) {
     : globalAssignedCompanyFilter
 
   const batches = await prisma.importBatch.findMany({
-    select: { id: true, filename: true, displayName: true, createdAt: true },
+    where: importBatchOperatorWhere(operator),
+    select: { id: true, filename: true, displayName: true, createdAt: true, operator: true },
     orderBy: { createdAt: 'desc' },
   })
 
@@ -920,6 +961,7 @@ async function buildReportsBatches(filterAgentId?: string) {
       id: b.id,
       filename: b.filename,
       createdAt: b.createdAt,
+      operator: resolveImportOperator(b.operator),
       batchTotalCompanies: metrics?.batchTotalCompanies ?? 0,
       assignedCompanies: metrics?.assignedCompanies ?? 0,
       assignedToAgentCompanies: metrics?.assignedToAgentCompanies ?? null,
@@ -937,22 +979,30 @@ async function buildReportsBatches(filterAgentId?: string) {
   return { batchProgress }
 }
 
-async function buildReportsSection(section: ReportsSection, filterAgentId?: string) {
+async function buildReportsSection(
+  section: ReportsSection,
+  filterAgentId?: string,
+  operator?: ImportOperator | null
+) {
   switch (section) {
     case 'summary':
-      return buildReportsSummary(filterAgentId)
+      return buildReportsSummary(filterAgentId, operator)
     case 'agents':
-      return buildReportsAgents(filterAgentId)
+      return buildReportsAgents(filterAgentId, operator)
     case 'batches':
-      return buildReportsBatches(filterAgentId)
+      return buildReportsBatches(filterAgentId, operator)
   }
 }
 
-async function buildReportsData(filterAgentId?: string, sections?: ReportsSection[]) {
+async function buildReportsData(
+  filterAgentId?: string,
+  sections?: ReportsSection[],
+  operator?: ImportOperator | null
+) {
   const requested = sections ?? [...REPORTS_SECTIONS]
   const result: Record<string, unknown> = {}
   for (const section of requested) {
-    Object.assign(result, await buildReportsSection(section, filterAgentId))
+    Object.assign(result, await buildReportsSection(section, filterAgentId, operator))
   }
   return result
 }
@@ -990,8 +1040,9 @@ router.get('/reports/agent/:agentId/runs', requireAdmin, async (req: AuthRequest
   }
   const { agentId } = req.params
   const { refresh } = req.query as Record<string, string>
+  const operator = parseImportOperator(req.query.operator)
   const bypassCache = refresh === 'true' || req.get('x-refresh') === 'true'
-  const cacheKey = reportsCacheKey(tenantId, 'agent-runs', undefined, agentId)
+  const cacheKey = reportsCacheKey(tenantId, 'agent-runs', undefined, agentId, operator ?? undefined)
 
   const cached = getCachedReports<{ assignmentRuns: BatchAssignmentRun[] }>(cacheKey, bypassCache)
   if (cached) {
@@ -1008,7 +1059,7 @@ router.get('/reports/agent/:agentId/runs', requireAdmin, async (req: AuthRequest
     return
   }
 
-  const assignmentRuns = await buildAgentAssignmentRuns(agentId)
+  const assignmentRuns = await buildAgentAssignmentRuns(agentId, operator)
   const data = { assignmentRuns }
   setCachedReports(cacheKey, data)
   res.json(data)
@@ -1022,6 +1073,7 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
     return
   }
   const { agentId: filterAgentId, refresh, sections: sectionsParam } = req.query as Record<string, string>
+  const operator = parseImportOperator(req.query.operator)
   const bypassCache = refresh === 'true' || req.get('x-refresh') === 'true'
   const sections = parseReportsSections(sectionsParam)
 
@@ -1029,7 +1081,7 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
   const sectionsToBuild: ReportsSection[] = []
 
   for (const section of sections) {
-    const cacheKey = reportsCacheKey(tenantId, section, filterAgentId || undefined)
+    const cacheKey = reportsCacheKey(tenantId, section, filterAgentId || undefined, undefined, operator ?? undefined)
     const cached = getCachedReports<Record<string, unknown>>(cacheKey, bypassCache)
     if (cached) {
       Object.assign(result, cached)
@@ -1039,7 +1091,7 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
   }
 
   if (sectionsToBuild.length > 0) {
-    const built = await buildReportsData(filterAgentId || undefined, sectionsToBuild)
+    const built = await buildReportsData(filterAgentId || undefined, sectionsToBuild, operator)
     for (const section of sectionsToBuild) {
       const sectionData: Record<string, unknown> = {}
       if (section === 'summary') {
@@ -1047,13 +1099,14 @@ router.get('/reports', requireAdmin, async (req: AuthRequest, res: Response) => 
         sectionData.dispositionBreakdown = built.dispositionBreakdown
         sectionData.assignedCompanies = built.assignedCompanies
         sectionData.companyPipeline = built.companyPipeline
+        sectionData.companyDispositionCounts = built.companyDispositionCounts
         sectionData.funnel = built.funnel
       } else if (section === 'agents') {
         sectionData.agentPerformance = built.agentPerformance
       } else if (section === 'batches') {
         sectionData.batchProgress = built.batchProgress
       }
-      const cacheKey = reportsCacheKey(tenantId, section, filterAgentId || undefined)
+      const cacheKey = reportsCacheKey(tenantId, section, filterAgentId || undefined, undefined, operator ?? undefined)
       setCachedReports(cacheKey, sectionData)
       Object.assign(result, sectionData)
     }
@@ -1102,7 +1155,10 @@ function resolveRunBatchLabel(
   return 'Sin lote'
 }
 
-async function buildAgentAssignmentRuns(agentId: string): Promise<BatchAssignmentRun[]> {
+async function buildAgentAssignmentRuns(
+  agentId: string,
+  operator?: ImportOperator | null
+): Promise<BatchAssignmentRun[]> {
   const allRuns = await prisma.assignmentRun.findMany({
     where: { agentId },
     select: {
@@ -1111,7 +1167,7 @@ async function buildAgentAssignmentRuns(agentId: string): Promise<BatchAssignmen
       companyCount: true,
       createdAt: true,
       assignedBy: { select: { name: true } },
-      importBatch: { select: { filename: true, displayName: true } },
+      importBatch: { select: { filename: true, displayName: true, operator: true } },
       assignments: {
         select: {
           contact: {
@@ -1119,7 +1175,7 @@ async function buildAgentAssignmentRuns(agentId: string): Promise<BatchAssignmen
               company: {
                 select: {
                   importBatchId: true,
-                  importBatch: { select: { filename: true, displayName: true } },
+                  importBatch: { select: { filename: true, displayName: true, operator: true } },
                 },
               },
             },
@@ -1145,6 +1201,10 @@ async function buildAgentAssignmentRuns(agentId: string): Promise<BatchAssignmen
         companyCount: run.companyCount,
         assignedBy: { name: run.assignedBy.name },
         batchLabel: resolveRunBatchLabel(run, batchById),
+        operator: resolveImportOperator(
+          run.importBatch?.operator ??
+            run.assignments[0]?.contact.company.importBatch?.operator
+        ),
         ...metrics,
       }
     })
@@ -1168,7 +1228,7 @@ async function buildAgentAssignmentRuns(agentId: string): Promise<BatchAssignmen
     legacyBatchIds.length > 0
       ? await prisma.importBatch.findMany({
           where: { id: { in: legacyBatchIds } },
-          select: { id: true, filename: true, displayName: true },
+          select: { id: true, filename: true, displayName: true, operator: true },
         })
       : []
   const legacyBatchById = Object.fromEntries(legacyBatchImports.map((b) => [b.id, b]))
@@ -1189,6 +1249,7 @@ async function buildAgentAssignmentRuns(agentId: string): Promise<BatchAssignmen
       companyCount: legacy.companyCount,
       assignedBy: { name: 'Asignación anterior' },
       batchLabel: batchLabelFromImport(legacyBatchById[batchId] ?? null),
+      operator: resolveImportOperator(legacyBatchById[batchId]?.operator),
       callCount: legacy.callCount,
       contactedCompanies: legacy.contactedCompanies,
       contactedPct: legacy.contactedPct,
@@ -1199,9 +1260,11 @@ async function buildAgentAssignmentRuns(agentId: string): Promise<BatchAssignmen
     })
   }
 
-  return [...mappedRuns, ...legacyRuns].sort(
+  const combined = [...mappedRuns, ...legacyRuns].sort(
     (a, b) => new Date(b.assignedAt ?? 0).getTime() - new Date(a.assignedAt ?? 0).getTime()
   )
+  if (!operator) return combined
+  return combined.filter((run) => run.operator === operator)
 }
 
 async function buildBatchAssignmentRuns(
@@ -1210,7 +1273,7 @@ async function buildBatchAssignmentRuns(
 ): Promise<BatchAssignmentRun[]> {
   const batchImport = await prisma.importBatch.findUnique({
     where: { id: batchId },
-    select: { filename: true, displayName: true },
+    select: { filename: true, displayName: true, operator: true },
   })
   const batchLabel = batchLabelFromImport(batchImport)
 
@@ -1222,7 +1285,7 @@ async function buildBatchAssignmentRuns(
       companyCount: true,
       createdAt: true,
       assignedBy: { select: { name: true } },
-      importBatch: { select: { filename: true, displayName: true } },
+      importBatch: { select: { filename: true, displayName: true, operator: true } },
       assignments: {
         select: {
           contact: {
@@ -1230,7 +1293,7 @@ async function buildBatchAssignmentRuns(
               company: {
                 select: {
                   importBatchId: true,
-                  importBatch: { select: { filename: true, displayName: true } },
+                  importBatch: { select: { filename: true, displayName: true, operator: true } },
                 },
               },
             },
@@ -1255,6 +1318,7 @@ async function buildBatchAssignmentRuns(
       batchLabel: run.importBatch
         ? batchLabelFromImport(run.importBatch)
         : batchLabel,
+      operator: resolveImportOperator(run.importBatch?.operator ?? batchImport?.operator),
       ...metrics,
     })
   }
@@ -1273,6 +1337,7 @@ async function buildBatchAssignmentRuns(
       companyCount: legacy.companyCount,
       assignedBy: { name: 'Asignación anterior' },
       batchLabel,
+      operator: resolveImportOperator(batchImport?.operator),
       callCount: legacy.callCount,
       contactedCompanies: legacy.contactedCompanies,
       contactedPct: legacy.contactedPct,
@@ -1361,35 +1426,40 @@ async function buildSingleBatchMetrics(batchId: string, filterAgentId?: string) 
 // GET /api/dashboard/reports/trends
 router.get('/reports/trends', requireAdmin, async (req: AuthRequest, res: Response) => {
   const { from, to, agentId, granularity } = req.query as Record<string, string>
-  const data = await fetchReportTrends({ from, to, agentId, granularity })
+  const operator = parseImportOperator(req.query.operator)
+  const data = await fetchReportTrends({ from, to, agentId, granularity, operator })
   res.json(data)
 })
 
 // GET /api/dashboard/reports/agent-calls
 router.get('/reports/agent-calls', requireAdmin, async (req: AuthRequest, res: Response) => {
   const { period, date, from, to } = req.query as Record<string, string>
-  const data = await fetchAgentCallsByPeriod({ period, date, from, to })
+  const operator = parseImportOperator(req.query.operator)
+  const data = await fetchAgentCallsByPeriod({ period, date, from, to, operator })
   res.json(data)
 })
 
 // GET /api/dashboard/reports/funnel-by-period
 router.get('/reports/funnel-by-period', requireAdmin, async (req: AuthRequest, res: Response) => {
   const { from, to, agentId } = req.query as Record<string, string>
-  const data = await fetchFunnelByPeriod({ from, to, agentId })
+  const operator = parseImportOperator(req.query.operator)
+  const data = await fetchFunnelByPeriod({ from, to, agentId, operator })
   res.json(data)
 })
 
 // GET /api/dashboard/reports/zero-by-period
 router.get('/reports/zero-by-period', requireAdmin, async (req: AuthRequest, res: Response) => {
   const { from, to, agentId } = req.query as Record<string, string>
-  const data = await fetchZeroResponsesByPeriod({ from, to, agentId })
+  const operator = parseImportOperator(req.query.operator)
+  const data = await fetchZeroResponsesByPeriod({ from, to, agentId, operator })
   res.json(data)
 })
 
 // GET /api/dashboard/reports/call-heatmap
 router.get('/reports/call-heatmap', requireAdmin, async (req: AuthRequest, res: Response) => {
   const { weeks, from, to, agentId } = req.query as Record<string, string>
-  const data = await fetchCallHeatmap({ weeks, from, to, agentId })
+  const operator = parseImportOperator(req.query.operator)
+  const data = await fetchCallHeatmap({ weeks, from, to, agentId, operator })
   res.json(data)
 })
 
@@ -1475,10 +1545,14 @@ router.get('/batch/:batchId', requireAdmin, async (req: AuthRequest, res: Respon
 // GET /api/dashboard/my-batches
 router.get('/my-batches', requireAuth, async (req: AuthRequest, res: Response) => {
   const agentId = req.user!.id
+  const operator = parseImportOperator(req.query.operator)
 
   const batches = await prisma.importBatch.findMany({
-    where: { companies: { some: { contacts: { some: { assignment: { agentId } } } } } },
-    select: { id: true, filename: true, createdAt: true },
+    where: {
+      ...(operator ? { operator } : {}),
+      companies: { some: { contacts: { some: { assignment: { agentId } } } } },
+    },
+    select: { id: true, filename: true, createdAt: true, operator: true },
     orderBy: { createdAt: 'desc' },
   })
 

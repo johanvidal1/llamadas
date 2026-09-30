@@ -2,6 +2,8 @@ import * as XLSX from 'xlsx'
 import csvParser from 'csv-parser'
 import { Readable } from 'stream'
 import { dedupeParsedMobileLines, isValidMobileLineNumber, mobileDigits } from './mobileLine'
+import { type ImportOperator, isImportOperator } from './operator'
+import { parseMovistarExcel } from './parseMovistarWorkbook'
 
 export interface ParsedContact {
   nombre: string
@@ -33,12 +35,15 @@ export interface ParsedCompany {
   estado?: string     // OK | NO_ENCONTRADO | SIN_CONTACTOS
   fechaConsulta?: string
   contacts: ParsedContact[]
+  /** Movistar: true if at least one Usuarios row. Claro Contactos rows count as true. */
+  hasUsuarios?: boolean
 }
 
 export interface ParseResult {
   companies: ParsedCompany[]
   sourceRowCount: number
   mobileLines: ParsedMobileLine[]
+  skippedVacioCount?: number
 }
 
 export function normalizePhone(raw: string): string {
@@ -229,6 +234,7 @@ function parseRows(rows: Record<string, unknown>[]): ParsedCompany[] {
         estado,
         fechaConsulta,
         contacts: [],
+        hasUsuarios: true,
       })
     }
 
@@ -351,7 +357,14 @@ export class MissingContactosSheetError extends Error {
   }
 }
 
-export async function parseExcel(buffer: Buffer): Promise<ParseResult> {
+export async function parseExcel(
+  buffer: Buffer,
+  operator: ImportOperator = 'CLARO'
+): Promise<ParseResult> {
+  if (operator === 'MOVISTAR') {
+    return parseMovistarExcel(buffer)
+  }
+
   const workbook = XLSX.read(buffer, { type: 'buffer' })
   const sheetName = findSheetName(workbook.SheetNames, 'contactos')
   if (!sheetName) {
@@ -382,6 +395,10 @@ export async function parseExcel(buffer: Buffer): Promise<ParseResult> {
   }
 
   return { companies: parseRows(rows), sourceRowCount: rawRows.length, mobileLines }
+}
+
+export function parseExcelOperator(operator: unknown): ImportOperator {
+  return isImportOperator(operator) ? operator : 'CLARO'
 }
 
 export async function parseCsv(buffer: Buffer): Promise<ParseResult> {

@@ -16,6 +16,7 @@ import {
   type CallActivityGranularity,
 } from './callActivity'
 import { sqlAndTenant } from './tenant'
+import { sqlCallLogCompanyOperatorFilter, type ImportOperator } from './operator'
 
 export type DailyActivityRow = {
   date: string
@@ -81,7 +82,8 @@ function fillDailyMap(
 /** SQL aggregation for daily call / registration metrics (no pre-aggregated table). */
 export async function fetchDailyActivityFromSql(
   fromDate: Date,
-  filterAgentId?: string
+  filterAgentId?: string,
+  operator?: ImportOperator | null
 ): Promise<DailyActivityRow[]> {
   const days = Math.ceil((Date.now() - fromDate.getTime()) / 86_400_000) + 1
   const map = buildDateRangeMap(Math.min(Math.max(days, 7), 30))
@@ -104,6 +106,7 @@ export async function fetchDailyActivityFromSql(
             ROW_NUMBER() OVER (PARTITION BY "companyId" ORDER BY "calledAt", id) AS company_rank
           FROM "CallLog"
           WHERE "calledAt" >= ${fromDate} AND "agentId" = ${filterAgentId} ${sqlAndTenant()}
+            ${sqlCallLogCompanyOperatorFilter(operator)}
         ),
         daily AS (
           SELECT
@@ -120,6 +123,7 @@ export async function fetchDailyActivityFromSql(
             COUNT(DISTINCT "companyId")::bigint AS "contactedCompanies"
           FROM "CallLog"
           WHERE "calledAt" >= ${fromDate} AND "agentId" = ${filterAgentId} ${sqlAndTenant()}
+            ${sqlCallLogCompanyOperatorFilter(operator)}
           GROUP BY DATE("calledAt")
         )
         SELECT
@@ -148,6 +152,7 @@ export async function fetchDailyActivityFromSql(
             ROW_NUMBER() OVER (PARTITION BY "companyId" ORDER BY "calledAt", id) AS company_rank
           FROM "CallLog"
           WHERE "calledAt" >= ${fromDate} ${sqlAndTenant()}
+            ${sqlCallLogCompanyOperatorFilter(operator)}
         ),
         daily AS (
           SELECT
@@ -164,6 +169,7 @@ export async function fetchDailyActivityFromSql(
             COUNT(DISTINCT "companyId")::bigint AS "contactedCompanies"
           FROM "CallLog"
           WHERE "calledAt" >= ${fromDate} ${sqlAndTenant()}
+            ${sqlCallLogCompanyOperatorFilter(operator)}
           GROUP BY DATE("calledAt")
         )
         SELECT
@@ -236,6 +242,7 @@ export async function fetchReportTrends(params: {
   to?: string
   agentId?: string
   granularity?: string
+  operator?: ImportOperator | null
 }): Promise<{
   series: DailyActivityRow[]
   from: string
@@ -252,10 +259,12 @@ export async function fetchReportTrends(params: {
   const toDate = parseDateEndParam(params.to, defaultTo)
   const granularity = parseGranularity(params.granularity)
 
-  const metricsCount = await prisma.dailyAgentMetrics.count({
-    where: { date: { gte: fromDate, lte: toDate } },
-    take: 1,
-  })
+  const metricsCount = params.operator
+    ? 0
+    : await prisma.dailyAgentMetrics.count({
+        where: { date: { gte: fromDate, lte: toDate } },
+        take: 1,
+      })
 
   let series: DailyActivityRow[]
   let source: 'table' | 'sql'
@@ -280,7 +289,7 @@ export async function fetchReportTrends(params: {
     for (const row of series) filled.set(row.date, row)
     series = [...filled.values()].sort((a, b) => a.date.localeCompare(b.date))
   } else {
-    series = await fetchDailyActivityFromSql(fromDate, params.agentId)
+    series = await fetchDailyActivityFromSql(fromDate, params.agentId, params.operator)
     source = 'sql'
   }
 
@@ -389,7 +398,8 @@ export async function fetchHourlyActivity(
 
 export async function fetchAgentSparklines(
   agentIds: string[],
-  days = 7
+  days = 7,
+  operator?: ImportOperator | null
 ): Promise<Record<string, { date: string; calls: number }[]>> {
   if (agentIds.length === 0) return {}
 
@@ -397,7 +407,9 @@ export async function fetchAgentSparklines(
   fromDate.setDate(fromDate.getDate() - (days - 1))
   fromDate.setHours(0, 0, 0, 0)
 
-  const metricsCount = await prisma.dailyAgentMetrics.count({ take: 1 })
+  const metricsCount = operator
+    ? 0
+    : await prisma.dailyAgentMetrics.count({ take: 1 })
 
   if (metricsCount > 0) {
     const resetAtByAgent = await getLatestResetAtByAgentIds(agentIds)
@@ -438,6 +450,7 @@ export async function fetchAgentSparklines(
     WHERE cl."calledAt" >= ${fromDate}
       ${sqlAndTenant('cl')}
       AND cl."agentId" IN (${Prisma.join(agentIds)})
+      ${sqlCallLogCompanyOperatorFilter(operator, Prisma.sql`cl."companyId"`)}
       AND (r.reset_at IS NULL OR cl."calledAt" >= r.reset_at)
     GROUP BY cl."agentId", DATE(cl."calledAt")
   `

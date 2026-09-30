@@ -5,6 +5,7 @@ import { incrementDailyMetricsForNewCall } from '../lib/dailyAgentMetrics'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { getAclaracionForDisposition } from '../lib/responseOptions'
 import { OPTICK_TENANT_ID } from '../lib/tenant'
+import { parseImportOperator } from '../lib/operator'
 
 const router = Router()
 
@@ -21,7 +22,8 @@ function formatAgendaDateTime(date: Date): string {
 
 // GET /api/callbacks
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
-  const { agentId, completed, date } = req.query as Record<string, string>
+  const { agentId, completed, date, operator: operatorRaw } = req.query as Record<string, string>
+  const operator = parseImportOperator(operatorRaw)
 
   const where: Record<string, unknown> = {}
 
@@ -43,6 +45,10 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     where.scheduledAt = { gte: start, lte: end }
   }
 
+  if (operator) {
+    where.company = { importBatch: { operator } }
+  }
+
   const callbacks = await prisma.callback.findMany({
     where,
     include: {
@@ -52,6 +58,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
           ruc: true,
           razonSocial: true,
           status: true,
+          importBatch: { select: { operator: true } },
           contacts: { select: { nombre: true, tipoContacto: true, telefono: true }, take: 3 },
         },
       },

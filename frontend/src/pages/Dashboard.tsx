@@ -26,8 +26,11 @@ import {
   buildPipelineClientsUrl,
 } from '../config/companyPipeline'
 import ReleaseNotesPanel from '../components/ReleaseNotesPanel'
+import OperatorChip from '../components/OperatorChip'
+import OperatorFilterGroup, { type OperatorFilterValue } from '../components/OperatorFilterGroup'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
+import { resolveImportOperator } from '../lib/operator'
 
 function StatCard({
   label,
@@ -214,6 +217,7 @@ type AgentBatchChip = {
   filename: string
   companyCount?: number
   clientCount: number
+  operator?: string
 }
 
 const MAX_VISIBLE_BATCH_CHIPS = 4
@@ -275,17 +279,25 @@ function AgentBatchChipButton({
   batch,
   selected,
   onSelect,
+  showOperator,
 }: {
   batch: AgentBatchChip
   selected: boolean
   onSelect: (id: string) => void
+  showOperator?: boolean
 }) {
   return (
     <button
       type="button"
       onClick={() => onSelect(batch.id)}
-      className={`${chipBaseClass} ${selected ? chipSelectedClass : chipIdleClass}`}
+      className={`${chipBaseClass} ${selected ? chipSelectedClass : chipIdleClass} inline-flex items-center`}
     >
+      {showOperator ? (
+        <OperatorChip
+          operator={resolveImportOperator(batch.operator)}
+          className={`mr-1.5 ${selected ? 'ring-1 ring-white/40' : ''}`}
+        />
+      ) : null}
       {batchChipLabel(batch.filename)}
       <span className={`ml-1.5 ${selected ? 'text-blue-200' : 'text-gray-400'}`}>
         {batchChipCount(batch)}
@@ -298,10 +310,12 @@ function AgentBatchOverflowMenu({
   overflow,
   selectedBatchId,
   onSelect,
+  showOperator,
 }: {
   overflow: AgentBatchChip[]
   selectedBatchId: string | undefined
   onSelect: (id: string) => void
+  showOperator?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -389,7 +403,12 @@ function AgentBatchOverflowMenu({
                         : 'text-gray-700 hover:bg-gray-50'
                     }`}
                   >
-                    <span className="truncate font-medium">{batchChipLabel(b.filename)}</span>
+                    <span className="truncate font-medium inline-flex items-center gap-1.5 min-w-0">
+                      {showOperator ? (
+                        <OperatorChip operator={resolveImportOperator(b.operator)} />
+                      ) : null}
+                      <span className="truncate">{batchChipLabel(b.filename)}</span>
+                    </span>
                     <span
                       className={`tabular-nums shrink-0 ${
                         selected ? 'text-blue-400' : 'text-gray-400'
@@ -415,10 +434,12 @@ function AgentLoteFilterChips({
   batches,
   selectedBatchId,
   onSelect,
+  showOperator,
 }: {
   batches: AgentBatchChip[]
   selectedBatchId: string | undefined
   onSelect: (id: string | undefined) => void
+  showOperator?: boolean
 }) {
   const { visible, overflow } = useMemo(
     () => pickVisibleBatchChips(batches, selectedBatchId),
@@ -446,6 +467,7 @@ function AgentLoteFilterChips({
           batch={b}
           selected={selectedBatchId === b.id}
           onSelect={(id) => onSelect(id)}
+          showOperator={showOperator}
         />
       ))}
       {overflow.length > 0 ? (
@@ -453,6 +475,7 @@ function AgentLoteFilterChips({
           overflow={overflow}
           selectedBatchId={selectedBatchId}
           onSelect={(id) => onSelect(id)}
+          showOperator={showOperator}
         />
       ) : null}
     </div>
@@ -694,6 +717,7 @@ export default function Dashboard() {
   const { isAdmin, user } = useAuth()
   const navigate = useNavigate()
   const [selectedBatchId, setSelectedBatchId] = useState<string | undefined>(undefined)
+  const [operatorFilter, setOperatorFilter] = useState<OperatorFilterValue>('')
   const [recordModal, setRecordModal] = useState<{ clientId: string } | null>(null)
   const [contactRateModal, setContactRateModal] = useState(false)
   const [callsComparisonModal, setCallsComparisonModal] = useState(false)
@@ -715,17 +739,30 @@ export default function Dashboard() {
   }
 
   const goToClientsFilter = (filter: string) => {
-    navigate(buildPipelineClientsUrl(filter, { from: 'dashboard' }))
+    navigate(
+      buildPipelineClientsUrl(filter, {
+        from: 'dashboard',
+        ...(operatorFilter ? { operator: operatorFilter } : {}),
+      })
+    )
   }
 
   const onPipelineFilter = isAdmin ? goToClientsFilter : goToMyLeadsFilter
   const pipelineListLabel = isAdmin ? 'Clientes' : 'Mis Clientes'
 
   const { data: myBatches } = useQuery({
-    queryKey: ['my-batches'],
-    queryFn: getMyBatches,
+    queryKey: ['my-batches', operatorFilter || 'all'],
+    queryFn: () => getMyBatches(operatorFilter || undefined),
     enabled: !isAdmin,
   })
+
+  useEffect(() => {
+    if (!selectedBatchId || !operatorFilter || !myBatches) return
+    const selected = myBatches.find((b: { id: string }) => b.id === selectedBatchId)
+    if (!selected || resolveImportOperator(selected.operator) !== operatorFilter) {
+      setSelectedBatchId(undefined)
+    }
+  }, [myBatches, operatorFilter, selectedBatchId])
 
   const bypassCacheRef = useRef(false)
 
@@ -736,13 +773,23 @@ export default function Dashboard() {
     isError: isStatsError,
     refetch: refetchStats,
   } = useQuery({
-    queryKey: ['dashboard', 'stats', selectedBatchId],
+    queryKey: ['dashboard', 'stats', selectedBatchId, operatorFilter || 'all'],
     queryFn: () => {
       const refresh = bypassCacheRef.current
       bypassCacheRef.current = false
-      return getDashboardStats(selectedBatchId, { refresh })
+      return getDashboardStats(selectedBatchId, {
+        refresh,
+        operator: operatorFilter || undefined,
+      })
     },
   })
+
+  const callbacksHref = operatorFilter
+    ? `/callbacks?from=dashboard&operator=${operatorFilter}`
+    : '/callbacks?from=dashboard'
+  const assignmentsHref = operatorFilter
+    ? `/assignments?from=dashboard&operator=${operatorFilter}`
+    : '/assignments?from=dashboard'
 
   const isRefreshing = isFetchingStats
 
@@ -778,16 +825,19 @@ export default function Dashboard() {
             {format(new Date(), "EEEE, d 'de' MMMM yyyy", { locale: es })}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-          title="Actualizar datos"
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors disabled:opacity-50 shrink-0"
-        >
-          <RefreshCw size={15} className={isRefreshing ? 'animate-spin' : ''} />
-          Actualizar
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <OperatorFilterGroup value={operatorFilter} onChange={setOperatorFilter} />
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Actualizar datos"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors disabled:opacity-50 shrink-0"
+          >
+            <RefreshCw size={15} className={isRefreshing ? 'animate-spin' : ''} />
+            Actualizar
+          </button>
+        </div>
       </div>
 
       {isStatsError && !stats ? (
@@ -800,6 +850,7 @@ export default function Dashboard() {
           batches={myBatches}
           selectedBatchId={selectedBatchId}
           onSelect={setSelectedBatchId}
+          showOperator={!operatorFilter}
         />
       )}
 
@@ -821,7 +872,7 @@ export default function Dashboard() {
                 label="Empresas asignadas"
                 value={assignedCompanies}
                 tooltip="Empresas (RUC) con al menos un contacto asignado a un agente"
-                to="/assignments?from=dashboard"
+                to={assignmentsHref}
                 icon={Users}
                 color="bg-blue-600"
               />
@@ -845,7 +896,7 @@ export default function Dashboard() {
                 label="Callbacks pendientes"
                 value={stats?.pendingCallbacks ?? 0}
                 tooltip="Callbacks agendados aún no atendidos"
-                to="/callbacks?from=dashboard"
+                to={callbacksHref}
                 icon={CalendarClock}
                 color="bg-amber-500"
               />
@@ -887,7 +938,7 @@ export default function Dashboard() {
             label="Callbacks hoy"
             value={stats?.todayCallbacks ?? 0}
             tooltip="Callbacks programados para hoy"
-            to="/callbacks?from=dashboard"
+            to={callbacksHref}
             icon={CalendarClock}
             color="bg-amber-500"
           />
@@ -895,7 +946,7 @@ export default function Dashboard() {
             label="Callbacks pendientes"
             value={stats?.pendingCallbacks ?? 0}
             tooltip="Callbacks agendados aún no atendidos"
-            to="/callbacks?from=dashboard"
+            to={callbacksHref}
             icon={Calendar}
             color="bg-purple-600"
           />

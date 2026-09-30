@@ -3,21 +3,32 @@ import { existsSync } from 'node:fs'
 import * as XLSX from 'xlsx'
 import {
   agentFirstName,
+  assembleMovistarExportRows,
+  companyImportOperator,
   countSharedWithOtherAgent,
   depuradoExportFilename,
+  depuradoExportUnitKey,
   depuradoExportZipFilename,
+  filterCompaniesByOperator,
   formatCompactTimestampInAppTz,
   isDepuradoCompany,
+  toExportUnits,
   toImportContactosRows,
   toImportDetallePlanRows,
   toImportMobileRows,
+  toMovistarProductosRows,
+  toMovistarResumenRows,
+  toMovistarUsuariosRows,
   uniqueExportFilenames,
   type LoadedDepuradoCompany,
 } from './depuradoExport'
+import { filenameOperatorTokens } from './operator'
 import {
   applyOriginalRazonSocial,
   enrichDepuradoRowsFromOriginal,
   parseOriginalImportWorkbook,
+  parseOriginalMovistarWorkbook,
+  type OriginalMovistarSheetsByBatch,
   type OriginalSheetsByBatch,
 } from './originalImportSheets'
 import { isActiveNoContesta, isDepuradoNoContesta } from './companyDisposition'
@@ -27,15 +38,29 @@ import {
   DETALLE_PLAN_IMPORT_COLUMNS,
   DETALLE_PLAN_SHEET_NAME,
   IMPORT_SHEET_NAMES,
+  MOVISTAR_IMPORT_SHEET_NAMES,
+  MOVISTAR_PRODUCTOS_COLUMNS,
+  MOVISTAR_PRODUCTOS_SHEET_NAME,
+  MOVISTAR_RESUMEN_COLUMNS,
+  MOVISTAR_RESUMEN_DUOS_ACTIVOS_COLUMN,
+  MOVISTAR_RESUMEN_INTERNET_MOVIL_ACTIVOS_COLUMN,
+  MOVISTAR_RESUMEN_MONOPRODUCTOS_ACTIVOS_COLUMN,
+  MOVISTAR_RESUMEN_MOVILES_ACTIVOS_COLUMN,
+  MOVISTAR_RESUMEN_SHEET_NAME,
+  MOVISTAR_RESUMEN_TRIOS_ACTIVOS_COLUMN,
+  MOVISTAR_USUARIOS_COLUMNS,
+  MOVISTAR_USUARIOS_SHEET_NAME,
   PRODUCTOS_MOVIL_IMPORT_COLUMNS,
   PRODUCTOS_MOVIL_SHEET_NAME,
   buildImportWorkbook,
+  buildMovistarImportWorkbook,
   formatImportContactPhone,
   formatImportFechaConsulta,
   formatImportMobilePhone,
   workbookSheetHeaders,
   workbookSheetNames,
   writeImportWorkbookBuffer,
+  writeMovistarImportWorkbookBuffer,
 } from './importWorkbook'
 import { notRecoveredWhere } from './assignmentOrder'
 import { parseExcel } from './parseFile'
@@ -65,8 +90,12 @@ section('filename America/Lima compact stamp')
 const limaNoon = new Date('2026-09-13T18:48:00.000Z') // 13:48 America/Lima (UTC-5)
 assert.equal(formatCompactTimestampInAppTz(limaNoon, 'America/Lima'), '20260913-1348')
 assert.equal(
-  depuradoExportFilename(limaNoon, 'Richard Vargas'),
-  '20260913-1348_nocontestadodep_Richard.xlsx'
+  depuradoExportFilename(limaNoon, 'Richard Vargas', 'CLARO'),
+  '20260913-1348_nocontestadodep_claro_Richard.xlsx'
+)
+assert.equal(
+  depuradoExportFilename(limaNoon, 'Carlos Pérez', 'MOVISTAR'),
+  '20260913-1348_nocontestadodep_movistar_Carlos.xlsx'
 )
 assert.equal(depuradoExportZipFilename(limaNoon), '20260913-1348_nocontestadodep.zip')
 assert.equal(agentFirstName('María Elena Pérez'), 'María')
@@ -74,13 +103,23 @@ assert.equal(agentFirstName('  /  '), 'Agente')
 
 const collided = uniqueExportFilenames(
   [
-    { agentId: 'a1', agentName: 'Richard Uno' },
-    { agentId: 'a2', agentName: 'Richard Dos' },
+    { agentId: 'a1', agentName: 'Richard Uno', operator: 'CLARO' },
+    { agentId: 'a2', agentName: 'Richard Dos', operator: 'CLARO' },
   ],
   limaNoon
 )
-assert.equal(collided.get('a1'), '20260913-1348_nocontestadodep_Richard.xlsx')
-assert.equal(collided.get('a2'), '20260913-1348_nocontestadodep_Richard_2.xlsx')
+assert.equal(collided.get('a1:CLARO'), '20260913-1348_nocontestadodep_claro_Richard.xlsx')
+assert.equal(collided.get('a2:CLARO'), '20260913-1348_nocontestadodep_claro_Richard_2.xlsx')
+
+const mixedNames = uniqueExportFilenames(
+  [
+    { agentId: 'c1', agentName: 'Carlos Rivera', operator: 'CLARO' },
+    { agentId: 'c1', agentName: 'Carlos Rivera', operator: 'MOVISTAR' },
+  ],
+  limaNoon
+)
+assert.equal(mixedNames.get('c1:CLARO'), '20260913-1348_nocontestadodep_claro_Carlos.xlsx')
+assert.equal(mixedNames.get('c1:MOVISTAR'), '20260913-1348_nocontestadodep_movistar_Carlos.xlsx')
 
 section('shared-with-other-agent warning count')
 const sharedCount = countSharedWithOtherAgent(
@@ -114,9 +153,12 @@ const companies: LoadedDepuradoCompany[] = [
     id: 'c1',
     ruc: '20123456789',
     razonSocial: 'Demo SAC',
+    notes: null,
+    plan: null,
     importBatchId: 'batch-demo',
     importStatus: 'OK',
     fechaConsulta: new Date('2026-01-15T00:00:00.000Z'),
+    importBatch: { operator: 'CLARO' },
     contacts: [
       {
         id: 'ct1',
@@ -246,6 +288,7 @@ const missingRazon: LoadedDepuradoCompany[] = [
     ruc: '20999999999',
     razonSocial: null,
     importBatchId: 'batch-original',
+    importBatch: { operator: 'CLARO' },
     contacts: companies[0].contacts.map((c) => ({ ...c })),
     mobileLines: companies[0].mobileLines.map((line) => ({ ...line, ruc: '20999999999' })),
   },
@@ -304,6 +347,7 @@ const dbWinsCompanies: LoadedDepuradoCompany[] = [
     importBatchId: 'batch-original',
     ruc: '20999999999',
     razonSocial: 'CRM Razon SAC',
+    importBatch: { operator: 'CLARO' },
     mobileLines: companies[0].mobileLines.map((line) => ({ ...line, ruc: '20999999999' })),
   },
 ]
@@ -334,6 +378,244 @@ assert.equal(fromMobile[0].razonSocial, 'From Original SAC')
 const fromMobileRows = toImportContactosRows(fromMobile)
 assert.equal(fromMobileRows[0].razon_social, 'From Original SAC')
 assert.equal(toImportMobileRows(fromMobile)[0].razon_social, 'From Original SAC')
+
+section('filename operator tokens are segments')
+assert.deepEqual(
+  filenameOperatorTokens('20260913-1348_nocontestadodep_claro_Richard.xlsx'),
+  ['CLARO']
+)
+assert.deepEqual(
+  filenameOperatorTokens('20260913-1348_nocontestadodep_movistar_Carlos.xlsx'),
+  ['MOVISTAR']
+)
+assert.deepEqual(filenameOperatorTokens('20260913-1348_nocontestadodep.zip'), [])
+assert.equal(depuradoExportUnitKey('c1', 'MOVISTAR'), 'c1:MOVISTAR')
+
+section('same RUC on two operators stays as two export units')
+const movistarTwin: LoadedDepuradoCompany = {
+  ...companies[0],
+  id: 'c-movistar',
+  importBatchId: 'batch-movistar',
+  notes: 'Portal ok',
+  plan: 'Plan Max',
+  importBatch: { operator: 'MOVISTAR' },
+}
+assert.equal(companyImportOperator(companies[0]), 'CLARO')
+assert.equal(companyImportOperator({ importBatch: null }), 'CLARO')
+assert.equal(companyImportOperator(movistarTwin), 'MOVISTAR')
+
+const mixedUnits = toExportUnits([
+  {
+    agentId: 'carlos',
+    agentName: 'Carlos Rivera',
+    companies: [companies[0], movistarTwin],
+  },
+])
+assert.equal(mixedUnits.length, 2)
+assert.equal(mixedUnits[0].operator, 'CLARO')
+assert.equal(mixedUnits[1].operator, 'MOVISTAR')
+assert.equal(mixedUnits[0].companies[0].ruc, mixedUnits[1].companies[0].ruc)
+assert.equal(mixedUnits[0].companies.length, 1)
+assert.equal(mixedUnits[1].companies.length, 1)
+
+const onlyMovistar = filterCompaniesByOperator([companies[0], movistarTwin], 'MOVISTAR')
+assert.equal(onlyMovistar.length, 1)
+assert.equal(onlyMovistar[0].id, 'c-movistar')
+const recoveredMovistarUnits = toExportUnits([
+  { agentId: 'carlos', agentName: 'Carlos Rivera', companies: onlyMovistar },
+])
+assert.equal(recoveredMovistarUnits.length, 1)
+assert.equal(recoveredMovistarUnits[0].operator, 'MOVISTAR')
+assert.equal(filterCompaniesByOperator([companies[0], movistarTwin], 'CLARO')[0].id, 'c1')
+assert.equal(filterCompaniesByOperator([companies[0], movistarTwin]).length, 2)
+
+section('Movistar reconstruct uses import template sheets, never Claro names')
+const movistarResumen = toMovistarResumenRows([movistarTwin])
+const movistarUsuarios = toMovistarUsuariosRows([movistarTwin])
+const movistarProductos = toMovistarProductosRows([movistarTwin])
+assert.deepEqual(Object.keys(movistarResumen[0]), [...MOVISTAR_RESUMEN_COLUMNS])
+assert.equal(movistarResumen[0].n_usuarios, '2')
+assert.equal(movistarResumen[0].n_productos, '1')
+assert.equal(movistarResumen[0].mensaje, 'Portal ok')
+assert.equal(movistarResumen[0][MOVISTAR_RESUMEN_MOVILES_ACTIVOS_COLUMN], '1')
+assert.equal(movistarResumen[0][MOVISTAR_RESUMEN_INTERNET_MOVIL_ACTIVOS_COLUMN], '0')
+assert.equal(movistarResumen[0][MOVISTAR_RESUMEN_DUOS_ACTIVOS_COLUMN], '0')
+assert.equal(movistarResumen[0][MOVISTAR_RESUMEN_MONOPRODUCTOS_ACTIVOS_COLUMN], '0')
+assert.equal(movistarResumen[0][MOVISTAR_RESUMEN_TRIOS_ACTIVOS_COLUMN], '0')
+assert.equal('caja (Móviles / Internet / Dúos / Mono / Tríos)' in movistarResumen[0], false)
+assert.equal(movistarUsuarios[0].celular, '987654321')
+assert.equal(movistarUsuarios[0].nombres_apellidos, 'Ana')
+assert.equal(movistarProductos[0].codigo_producto, '999111222')
+assert.equal(movistarProductos[0].caja, 'Activa')
+assert.equal(movistarProductos[0].plan, 'Max')
+
+const movistarWb = buildMovistarImportWorkbook(movistarResumen, movistarUsuarios, movistarProductos)
+assert.deepEqual(workbookSheetNames(movistarWb), [...MOVISTAR_IMPORT_SHEET_NAMES])
+assert.deepEqual(workbookSheetNames(movistarWb), ['Resumen', 'Usuarios', 'Productos'])
+assert.equal(movistarWb.Sheets[CONTACTOS_SHEET_NAME], undefined)
+assert.deepEqual(workbookSheetHeaders(movistarWb, MOVISTAR_RESUMEN_SHEET_NAME), [
+  ...MOVISTAR_RESUMEN_COLUMNS,
+])
+assert.deepEqual(workbookSheetHeaders(movistarWb, MOVISTAR_USUARIOS_SHEET_NAME), [
+  ...MOVISTAR_USUARIOS_COLUMNS,
+])
+assert.deepEqual(workbookSheetHeaders(movistarWb, MOVISTAR_PRODUCTOS_SHEET_NAME), [
+  ...MOVISTAR_PRODUCTOS_COLUMNS,
+])
+
+const claroWbNames = workbookSheetNames(wb)
+assert.deepEqual(claroWbNames, ['Contactos', 'ProductosMovil', 'DetallePlan'])
+assert.ok(!claroWbNames.includes('Resumen'))
+
+section('Movistar original lote rows win over CRM reconstruct')
+const originalMovistarBuffer = writeMovistarImportWorkbookBuffer(
+  [
+    {
+      ...movistarResumen[0],
+      razon_social: 'From Movistar Lote SAC',
+      mensaje: 'lote mensaje',
+      n_usuarios: '9',
+      [MOVISTAR_RESUMEN_MOVILES_ACTIVOS_COLUMN]: '4',
+      [MOVISTAR_RESUMEN_INTERNET_MOVIL_ACTIVOS_COLUMN]: '2',
+      [MOVISTAR_RESUMEN_DUOS_ACTIVOS_COLUMN]: '1',
+      [MOVISTAR_RESUMEN_MONOPRODUCTOS_ACTIVOS_COLUMN]: '3',
+      [MOVISTAR_RESUMEN_TRIOS_ACTIVOS_COLUMN]: '5',
+    },
+  ],
+  movistarUsuarios.map((row, idx) => ({
+    ...row,
+    razon_social: 'From Movistar Lote SAC',
+    fecha_alta: idx === 0 ? '2024-01-01' : '',
+    celular: '999000111',
+  })),
+  movistarProductos.map((row) => ({
+    ...row,
+    razon_social: 'From Movistar Lote SAC',
+    codigo_producto: 'A\n999111222',
+    cuenta_financiera: 'CF-99',
+    subtipo_producto: 'Móvil',
+  }))
+)
+const parsedMovistarOriginal = parseOriginalMovistarWorkbook(originalMovistarBuffer)
+assert.ok(parsedMovistarOriginal)
+const movistarOriginals: OriginalMovistarSheetsByBatch = new Map([
+  ['batch-movistar', parsedMovistarOriginal!],
+])
+const assembled = assembleMovistarExportRows(
+  [{ ...movistarTwin, razonSocial: null }],
+  movistarOriginals
+)
+assert.equal(assembled.resumen[0].razon_social, 'From Movistar Lote SAC')
+assert.equal(assembled.resumen[0].mensaje, 'lote mensaje')
+assert.equal(assembled.resumen[0][MOVISTAR_RESUMEN_MOVILES_ACTIVOS_COLUMN], '4')
+assert.equal(assembled.resumen[0][MOVISTAR_RESUMEN_INTERNET_MOVIL_ACTIVOS_COLUMN], '2')
+assert.equal(assembled.resumen[0][MOVISTAR_RESUMEN_DUOS_ACTIVOS_COLUMN], '1')
+assert.equal(assembled.resumen[0][MOVISTAR_RESUMEN_MONOPRODUCTOS_ACTIVOS_COLUMN], '3')
+assert.equal(assembled.resumen[0][MOVISTAR_RESUMEN_TRIOS_ACTIVOS_COLUMN], '5')
+assert.equal(assembled.usuarios[0].fecha_alta, '2024-01-01')
+assert.equal(assembled.usuarios[0].celular, '999000111')
+assert.equal(assembled.productos[0].cuenta_financiera, 'CF-99')
+assert.equal(assembled.productos[0].codigo_producto, 'A\n999111222')
+
+const reconstructedOnly = assembleMovistarExportRows([movistarTwin], new Map())
+assert.equal(reconstructedOnly.usuarios[0].celular, '987654321')
+assert.equal(reconstructedOnly.productos[0].codigo_producto, '999111222')
+assert.equal(reconstructedOnly.usuarios[0].fecha_alta, '')
+assert.equal(reconstructedOnly.resumen[0][MOVISTAR_RESUMEN_MOVILES_ACTIVOS_COLUMN], '1')
+assert.equal(reconstructedOnly.resumen[0][MOVISTAR_RESUMEN_DUOS_ACTIVOS_COLUMN], '0')
+assert.equal(reconstructedOnly.productos[0].caja, 'Activa')
+
+section('Movistar Resumen reconstruct counts from Productos caja labels')
+const mixedCajaTwin: LoadedDepuradoCompany = {
+  ...movistarTwin,
+  mobileLines: [
+    {
+      ruc: movistarTwin.ruc,
+      numeroTelefono: '999111222',
+      estadoLinea: 'Móviles activos',
+      plan: 'Max',
+      rentaBasica: null,
+      rentaBasicaConDesc: null,
+    },
+    {
+      ruc: movistarTwin.ruc,
+      numeroTelefono: null,
+      estadoLinea: 'Internet móvil activos',
+      plan: 'Internet',
+      rentaBasica: null,
+      rentaBasicaConDesc: null,
+    },
+    {
+      ruc: movistarTwin.ruc,
+      numeroTelefono: null,
+      estadoLinea: 'Dúos activos',
+      plan: 'Duo',
+      rentaBasica: null,
+      rentaBasicaConDesc: null,
+    },
+    {
+      ruc: movistarTwin.ruc,
+      numeroTelefono: null,
+      estadoLinea: 'Monoproductos activos',
+      plan: 'Mono',
+      rentaBasica: null,
+      rentaBasicaConDesc: null,
+    },
+    {
+      ruc: movistarTwin.ruc,
+      numeroTelefono: null,
+      estadoLinea: 'Tríos activos',
+      plan: 'Trio',
+      rentaBasica: null,
+      rentaBasicaConDesc: null,
+    },
+  ],
+}
+const mixedResumen = toMovistarResumenRows([mixedCajaTwin])[0]
+assert.equal(mixedResumen.n_productos, '5')
+assert.equal(mixedResumen[MOVISTAR_RESUMEN_MOVILES_ACTIVOS_COLUMN], '1')
+assert.equal(mixedResumen[MOVISTAR_RESUMEN_INTERNET_MOVIL_ACTIVOS_COLUMN], '1')
+assert.equal(mixedResumen[MOVISTAR_RESUMEN_DUOS_ACTIVOS_COLUMN], '1')
+assert.equal(mixedResumen[MOVISTAR_RESUMEN_MONOPRODUCTOS_ACTIVOS_COLUMN], '1')
+assert.equal(mixedResumen[MOVISTAR_RESUMEN_TRIOS_ACTIVOS_COLUMN], '1')
+assert.equal('caja' in mixedResumen, false)
+assert.equal('caja (Móviles / Internet / Dúos / Mono / Tríos)' in mixedResumen, false)
+
+section('Movistar original lote snake_case Resumen aliases')
+const aliasWb = XLSX.utils.book_new()
+XLSX.utils.book_append_sheet(
+  aliasWb,
+  XLSX.utils.json_to_sheet([
+    {
+      ruc: '20123456789',
+      razon_social: 'Alias SAC',
+      estado: 'OK',
+      mensaje: 'ok',
+      n_usuarios: '2',
+      n_productos: '8',
+      moviles_activos: '3',
+      internet_movil_activos: '1',
+      duos_activos: '2',
+      monoproductos_activos: '0',
+      trios_activos: '2',
+      fecha_consulta: '2026-01-15',
+    },
+  ]),
+  MOVISTAR_RESUMEN_SHEET_NAME
+)
+XLSX.utils.book_append_sheet(aliasWb, XLSX.utils.json_to_sheet([]), MOVISTAR_USUARIOS_SHEET_NAME)
+XLSX.utils.book_append_sheet(aliasWb, XLSX.utils.json_to_sheet([]), MOVISTAR_PRODUCTOS_SHEET_NAME)
+const parsedAlias = parseOriginalMovistarWorkbook(
+  XLSX.write(aliasWb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+)
+assert.ok(parsedAlias)
+assert.equal(parsedAlias!.resumen[0][MOVISTAR_RESUMEN_MOVILES_ACTIVOS_COLUMN], '3')
+assert.equal(parsedAlias!.resumen[0][MOVISTAR_RESUMEN_INTERNET_MOVIL_ACTIVOS_COLUMN], '1')
+assert.equal(parsedAlias!.resumen[0][MOVISTAR_RESUMEN_DUOS_ACTIVOS_COLUMN], '2')
+assert.equal(parsedAlias!.resumen[0][MOVISTAR_RESUMEN_MONOPRODUCTOS_ACTIVOS_COLUMN], '0')
+assert.equal(parsedAlias!.resumen[0][MOVISTAR_RESUMEN_TRIOS_ACTIVOS_COLUMN], '2')
+assert.equal('caja' in parsedAlias!.resumen[0], false)
+
 
 if (existsSync(RICHARD_TEMPLATE_PATH)) {
   section('generated headers match Richard template exactly')
@@ -379,10 +661,25 @@ async function runAsyncChecks() {
   assert.equal(parsed.mobileLines[0].rentaBasicaConDesc, '49.90')
   assert.equal(parsed.mobileLines[0].plan, 'Max')
 
+  section('Movistar export buffer roundtrips without Claro sheets')
+  const movistarBuffer = writeMovistarImportWorkbookBuffer(
+    movistarResumen,
+    movistarUsuarios,
+    movistarProductos
+  )
+  const parsedMovistar = await parseExcel(movistarBuffer, 'MOVISTAR')
+  assert.equal(parsedMovistar.companies.length, 1)
+  assert.equal(parsedMovistar.companies[0].ruc, '20123456789')
+  assert.equal(parsedMovistar.companies[0].contacts[0].telefono, '987654321')
+  assert.equal(parsedMovistar.mobileLines[0].numeroTelefono, '999111222')
+  const movistarRead = XLSX.read(movistarBuffer, { type: 'buffer' })
+  assert.deepEqual(movistarRead.SheetNames, ['Resumen', 'Usuarios', 'Productos'])
+  assert.ok(!movistarRead.SheetNames.includes('Contactos'))
+
   section('zip contains one entry per agent file')
   const zip = buildZipBuffer([
-    { name: '20260913-1348_nocontestadodep_Richard.xlsx', data: buffer },
-    { name: '20260913-1348_nocontestadodep_Maria.xlsx', data: buffer },
+    { name: '20260913-1348_nocontestadodep_claro_Richard.xlsx', data: buffer },
+    { name: '20260913-1348_nocontestadodep_claro_Maria.xlsx', data: buffer },
   ])
   assert.ok(zip.length > 0)
   assert.equal(zip.readUInt32LE(0), 0x04034b50)

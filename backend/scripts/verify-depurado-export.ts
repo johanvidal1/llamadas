@@ -310,7 +310,7 @@ async function main() {
   }
 
   const exported = await executeDepuradoExport([fixture.richard.id])
-  if (!exported.file.filename.endsWith('_nocontestadodep_Richard.xlsx')) {
+  if (!exported.file.filename.endsWith('_nocontestadodep_claro_Richard.xlsx')) {
     throw new Error(`Unexpected filename: ${exported.file.filename}`)
   }
   const parsedAfterExport = await parseExcel(exported.file.buffer)

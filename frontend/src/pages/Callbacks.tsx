@@ -10,6 +10,13 @@ import { es } from 'date-fns/locale'
 import CompleteCallbackModal, { type CompleteConfirm } from '../components/CompleteCallbackModal'
 import ClientRecordModal from '../components/ClientRecordModal'
 import { CallbackScheduleBadge } from '../components/CallbackScheduleBadge'
+import OperatorChip from '../components/OperatorChip'
+import {
+  operatorFilterFromQuery,
+  operatorLabelEs,
+  resolveImportOperator,
+  type ImportOperator,
+} from '../lib/operator'
 
 interface Callback {
   id: string
@@ -23,6 +30,7 @@ interface Callback {
     razonSocial?: string
     status: string
     contacts: { nombre: string; tipoContacto?: string; telefono?: string }[]
+    importBatch?: { operator?: string }
   }
   agent: { id: string; name: string }
 }
@@ -167,7 +175,10 @@ function CallbackCard({
           <Phone size={18} className="text-blue-600" />
         </div>
         <div className="min-w-0">
-          <p className="font-medium text-gray-900">{title}</p>
+          <div className="flex items-center gap-2 min-w-0">
+            <p className="font-medium text-gray-900 truncate">{title}</p>
+            <OperatorChip operator={resolveImportOperator(cb.company.importBatch?.operator)} />
+          </div>
           {showRuc && (
             <p className="text-xs text-gray-500 font-mono">{cb.company.ruc}</p>
           )}
@@ -280,11 +291,19 @@ function CollapsibleGroup({
   )
 }
 
+function callbackMatchesOperator(cb: Callback, operator: ImportOperator | ''): boolean {
+  if (!operator) return true
+  return resolveImportOperator(cb.company.importBatch?.operator) === operator
+}
+
 export default function Callbacks() {
   const { isAdmin } = useAuth()
   const [searchParams] = useSearchParams()
   const returnToDashboard = searchParams.get('from') === 'dashboard'
   const [filter, setFilter] = useState<FilterKey>('all')
+  const [operatorFilter, setOperatorFilter] = useState<ImportOperator | ''>(
+    operatorFilterFromQuery(searchParams.get('operator'))
+  )
   const [agentId, setAgentId] = useState('')
   const [completeConfirm, setCompleteConfirm] = useState<CompleteConfirm | null>(null)
   const [recordModal, setRecordModal] = useState<{
@@ -339,21 +358,29 @@ export default function Callbacks() {
 
   const pendingItems = pendingCallbacks as Callback[]
 
+  const operatorPending = useMemo(
+    () => pendingItems.filter((cb) => callbackMatchesOperator(cb, operatorFilter)),
+    [pendingItems, operatorFilter],
+  )
+  const operatorCompleted = useMemo(
+    () =>
+      (completedCallbacks as Callback[]).filter((cb) =>
+        callbackMatchesOperator(cb, operatorFilter),
+      ),
+    [completedCallbacks, operatorFilter],
+  )
+
   const filtered = useMemo(() => {
-    const source = filter === 'completed'
-      ? (completedCallbacks as Callback[])
-      : (pendingCallbacks as Callback[])
+    const source = filter === 'completed' ? operatorCompleted : operatorPending
     return source.filter((cb) => matchesFilter(cb, filter))
-  }, [pendingCallbacks, completedCallbacks, filter])
+  }, [operatorPending, operatorCompleted, filter])
 
   const counts = useMemo(() => {
-    const pending = pendingCallbacks as Callback[]
-    const done = completedCallbacks as Callback[]
-    const combined = [...pending, ...done]
+    const combined = [...operatorPending, ...operatorCompleted]
     return Object.fromEntries(
       FILTER_OPTIONS.map((f) => [f.key, countForFilter(combined, f.key)]),
     ) as Record<FilterKey, number>
-  }, [pendingCallbacks, completedCallbacks])
+  }, [operatorPending, operatorCompleted])
 
   useEffect(() => {
     if (pendingItems.length > 0 && pendingItems.length < 10) {
@@ -424,6 +451,26 @@ export default function Callbacks() {
       </div>
 
       <div className="flex flex-col sm:flex-row sm:items-start gap-3">
+        <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-gray-50 shrink-0" role="group" aria-label="Filtrar por operador">
+          {([
+            { id: '' as const, label: 'Todos' },
+            { id: 'CLARO' as const, label: 'Claro' },
+            { id: 'MOVISTAR' as const, label: 'Movistar' },
+          ]).map((opt) => (
+            <button
+              key={opt.id || 'all'}
+              type="button"
+              onClick={() => setOperatorFilter(opt.id)}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                operatorFilter === opt.id
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-800'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
         <div className="flex flex-wrap gap-2 flex-1">
           {FILTER_OPTIONS.map((f) => {
             const isActive = filter === f.key
@@ -479,7 +526,7 @@ export default function Callbacks() {
         </div>
       ) : filtered.length === 0 ? (
         <div className="card p-12 text-center text-gray-400">
-          {filter === 'all' ? (
+          {filter === 'all' && !operatorFilter ? (
             <>
               <CheckCircle2 size={40} className="mx-auto mb-2 text-green-400" />
               <p className="font-medium text-green-600">¡Todo al día!</p>
@@ -488,7 +535,11 @@ export default function Callbacks() {
           ) : (
             <>
               <CalendarClock size={40} className="mx-auto mb-2 opacity-30" />
-              <p className="font-medium text-gray-500">{activeFilterConfig.emptyMessage}</p>
+              <p className="font-medium text-gray-500">
+                {operatorFilter
+                  ? `${activeFilterConfig.emptyMessage} de ${operatorLabelEs(operatorFilter)}`
+                  : activeFilterConfig.emptyMessage}
+              </p>
             </>
           )}
         </div>

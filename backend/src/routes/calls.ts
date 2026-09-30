@@ -243,6 +243,33 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     }
   }
 
+  if (contactId) {
+    const phoneContact = await prisma.contact.findUnique({
+      where: { id: contactId },
+      select: { telefono: true },
+    })
+    if (!phoneContact?.telefono?.trim()) {
+      res.status(400).json({
+        error: 'Sin teléfono de usuario: no se puede guardar el resultado de la llamada.',
+      })
+      return
+    }
+  } else {
+    const phoneContact = await prisma.contact.findFirst({
+      where: {
+        companyId: data.clientId,
+        telefono: { not: null },
+      },
+      select: { telefono: true },
+    })
+    if (!phoneContact?.telefono?.trim()) {
+      res.status(400).json({
+        error: 'Sin teléfono de usuario: no se puede guardar el resultado de la llamada.',
+      })
+      return
+    }
+  }
+
   if (
     await isDuplicateCallLog(
       req.user!.id,

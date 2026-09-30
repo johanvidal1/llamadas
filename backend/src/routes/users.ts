@@ -66,6 +66,8 @@ const userSelect = {
   createdAt: true,
   batchQueueMode: true,
   workingBatchId: true,
+  workingBatchIdClaro: true,
+  workingBatchIdMovistar: true,
 } as const
 
 const createUserSchema = z.object({
@@ -84,6 +86,8 @@ const updateUserSchema = z.object({
   active: z.boolean().optional(),
   batchQueueMode: z.enum(['FIFO', 'LIFO', 'ALL']).optional(),
   workingBatchId: z.union([z.string().min(1), z.null()]).optional(),
+  workingBatchIdClaro: z.union([z.string().min(1), z.null()]).optional(),
+  workingBatchIdMovistar: z.union([z.string().min(1), z.null()]).optional(),
 })
 
 // GET /api/users — list all users
@@ -299,6 +303,8 @@ router.put('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
       active: true,
       batchQueueMode: true,
       workingBatchId: true,
+      workingBatchIdClaro: true,
+      workingBatchIdMovistar: true,
     },
   })
   invalidateAuthUserCache(targetId)

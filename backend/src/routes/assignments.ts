@@ -25,12 +25,14 @@ import { getAclaracionForDisposition } from '../lib/responseOptions'
 import { getLatestResetAtByAgentIds, isAssignmentAfterReset } from '../lib/agentReset'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
 import { OPTICK_TENANT_ID } from '../lib/tenant'
+import { parseImportOperator, resolveImportOperator } from '../lib/operator'
 
 const router = Router()
 
 const assignSchema = z.object({
   agentId: z.string().min(1, 'Agente requerido'),
   batchId: z.string().optional(),
+  operator: z.enum(['CLARO', 'MOVISTAR']).optional(),
   count: z.number().int().positive().optional(),
   clientIds: z.array(z.string()).optional(),
   contactIds: z.array(z.string()).optional(),
@@ -49,6 +51,7 @@ const legacyReleaseSchema = z.object({
 const previewSchema = z.object({
   agentId: z.string().min(1, 'Agente requerido'),
   batchId: z.string().optional(),
+  operator: z.enum(['CLARO', 'MOVISTAR']).optional(),
   count: z.number().int().positive().optional(),
 })
 
@@ -174,7 +177,7 @@ router.get('/', requireAdmin, async (_req: AuthRequest, res: Response) => {
 
 // POST /api/assignments/preview
 router.post('/preview', requireAdmin, async (req: AuthRequest, res: Response) => {
-  const { agentId, batchId, count } = previewSchema.parse(req.body)
+  const { agentId, batchId, count, operator } = previewSchema.parse(req.body)
 
   const agent = await prisma.user.findUnique({
     where: { id: agentId },
@@ -186,7 +189,12 @@ router.post('/preview', requireAdmin, async (req: AuthRequest, res: Response) =>
   }
 
   try {
-    const preview = await buildAssignmentPreview(agentId, batchId, count)
+    const preview = await buildAssignmentPreview(
+      agentId,
+      batchId,
+      count,
+      batchId ? undefined : operator
+    )
     res.json(preview)
   } catch (err) {
     if (err instanceof BatchBlockedError) {
@@ -199,7 +207,7 @@ router.post('/preview', requireAdmin, async (req: AuthRequest, res: Response) =>
 
 // POST /api/assignments
 router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
-  const { agentId, batchId, count, clientIds, contactIds } = assignSchema.parse(req.body)
+  const { agentId, batchId, count, clientIds, contactIds, operator } = assignSchema.parse(req.body)
 
   let idsToAssign: string[] = []
 
@@ -218,7 +226,11 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     idsToAssign = idsToAssign.filter((id) => !assignedIds.has(id))
   } else {
     try {
-      const companies = await getUnassignedCompaniesOrdered(batchId, count ?? undefined)
+      const companies = await getUnassignedCompaniesOrdered(
+        batchId,
+        count ?? undefined,
+        batchId ? undefined : operator
+      )
       const companyIds = companies.map((c) => c.id)
       idsToAssign = await getContactIdsForCompanies(companyIds, batchId)
     } catch (err) {
@@ -298,6 +310,8 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
     return
   }
 
+  const operator = parseImportOperator(req.query.operator)
+
   const batchId =
     typeof req.query.batchId === 'string' && req.query.batchId.length > 0
       ? req.query.batchId
@@ -309,7 +323,7 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
       ...(batchId ? { importBatchId: batchId } : {}),
     },
     include: {
-      importBatch: { select: { filename: true, displayName: true } },
+      importBatch: { select: { filename: true, displayName: true, operator: true } },
       assignedBy: { select: { id: true, name: true } },
     },
     orderBy: { createdAt: 'desc' },
@@ -320,6 +334,7 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
     assignedAt: string
     importBatchId: string | null
     filename: string | null
+    operator: 'CLARO' | 'MOVISTAR'
     companyCount: number
     contactCount: number
     assignedBy: { id: string; name: string }
@@ -356,7 +371,7 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
     }
   }
 
-  const mappedRuns: RunListItemBase[] = await Promise.all(
+  let mappedRuns: RunListItemBase[] = await Promise.all(
     runs.map(async (run) => {
       const [metrics, companyIds] = await Promise.all([
         buildRunMetrics(run.id, agentId, run.companyCount),
@@ -370,6 +385,7 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
           filename: run.importBatch
             ? run.importBatch.displayName?.trim() || run.importBatch.filename
             : null,
+          operator: resolveImportOperator(run.importBatch?.operator),
           companyCount: run.companyCount,
           contactCount: run.contactCount,
           assignedBy: run.assignedBy,
@@ -384,35 +400,63 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
     })
   )
 
+  const nullBatchRunIds = mappedRuns.filter((r) => !r.importBatchId).map((r) => r.id)
+  if (nullBatchRunIds.length > 0) {
+    const samples = await prisma.assignment.findMany({
+      where: { assignmentRunId: { in: nullBatchRunIds } },
+      select: {
+        assignmentRunId: true,
+        contact: { select: { company: { select: { importBatch: { select: { operator: true } } } } } },
+      },
+    })
+    const opByRun = new Map<string, 'CLARO' | 'MOVISTAR'>()
+    for (const row of samples) {
+      if (!row.assignmentRunId || opByRun.has(row.assignmentRunId)) continue
+      opByRun.set(
+        row.assignmentRunId,
+        resolveImportOperator(row.contact.company.importBatch?.operator)
+      )
+    }
+    mappedRuns = mappedRuns.map((run) =>
+      run.importBatchId ? run : { ...run, operator: opByRun.get(run.id) ?? 'CLARO' }
+    )
+  }
+  if (operator) {
+    mappedRuns = mappedRuns.filter((r) => r.operator === operator)
+  }
+
   const legacyRuns: RunListItemBase[] = []
   if (batchId) {
     const legacy = await buildLegacyBucketMetrics(agentId, batchId)
     if (legacy.companyCount > 0) {
       const batch = await prisma.importBatch.findUnique({
         where: { id: batchId },
-        select: { filename: true, displayName: true },
+        select: { filename: true, displayName: true, operator: true },
       })
-      legacyRuns.push(
-        await enrichRunActivity(
-          {
-            id: `legacy-${batchId}`,
-            assignedAt: legacy.earliestAssignedAt?.toISOString() ?? new Date(0).toISOString(),
-            importBatchId: batchId,
-            filename: batch
-              ? batch.displayName?.trim() || batch.filename
-              : null,
-            companyCount: legacy.companyCount,
-            contactCount: legacy.companyIds.length,
-            assignedBy: { id: '', name: 'Asignación anterior' },
-            status: 'ACTIVE',
-            releasedAt: null,
-            isLegacy: true,
-          },
-          legacy,
-          legacy.companyIds,
-          legacy.companyCount
+      if (!operator || resolveImportOperator(batch?.operator) === operator) {
+        legacyRuns.push(
+          await enrichRunActivity(
+            {
+              id: `legacy-${batchId}`,
+              assignedAt: legacy.earliestAssignedAt?.toISOString() ?? new Date(0).toISOString(),
+              importBatchId: batchId,
+              filename: batch
+                ? batch.displayName?.trim() || batch.filename
+                : null,
+              operator: resolveImportOperator(batch?.operator),
+              companyCount: legacy.companyCount,
+              contactCount: legacy.companyIds.length,
+              assignedBy: { id: '', name: 'Asignación anterior' },
+              status: 'ACTIVE',
+              releasedAt: null,
+              isLegacy: true,
+            },
+            legacy,
+            legacy.companyIds,
+            legacy.companyCount
+          )
         )
-      )
+      }
     }
   } else {
     const legacyAssignments = await prisma.assignment.findMany({
@@ -436,23 +480,26 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
     ]
     if (legacyBatchIds.length > 0) {
       const batches = await prisma.importBatch.findMany({
-        where: { id: { in: legacyBatchIds } },
-        select: { id: true, filename: true, displayName: true },
+        where: {
+          id: { in: legacyBatchIds },
+          ...(operator ? { operator } : {}),
+        },
+        select: { id: true, filename: true, displayName: true, operator: true },
       })
       const batchById = new Map(batches.map((b) => [b.id, b]))
       for (const legacyBatchId of legacyBatchIds) {
+        const batch = batchById.get(legacyBatchId)
+        if (!batch) continue
         const legacy = await buildLegacyBucketMetrics(agentId, legacyBatchId)
         if (legacy.companyCount === 0) continue
-        const batch = batchById.get(legacyBatchId)
         legacyRuns.push(
           await enrichRunActivity(
             {
               id: `legacy-${legacyBatchId}`,
               assignedAt: legacy.earliestAssignedAt?.toISOString() ?? new Date(0).toISOString(),
               importBatchId: legacyBatchId,
-              filename: batch
-                ? batch.displayName?.trim() || batch.filename
-                : null,
+              filename: batch.displayName?.trim() || batch.filename,
+              operator: resolveImportOperator(batch.operator),
               companyCount: legacy.companyCount,
               contactCount: legacy.companyIds.length,
               assignedBy: { id: '', name: 'Asignación anterior' },
