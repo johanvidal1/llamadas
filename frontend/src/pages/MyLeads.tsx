@@ -61,6 +61,10 @@ import {
   canHydrateBatchQueue,
   canPersistHydratedWorkingBatch,
   shouldRehydrateEmptyTodos,
+  shouldRehydrateUnknownBatch,
+  shouldHonorQueueDeepLink,
+  workingBatchIdForOperator,
+  batchIdAfterOperatorSwitch,
   type QueueBatchInput,
 } from '../lib/batchQueuePolicy'
 import { DuplicateRucBanner } from '../components/DuplicateRucBanner'
@@ -792,10 +796,6 @@ export default function MyLeads() {
     readStoredMyLeadsOperator()
   )
   const operatorChosen = selectedOperator != null
-  const chooseOperator = useCallback((op: ImportOperator) => {
-    setSelectedOperator(op)
-    writeStoredMyLeadsOperator(op)
-  }, [])
   const initialFilter = searchParams.get('filter') ?? ''
   const initialBatchId = searchParams.get('batchId') ?? ''
   const initialCompanyId = searchParams.get('companyId') ?? ''
@@ -856,10 +856,10 @@ export default function MyLeads() {
     const mode = parseBatchQueueMode(user?.batchQueueMode)
     if (mode === 'ALL') return ''
     if (!selectedOperator) return ''
-    if (selectedOperator === 'MOVISTAR') return user?.workingBatchIdMovistar ?? ''
-    return user?.workingBatchIdEntel ?? user?.workingBatchId ?? ''
+    return workingBatchIdForOperator(selectedOperator, user) ?? ''
   })
   const queueHydratedRef = useRef(queueDeepLinkWins)
+  const honorDeepLinkRef = useRef(queueDeepLinkWins)
   const explicitTodosRef = useRef(false)
   const persistWorkingBatchRef = useRef<(batchId: string | null) => void>(() => {})
   const [callbackResult, setCallbackResult] = useState<{
@@ -1083,10 +1083,7 @@ export default function MyLeads() {
   )
 
   const queueMode = parseBatchQueueMode(user?.batchQueueMode)
-  const workingBatchId =
-    selectedOperator === 'MOVISTAR'
-      ? user?.workingBatchIdMovistar ?? null
-      : user?.workingBatchIdEntel ?? user?.workingBatchId ?? null
+  const workingBatchId = workingBatchIdForOperator(selectedOperator, user)
   const queueBatches: QueueBatchInput[] = useMemo(
     () =>
       batches.map((b) => {
@@ -1103,14 +1100,16 @@ export default function MyLeads() {
     operatorChosen && (isAdmin ? allClientsData !== undefined : myBatches !== undefined)
   const pendingCountsReady = operatorChosen && allClientsData !== undefined
   const pickerWorkingBatchId = queueMode === 'ALL' ? undefined : workingBatchId ?? undefined
+  const selectedBatchMissingFromQueue =
+    operatorChosen &&
+    Boolean(selectedBatchId) &&
+    batchListReady &&
+    !batches.some((b) => b.id === selectedBatchId)
 
   const persistWorkingBatch = useCallback(
     (batchId: string | null) => {
       if (!user || !selectedOperator) return
-      const current =
-        selectedOperator === 'MOVISTAR'
-          ? user.workingBatchIdMovistar ?? null
-          : user.workingBatchIdEntel ?? user.workingBatchId ?? null
+      const current = workingBatchIdForOperator(selectedOperator, user)
       if (current === batchId) return
       if (selectedOperator === 'MOVISTAR') {
         patchAuthUser({ workingBatchIdMovistar: batchId })
@@ -1126,16 +1125,57 @@ export default function MyLeads() {
   persistWorkingBatchRef.current = persistWorkingBatch
 
   const prevOperatorRef = useRef(selectedOperator)
-  useEffect(() => {
-    if (prevOperatorRef.current === selectedOperator) return
-    prevOperatorRef.current = selectedOperator
-    queueHydratedRef.current = false
-    explicitTodosRef.current = false
-    if (!queueDeepLinkWins) {
-      setSelectedBatchId('')
+  const applyOperatorQueueRestore = useCallback(
+    (op: ImportOperator) => {
+      const from = prevOperatorRef.current
+      prevOperatorRef.current = op
+      const operatorSwitch = from != null && from !== op
+      honorDeepLinkRef.current = shouldHonorQueueDeepLink({
+        hasBatchOrCompanyDeepLink: honorDeepLinkRef.current,
+        operatorSwitch,
+      })
+      if (honorDeepLinkRef.current) {
+        queueHydratedRef.current = true
+        return
+      }
+      queueHydratedRef.current = false
+      explicitTodosRef.current = false
+      companyDeepLinkHandledRef.current = true
+      pendingCompanyNavRef.current = null
+      pendingContactIdRef.current = null
+      pendingContactIdxRef.current = null
+      pendingCallLogIdRef.current = null
+      stayAfterSaveRef.current = false
+      autoJumpToPendingRef.current = true
+      const mode = parseBatchQueueMode(user?.batchQueueMode)
+      const pin = workingBatchIdForOperator(op, user)
+      const next = batchIdAfterOperatorSwitch({ mode, workingBatchId: pin })
+      setSelectedBatchId(next)
       setCurrentIndex(0)
-    }
-  }, [selectedOperator, queueDeepLinkWins])
+      setGridPage(1)
+      setSearchParams(
+        (prev) => {
+          const url = new URLSearchParams(prev)
+          if (next) url.set('batchId', next)
+          else url.delete('batchId')
+          url.delete('companyId')
+          return url
+        },
+        { replace: true }
+      )
+    },
+    [user, setSearchParams]
+  )
+
+  const chooseOperator = useCallback(
+    (op: ImportOperator) => {
+      if (op === selectedOperator) return
+      setSelectedOperator(op)
+      writeStoredMyLeadsOperator(op)
+      applyOperatorQueueRestore(op)
+    },
+    [applyOperatorQueueRestore, selectedOperator]
+  )
 
   // Load detail for current client — placeholderData keeps previous record visible during nav
   const { data: clientDetail, isFetching: fetchingDetail } = useQuery({
@@ -1862,7 +1902,8 @@ export default function MyLeads() {
 
   useEffect(() => {
     if (!operatorChosen) return
-    if (queueDeepLinkWins) {
+    const deepLinkWins = honorDeepLinkRef.current
+    if (deepLinkWins) {
       queueHydratedRef.current = true
       return
     }
@@ -1892,8 +1933,16 @@ export default function MyLeads() {
       workingBatchId,
       batches: queueBatches,
     })
+    const unknownBatch = shouldRehydrateUnknownBatch({
+      mode: queueMode,
+      selectedBatchId,
+      batchIds: queueBatches.map((b) => b.id),
+      batchListReady,
+      deepLinkWins,
+      explicitTodos: explicitTodosRef.current,
+    })
 
-    if (!queueHydratedRef.current) {
+    if (!queueHydratedRef.current || unknownBatch) {
       if (resolved !== selectedBatchId) applyQueueBatch(resolved)
       if (
         canPersistHydratedWorkingBatch({
@@ -1913,7 +1962,7 @@ export default function MyLeads() {
         mode: queueMode,
         selectedBatchId,
         explicitTodos: explicitTodosRef.current,
-        deepLinkWins: queueDeepLinkWins,
+        deepLinkWins,
         pendingCountsReady,
         resolvedBatchId: resolved,
       })
@@ -1934,14 +1983,21 @@ export default function MyLeads() {
       return
     }
     if (resolved !== selectedBatchId) applyQueueBatch(resolved)
-    persistWorkingBatchRef.current(resolved || null)
+    if (
+      canPersistHydratedWorkingBatch({
+        mode: queueMode,
+        resolvedBatchId: resolved,
+        pendingCountsReady,
+      })
+    ) {
+      persistWorkingBatchRef.current(resolved || null)
+    }
   }, [
     applyQueueBatch,
     batchListReady,
     operatorChosen,
     pendingCountsReady,
     queueBatches,
-    queueDeepLinkWins,
     queueMode,
     selectedBatchId,
     workingBatchId,
@@ -2905,6 +2961,14 @@ export default function MyLeads() {
                 </div>
               </div>
             )}
+            {operatorChosen && !loadingList && selectedBatchMissingFromQueue && (
+              <div className="flex items-center justify-center h-full text-gray-400">
+                <div className="text-center">
+                  <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                  <p className="text-sm">Cargando lote...</p>
+                </div>
+              </div>
+            )}
             {!operatorChosen && (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center text-gray-400 max-w-sm px-4">
@@ -2929,12 +2993,14 @@ export default function MyLeads() {
               </div>
             )}
             {/* Empty state — keeps top bar + batch selector visible */}
-            {operatorChosen && !loadingList && clients.length === 0 && (
+            {operatorChosen && !loadingList && !selectedBatchMissingFromQueue && clients.length === 0 && (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center text-gray-400">
                   <User size={48} className="mx-auto mb-3" />
                   {selectedBatchId
-                    ? <><p className="font-medium text-gray-600">No hay clientes en este lote</p>
+                    ? headerBatchPending.total > 0 && headerBatchPending.pending === 0
+                      ? <p className="font-medium text-gray-600">Lote completo</p>
+                      : <><p className="font-medium text-gray-600">No hay clientes en este lote</p>
                         <button onClick={() => switchBatch('')} className="mt-3 text-sm text-blue-600 hover:underline">Ver todos los lotes</button></>
                     : <><p className="font-medium text-gray-600">No tienes clientes asignados</p>
                         <p className="text-sm mt-1">Contacta al administrador para recibir una asignación</p></>
@@ -2942,7 +3008,7 @@ export default function MyLeads() {
                 </div>
               </div>
             )}
-            {operatorChosen && !loadingList && clients.length > 0 && (
+            {operatorChosen && !loadingList && !selectedBatchMissingFromQueue && clients.length > 0 && (
               <div className="relative min-h-[480px]">
                 {fetchingDetail && displayDetail && (
                   <div className="absolute top-0 left-0 right-0 z-10 h-0.5 overflow-hidden bg-blue-100">

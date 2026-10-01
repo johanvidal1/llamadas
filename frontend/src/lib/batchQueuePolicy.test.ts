@@ -7,6 +7,10 @@ import {
   canHydrateBatchQueue,
   canPersistHydratedWorkingBatch,
   shouldRehydrateEmptyTodos,
+  workingBatchIdForOperator,
+  batchIdAfterOperatorSwitch,
+  shouldHonorQueueDeepLink,
+  shouldRehydrateUnknownBatch,
   type QueueBatchInput,
 } from './batchQueuePolicy.ts'
 
@@ -328,6 +332,133 @@ assert.equal(
     selectedBatchId: '',
     workingBatchId: null,
     batches: [oldest, newest],
+  }),
+  false
+)
+
+section('workingBatchIdForOperator is per-operator')
+assert.equal(
+  workingBatchIdForOperator('ENTEL', {
+    workingBatchIdEntel: 'entel-lote',
+    workingBatchIdMovistar: 'mov-lote',
+    workingBatchId: 'entel-lote',
+  }),
+  'entel-lote'
+)
+assert.equal(
+  workingBatchIdForOperator('MOVISTAR', {
+    workingBatchIdEntel: 'entel-lote',
+    workingBatchIdMovistar: 'mov-lote',
+    workingBatchId: 'entel-lote',
+  }),
+  'mov-lote'
+)
+assert.equal(workingBatchIdForOperator('ENTEL', { workingBatchId: 'legacy' }), 'legacy')
+assert.equal(workingBatchIdForOperator('MOVISTAR', { workingBatchIdEntel: 'entel-lote' }), null)
+assert.equal(workingBatchIdForOperator(null, { workingBatchIdEntel: 'entel-lote' }), null)
+
+section('operator switch restores pin, never empty first if pin exists')
+assert.equal(
+  batchIdAfterOperatorSwitch({ mode: 'FIFO', workingBatchId: 'entel-lote' }),
+  'entel-lote'
+)
+assert.equal(
+  batchIdAfterOperatorSwitch({ mode: 'LIFO', workingBatchId: 'mov-lote' }),
+  'mov-lote'
+)
+assert.equal(batchIdAfterOperatorSwitch({ mode: 'ALL', workingBatchId: 'entel-lote' }), '')
+assert.equal(batchIdAfterOperatorSwitch({ mode: 'FIFO', workingBatchId: null }), '')
+assert.equal(batchIdAfterOperatorSwitch({ mode: 'FIFO', workingBatchId: undefined }), '')
+
+section('leftover URL batchId is not a deep link after operator switch')
+assert.equal(
+  shouldHonorQueueDeepLink({ hasBatchOrCompanyDeepLink: true, operatorSwitch: false }),
+  true
+)
+assert.equal(
+  shouldHonorQueueDeepLink({ hasBatchOrCompanyDeepLink: true, operatorSwitch: true }),
+  false
+)
+assert.equal(
+  shouldHonorQueueDeepLink({ hasBatchOrCompanyDeepLink: false, operatorSwitch: true }),
+  false
+)
+
+section('operator switch must not persist null while that operator counts are loading')
+assert.equal(
+  canHydrateBatchQueue({ mode: 'FIFO', batchListReady: false, pendingCountsReady: false }),
+  false
+)
+assert.equal(
+  canPersistHydratedWorkingBatch({
+    mode: 'FIFO',
+    resolvedBatchId: '',
+    pendingCountsReady: false,
+  }),
+  false
+)
+assert.equal(
+  canPersistHydratedWorkingBatch({
+    mode: 'FIFO',
+    resolvedBatchId: 'entel-lote',
+    pendingCountsReady: false,
+  }),
+  true
+)
+
+section('stale other-operator lote rehydrates once this operator list is ready')
+assert.equal(
+  shouldRehydrateUnknownBatch({
+    mode: 'FIFO',
+    selectedBatchId: 'mov-lote',
+    batchIds: ['entel-lote'],
+    batchListReady: true,
+    deepLinkWins: false,
+    explicitTodos: false,
+  }),
+  true
+)
+assert.equal(
+  shouldRehydrateUnknownBatch({
+    mode: 'FIFO',
+    selectedBatchId: 'entel-lote',
+    batchIds: ['entel-lote'],
+    batchListReady: true,
+    deepLinkWins: false,
+    explicitTodos: false,
+  }),
+  false
+)
+assert.equal(
+  shouldRehydrateUnknownBatch({
+    mode: 'FIFO',
+    selectedBatchId: 'mov-lote',
+    batchIds: ['entel-lote'],
+    batchListReady: true,
+    deepLinkWins: true,
+    explicitTodos: false,
+  }),
+  false
+)
+assert.equal(
+  shouldRehydrateUnknownBatch({
+    mode: 'ALL',
+    selectedBatchId: 'mov-lote',
+    batchIds: ['entel-lote'],
+    batchListReady: true,
+    deepLinkWins: false,
+    explicitTodos: false,
+  }),
+  false
+)
+assert.equal(
+  shouldRehydrateUnknownBatch({
+    mode: 'FIFO',
+    selectedBatchId: 'mov-lote',
+    batchIds: [],
+    batchListReady: false,
+    deepLinkWins: false,
+    explicitTodos: false,
   }),
   false
 )

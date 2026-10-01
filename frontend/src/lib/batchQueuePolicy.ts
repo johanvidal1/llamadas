@@ -8,6 +8,49 @@ export type QueueBatchInput = {
   pending: number
 }
 
+export type WorkingBatchUserPins = {
+  workingBatchId?: string | null
+  workingBatchIdEntel?: string | null
+  workingBatchIdMovistar?: string | null
+}
+
+/** Pin for the operator currently on Mis clientes. Never mixes Entel/Movistar. */
+export function workingBatchIdForOperator(
+  operator: string | null | undefined,
+  user: WorkingBatchUserPins | null | undefined
+): string | null {
+  if (!operator || !user) return null
+  if (operator === 'MOVISTAR') return user.workingBatchIdMovistar ?? null
+  return user.workingBatchIdEntel ?? user.workingBatchId ?? null
+}
+
+/**
+ * Immediate lote after Entel↔Movistar switch.
+ * ALL → Todos (`''`). FIFO/LIFO restore that operator's pin — never clear to empty
+ * first when a pin exists. Hydration FIFO-advances later if the lote has 0 pending,
+ * once my-batches + pending counts are ready.
+ */
+export function batchIdAfterOperatorSwitch(opts: {
+  mode: BatchQueueMode
+  workingBatchId: string | null | undefined
+}): string {
+  if (opts.mode === 'ALL') return ''
+  return opts.workingBatchId ?? ''
+}
+
+/**
+ * `?batchId=` / `?companyId=` win on landing (Dashboard / command palette).
+ * After an Entel↔Movistar switch they do not: leftover URL from the other
+ * operator is not a deep link and must not skip pin restore / FIFO hydrate.
+ */
+export function shouldHonorQueueDeepLink(opts: {
+  hasBatchOrCompanyDeepLink: boolean
+  operatorSwitch: boolean
+}): boolean {
+  if (opts.operatorSwitch) return false
+  return opts.hasBatchOrCompanyDeepLink
+}
+
 export function parseBatchQueueMode(value: unknown): BatchQueueMode {
   if (value === 'LIFO' || value === 'ALL' || value === 'FIFO') return value
   return DEFAULT_BATCH_QUEUE_MODE
@@ -112,4 +155,22 @@ export function shouldRehydrateEmptyTodos(opts: {
   if (!opts.pendingCountsReady) return false
   if (opts.selectedBatchId) return false
   return Boolean(opts.resolvedBatchId)
+}
+
+/**
+ * Stale selectedBatchId (other operator's lote still in state/URL) must re-resolve
+ * once this operator's batch list is known. Deep links and explicit Todos keep winning.
+ */
+export function shouldRehydrateUnknownBatch(opts: {
+  mode: BatchQueueMode
+  selectedBatchId: string
+  batchIds: string[]
+  batchListReady: boolean
+  deepLinkWins: boolean
+  explicitTodos: boolean
+}): boolean {
+  if (opts.deepLinkWins || opts.explicitTodos) return false
+  if (opts.mode === 'ALL') return false
+  if (!opts.selectedBatchId || !opts.batchListReady) return false
+  return !opts.batchIds.includes(opts.selectedBatchId)
 }
