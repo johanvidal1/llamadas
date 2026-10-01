@@ -8,7 +8,8 @@
     "preview": "vite preview",
     "release-notes": "node scripts/add-release-notes.mjs",
     "test:batch-queue": "npx tsx src/lib/batchQueuePolicy.test.ts",
-    "test:operator": "npx tsx src/lib/operator.test.ts"
+    "test:operator": "npx tsx src/lib/operator.test.ts",
+    "test:my-leads-nav": "npx tsx src/lib/myLeadsCompanyNav.test.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.45.0",

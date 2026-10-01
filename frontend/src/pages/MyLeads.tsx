@@ -67,6 +67,15 @@ import {
   batchIdAfterOperatorSwitch,
   type QueueBatchInput,
 } from '../lib/batchQueuePolicy'
+import {
+  companyIndexById,
+  companySummaryHasAgentLog,
+  nextCompanyIdAfter,
+  nextCompanyIndexAfter,
+  nextPendingCompanyIdAfter,
+  nextPendingCompanyIndexAfter,
+  type CompanyNavItem,
+} from '../lib/myLeadsCompanyNav'
 import { DuplicateRucBanner } from '../components/DuplicateRucBanner'
 import OtherOperatorRucBanner from '../components/OtherOperatorRucBanner'
 import {
@@ -1767,10 +1776,15 @@ export default function MyLeads() {
 
   const goNext = useCallback(async () => {
     await saveActiveContactIfDirty()
-    if (currentIndex < clients.length - 1) {
-      await navigateToCompany(currentIndex + 1)
+    const currentId = clients[currentIndex]?.id
+    if (!currentId) return
+    const nextIdx = nextCompanyIndexAfter(clients, currentId)
+    if (nextIdx >= 0) {
+      await navigateToCompany(nextIdx)
+      return
     }
-  }, [currentIndex, clients.length, saveActiveContactIfDirty, navigateToCompany])
+    toast('Ya estás en la última empresa de la cola', { icon: 'ℹ️' })
+  }, [currentIndex, clients, saveActiveContactIfDirty, navigateToCompany])
 
   const goPrev = useCallback(async () => {
     await saveActiveContactIfDirty()
@@ -1794,13 +1808,16 @@ export default function MyLeads() {
     [flatNavItems, companyHasAgentLog]
   )
 
-  const nextPendingTarget = useMemo(
-    () =>
-      flatNavItems.find(
-        (item) => item.clientIdx > currentIndex && !companyHasAgentLog(item.clientIdx)
-      ),
-    [flatNavItems, currentIndex, companyHasAgentLog]
-  )
+  const nextPendingTarget = useMemo(() => {
+    const currentId = clients[currentIndex]?.id
+    if (!currentId) return undefined
+    const nextIdx = nextPendingCompanyIndexAfter(
+      clients,
+      currentId,
+      (_item, idx) => !companyHasAgentLog(idx)
+    )
+    return nextIdx >= 0 ? { clientIdx: nextIdx } : undefined
+  }, [clients, currentIndex, companyHasAgentLog])
 
   const goToFirstRegistered = useCallback(async () => {
     if (firstRegisteredTarget) {
@@ -1819,12 +1836,22 @@ export default function MyLeads() {
   }, [firstEmptyTarget, navigateToCompany])
 
   const goToNextPending = useCallback(async () => {
-    if (nextPendingTarget) {
-      await navigateToCompany(nextPendingTarget.clientIdx)
-    } else {
+    const currentId = clients[currentIndex]?.id
+    if (!currentId) {
       toast('No hay más empresas pendientes en este lote', { icon: 'ℹ️' })
+      return
     }
-  }, [nextPendingTarget, navigateToCompany])
+    const nextIdx = nextPendingCompanyIndexAfter(
+      clients,
+      currentId,
+      (_item, idx) => !companyHasAgentLog(idx)
+    )
+    if (nextIdx >= 0) {
+      await navigateToCompany(nextIdx)
+      return
+    }
+    toast('No hay más empresas pendientes en este lote', { icon: 'ℹ️' })
+  }, [clients, currentIndex, companyHasAgentLog, navigateToCompany])
 
   // On cold entry to detail (default view, view toggle or batch switch — never after an
   // explicit selection or deep-link) position the agent on the first pending company
@@ -2226,6 +2253,11 @@ export default function MyLeads() {
 
   const saveMutation = useMutation({
     mutationFn: async (autoNext: SaveAutoNext) => {
+      const navSnapshot: CompanyNavItem[] = clients.map((c) => ({
+        id: c.id,
+        ruc: c.ruc,
+        hasAgentLog: companySummaryHasAgentLog(c),
+      }))
       const emptyResult = {
         autoNext,
         callLogSaved: false,
@@ -2236,6 +2268,7 @@ export default function MyLeads() {
         movedToDepuradoNoContesta: false,
         companyId: null as string | null,
         savedCallLogId: null as string | null,
+        navSnapshot,
       }
       if (!currentClient) return emptyResult
 
@@ -2390,6 +2423,10 @@ export default function MyLeads() {
       const nothingSaved =
         !callLogSaved && !contactSaved && !planChanged && !razonSocialChanged
 
+      if (autoNext && !callLogSaved) {
+        throw new Error('Selecciona una respuesta antes de avanzar a la siguiente empresa')
+      }
+
       if (callLogUnchanged && nothingSaved) {
         return {
           autoNext,
@@ -2401,12 +2438,10 @@ export default function MyLeads() {
           movedToDepuradoNoContesta: false,
           companyId: currentClient.id,
           savedCallLogId: null,
+          navSnapshot,
         }
       }
 
-      if (autoNext && !callLogSaved) {
-        throw new Error('Selecciona una respuesta antes de avanzar a la siguiente empresa')
-      }
       if (nothingSaved) {
         throw new Error('Selecciona una respuesta antes de guardar')
       }
@@ -2427,6 +2462,7 @@ export default function MyLeads() {
         movedToDepuradoNoContesta,
         companyId: currentClient.id,
         savedCallLogId,
+        navSnapshot,
       }
     },
     onSuccess: async (result) => {
@@ -2479,10 +2515,8 @@ export default function MyLeads() {
         qc.invalidateQueries({ queryKey: ['clients'] }),
         qc.invalidateQueries({ queryKey: ['dashboard'] }),
       ])
-      if (result.autoNext === 'nextPending') await goToNextPending()
-      else if (result.autoNext) await goNext()
-      else if (stayOnRecord && savedCompanyId) {
-        // Re-pin by company id so a reorder (or filter change) cannot leave us on the wrong record.
+      const shouldAdvance = result.autoNext === 'nextPending' || Boolean(result.autoNext)
+      if (shouldAdvance || (stayOnRecord && savedCompanyId)) {
         const fresh = await qc.fetchQuery({
           queryKey: ['clients', 'my-leads', 'nav', selectedBatchId, selectedOperator],
           queryFn: () =>
@@ -2496,42 +2530,89 @@ export default function MyLeads() {
         const freshVisible = isAdmin
           ? freshRaw
           : freshRaw.filter((c) => !isHiddenFromAgentNav(c.lastDisposition, c.callLogCount))
-        const pinnedIdx = freshVisible.findIndex((c) => c.id === savedCompanyId)
-        if (pinnedIdx >= 0) {
-          if (pinnedIdx !== currentIndex) setCurrentIndex(pinnedIdx)
-        } else {
-          const companyHasLog = (c: ClientSummary) =>
-            (c.callLogCount ?? 0) > 0 ||
-            (c.contacts ?? []).some((ct) => (ct._count?.callLogs ?? 0) > 0)
-          const from = Math.min(currentIndex, Math.max(freshVisible.length - 1, 0))
-          let nextPending = freshVisible.findIndex((c, i) => i >= from && !companyHasLog(c))
-          if (nextPending < 0) {
-            nextPending = freshVisible.findIndex((c) => !companyHasLog(c))
+
+        if (shouldAdvance && savedCompanyId) {
+          const snapshot = result.navSnapshot ?? []
+          const wantPending = result.autoNext === 'nextPending'
+          const targetId = wantPending
+            ? nextPendingCompanyIdAfter(
+                snapshot,
+                savedCompanyId,
+                (item) => !companySummaryHasAgentLog(item)
+              )
+            : nextCompanyIdAfter(snapshot, savedCompanyId)
+
+          const pinNextCompany = (companyId: string) => {
+            const idx = companyIndexById(freshVisible, companyId)
+            if (idx < 0) return false
+            stayAfterSaveRef.current = false
+            needsContactResolveRef.current = true
+            pendingContactIdRef.current = null
+            pendingContactIdxRef.current = 0
+            setActiveContactIdx(0)
+            setCurrentIndex(idx)
+            return true
           }
-          if (nextPending >= 0) {
-            toast('Empresa fuera de la cola visible; pasando a la siguiente pendiente', {
-              icon: 'ℹ️',
-            })
-            setCurrentIndex(nextPending)
-          } else if (freshVisible.length > 0) {
-            toast('Empresa fuera de la cola visible', { icon: 'ℹ️' })
-            setCurrentIndex(Math.min(currentIndex, freshVisible.length - 1))
-          } else {
-            toast('Empresa fuera de la cola visible; no quedan empresas', { icon: 'ℹ️' })
-            setCurrentIndex(0)
-          }
+
+          if (targetId && pinNextCompany(targetId)) return
+
+          const fallbackId = wantPending
+            ? nextPendingCompanyIdAfter(
+                freshVisible,
+                savedCompanyId,
+                (c) => !companySummaryHasAgentLog(c)
+              )
+            : nextCompanyIdAfter(freshVisible, savedCompanyId)
+          if (fallbackId && pinNextCompany(fallbackId)) return
+
+          toast(
+            wantPending
+              ? 'No hay más empresas pendientes en este lote'
+              : 'Ya estás en la última empresa de la cola',
+            { icon: 'ℹ️' }
+          )
+          const stayIdx = companyIndexById(freshVisible, savedCompanyId)
+          if (stayIdx >= 0) setCurrentIndex(stayIdx)
+          return
         }
-        if (savedDetailScrollRef.current) {
-          const saved = savedDetailScrollRef.current
-          requestAnimationFrame(() => {
+
+        if (stayOnRecord && savedCompanyId) {
+          const pinnedIdx = companyIndexById(freshVisible, savedCompanyId)
+          if (pinnedIdx >= 0) {
+            if (pinnedIdx !== currentIndex) setCurrentIndex(pinnedIdx)
+          } else {
+            const from = Math.min(currentIndex, Math.max(freshVisible.length - 1, 0))
+            let nextPending = freshVisible.findIndex(
+              (c, i) => i >= from && !companySummaryHasAgentLog(c)
+            )
+            if (nextPending < 0) {
+              nextPending = freshVisible.findIndex((c) => !companySummaryHasAgentLog(c))
+            }
+            if (nextPending >= 0) {
+              toast('Empresa fuera de la cola visible; pasando a la siguiente pendiente', {
+                icon: 'ℹ️',
+              })
+              setCurrentIndex(nextPending)
+            } else if (freshVisible.length > 0) {
+              toast('Empresa fuera de la cola visible', { icon: 'ℹ️' })
+              setCurrentIndex(Math.min(currentIndex, freshVisible.length - 1))
+            } else {
+              toast('Empresa fuera de la cola visible; no quedan empresas', { icon: 'ℹ️' })
+              setCurrentIndex(0)
+            }
+          }
+          if (savedDetailScrollRef.current) {
+            const saved = savedDetailScrollRef.current
             requestAnimationFrame(() => {
-              if (detailFormScrollRef.current) detailFormScrollRef.current.scrollTop = saved.form
-              if (historialScrollRef.current) historialScrollRef.current.scrollTop = saved.historial
-              if (agendadosScrollRef.current) agendadosScrollRef.current.scrollTop = saved.agendados
-              preserveDetailScrollRef.current = false
-              savedDetailScrollRef.current = null
+              requestAnimationFrame(() => {
+                if (detailFormScrollRef.current) detailFormScrollRef.current.scrollTop = saved.form
+                if (historialScrollRef.current) historialScrollRef.current.scrollTop = saved.historial
+                if (agendadosScrollRef.current) agendadosScrollRef.current.scrollTop = saved.agendados
+                preserveDetailScrollRef.current = false
+                savedDetailScrollRef.current = null
+              })
             })
-          })
+          }
         }
       }
     },
@@ -2637,7 +2718,9 @@ export default function MyLeads() {
   // (so the top bar with batch selector remains visible at all times)
 
   const isFirst = clients.length === 0 || currentIndex === 0
-  const isLast = clients.length === 0 || currentIndex >= clients.length - 1
+  const isLast =
+    clients.length === 0 ||
+    nextCompanyIndexAfter(clients, clients[currentIndex]?.id ?? '') < 0
 
   const atFirstRegistered =
     firstRegisteredTarget != null && firstRegisteredTarget.clientIdx === currentIndex
