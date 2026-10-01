@@ -66,7 +66,7 @@ const userSelect = {
   createdAt: true,
   batchQueueMode: true,
   workingBatchId: true,
-  workingBatchIdClaro: true,
+  workingBatchIdEntel: true,
   workingBatchIdMovistar: true,
 } as const
 
@@ -86,7 +86,7 @@ const updateUserSchema = z.object({
   active: z.boolean().optional(),
   batchQueueMode: z.enum(['FIFO', 'LIFO', 'ALL']).optional(),
   workingBatchId: z.union([z.string().min(1), z.null()]).optional(),
-  workingBatchIdClaro: z.union([z.string().min(1), z.null()]).optional(),
+  workingBatchIdEntel: z.union([z.string().min(1), z.null()]).optional(),
   workingBatchIdMovistar: z.union([z.string().min(1), z.null()]).optional(),
 })
 
@@ -303,7 +303,7 @@ router.put('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
       active: true,
       batchQueueMode: true,
       workingBatchId: true,
-      workingBatchIdClaro: true,
+      workingBatchIdEntel: true,
       workingBatchIdMovistar: true,
     },
   })

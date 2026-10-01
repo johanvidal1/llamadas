@@ -15,14 +15,16 @@ function section(name: string) {
 }
 
 section('parseImportOperator')
-assert.equal(parseImportOperator('CLARO'), 'CLARO')
+assert.equal(parseImportOperator('ENTEL'), 'ENTEL')
+assert.equal(parseImportOperator('CLARO'), 'ENTEL')
 assert.equal(parseImportOperator('movistar'), 'MOVISTAR')
 assert.equal(parseImportOperator('todos'), null)
 assert.equal(parseImportOperator(undefined), null)
 
-section('missing operator is Claro')
-assert.equal(resolveImportOperator(undefined), 'CLARO')
-assert.equal(resolveImportOperator(null), 'CLARO')
+section('missing operator is Entel')
+assert.equal(resolveImportOperator(undefined), 'ENTEL')
+assert.equal(resolveImportOperator(null), 'ENTEL')
+assert.equal(resolveImportOperator('CLARO'), 'ENTEL')
 assert.equal(resolveImportOperator('MOVISTAR'), 'MOVISTAR')
 
 section('where fragments empty when unfiltered')
@@ -32,24 +34,24 @@ assert.deepEqual(assignmentOperatorWhere(null), {})
 assert.deepEqual(callbackOperatorWhere(null), {})
 assert.deepEqual(importBatchOperatorWhere(null), {})
 
-section('where fragments when Claro / Movistar')
-assert.deepEqual(companyOperatorWhere('CLARO'), { importBatch: { operator: 'CLARO' } })
+section('where fragments when Entel / Movistar')
+assert.deepEqual(companyOperatorWhere('ENTEL'), { importBatch: { operator: 'ENTEL' } })
 assert.deepEqual(contactOperatorWhere('MOVISTAR'), {
   company: { importBatch: { operator: 'MOVISTAR' } },
 })
-assert.deepEqual(assignmentOperatorWhere('CLARO'), {
-  contact: { company: { importBatch: { operator: 'CLARO' } } },
+assert.deepEqual(assignmentOperatorWhere('ENTEL'), {
+  contact: { company: { importBatch: { operator: 'ENTEL' } } },
 })
 assert.deepEqual(callbackOperatorWhere('MOVISTAR'), {
   company: { importBatch: { operator: 'MOVISTAR' } },
 })
-assert.deepEqual(importBatchOperatorWhere('CLARO'), { operator: 'CLARO' })
+assert.deepEqual(importBatchOperatorWhere('ENTEL'), { operator: 'ENTEL' })
 
 section('SQL filter empty vs operator')
 const emptySql = sqlCallLogCompanyOperatorFilter(null)
 assert.equal(emptySql.text.includes('ImportBatch'), false)
-const claroSql = sqlCallLogCompanyOperatorFilter('CLARO')
-assert.ok(claroSql.text.includes('ImportBatch'))
-assert.deepEqual(claroSql.values, ['CLARO'])
+const entelSql = sqlCallLogCompanyOperatorFilter('ENTEL')
+assert.ok(entelSql.text.includes('ImportBatch'))
+assert.deepEqual(entelSql.values, ['ENTEL'])
 
 console.log('\noperatorFilter tests ok')

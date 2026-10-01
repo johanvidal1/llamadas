@@ -454,7 +454,7 @@ export default function Callbacks() {
         <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-gray-50 shrink-0" role="group" aria-label="Filtrar por operador">
           {([
             { id: '' as const, label: 'Todos' },
-            { id: 'CLARO' as const, label: 'Claro' },
+            { id: 'ENTEL' as const, label: 'Entel' },
             { id: 'MOVISTAR' as const, label: 'Movistar' },
           ]).map((opt) => (
             <button

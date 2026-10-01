@@ -194,7 +194,7 @@ function ImportSheetHeadersHelp({ operator }: { operator: ImportOperator }) {
           </>
         ) : (
           <>
-            Plantilla <strong>Claro</strong>: hojas <strong>Contactos</strong> (obligatoria),{' '}
+            Plantilla <strong>Entel</strong>: hojas <strong>Contactos</strong> (obligatoria),{' '}
             <strong>ProductosMovil</strong> y <strong>DetallePlan</strong> (opcionales). CSV: los
             mismos encabezados en la fila 1, sin hojas.
           </>
@@ -269,9 +269,9 @@ function ImportSheetHeadersHelp({ operator }: { operator: ImportOperator }) {
 
 function recoveredOperatorsLabel(preview: DepuradoExportPreview): string {
   const parts: string[] = []
-  if (preview.agents.some((a) => a.claroCount > 0)) parts.push('Claro')
+  if (preview.agents.some((a) => a.entelCount > 0)) parts.push('Entel')
   if (preview.agents.some((a) => a.movistarCount > 0)) parts.push('Movistar')
-  if (parts.length === 2) return 'Claro y Movistar'
+  if (parts.length === 2) return 'Entel y Movistar'
   return parts[0] ?? ''
 }
 
@@ -396,7 +396,7 @@ function DepuradoExportPanel() {
         {open && (
           <div className="px-4 pb-4 pt-1 border-t border-gray-100">
             <p className="text-xs text-gray-500 mb-3">
-              Claro y Movistar nunca se mezclan: cada archivo usa su plantilla de importación.
+              Entel y Movistar nunca se mezclan: cada archivo usa su plantilla de importación.
               Si hay más de un archivo, se descarga un ZIP. El filtro deja al otro operador en cola.
             </p>
             <div
@@ -406,7 +406,7 @@ function DepuradoExportPanel() {
             >
               {([
                 { id: '' as const, label: 'Todos' },
-                { id: 'CLARO' as const, label: 'Claro' },
+                { id: 'ENTEL' as const, label: 'Entel' },
                 { id: 'MOVISTAR' as const, label: 'Movistar' },
               ]).map((opt) => (
                 <button
@@ -497,8 +497,8 @@ function DepuradoExportPanel() {
                   <p className="font-medium text-gray-900">{agent.agentName}</p>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5">
                     <span className="inline-flex items-center gap-1.5">
-                      <OperatorChip operator="CLARO" />
-                      <span className="text-xs text-gray-600 tabular-nums">{agent.claroCount}</span>
+                      <OperatorChip operator="ENTEL" />
+                      <span className="text-xs text-gray-600 tabular-nums">{agent.entelCount}</span>
                     </span>
                     <span className="text-gray-300 text-xs">·</span>
                     <span className="inline-flex items-center gap-1.5">
@@ -530,7 +530,7 @@ function DepuradoExportPanel() {
               Al confirmar, estas empresas{recoveredOps ? ` de ${recoveredOps}` : ''} saldrán de la cola{' '}
               <strong>No contesta — depurado</strong> de ese agente y no se volverán a exportar.
               {operatorFilter
-                ? ` El resto (${operatorFilter === 'CLARO' ? 'Movistar' : 'Claro'}) permanece en cola.`
+                ? ` El resto (${operatorFilter === 'ENTEL' ? 'Movistar' : 'Entel'}) permanece en cola.`
                 : ''}
             </p>
             <p className="text-xs text-gray-500 mb-6">
@@ -630,7 +630,7 @@ export default function Imports() {
     () =>
       historyOperator === 'ALL'
         ? batches
-        : batches.filter((b) => (b.operator ?? 'CLARO') === historyOperator),
+        : batches.filter((b) => (b.operator ?? 'ENTEL') === historyOperator),
     [batches, historyOperator]
   )
 
@@ -761,7 +761,7 @@ export default function Imports() {
       return
     }
     if (!importOperator) {
-      toast.error('Elige operador (Claro o Movistar) antes de importar.')
+      toast.error('Elige operador (Entel o Movistar) antes de importar.')
       return
     }
     const tokenError = filenameOperatorError(file.name, importOperator)
@@ -770,7 +770,7 @@ export default function Imports() {
       return
     }
     if (file.name.match(/\.csv$/i) && importOperator === 'MOVISTAR') {
-      toast.error('La plantilla Movistar es Excel (Resumen / Usuarios / Productos). El CSV solo se usa para Claro.')
+      toast.error('La plantilla Movistar es Excel (Resumen / Usuarios / Productos). El CSV solo se usa para Entel.')
       return
     }
     setDuplicateDisplayName('')
@@ -826,18 +826,18 @@ export default function Imports() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Importar base de datos</h1>
         <p className="text-gray-500 text-sm mt-1">
-          Campaña Migración de Operador: elige Claro o Movistar y sube la plantilla correspondiente
+          Campaña Migración de Operador: elige Entel o Movistar y sube la plantilla correspondiente. La campaña es migración a Entel.
         </p>
       </div>
 
       <div className="card p-4">
         <p className="text-sm font-medium text-gray-800 mb-2">Operador del archivo</p>
         <p className="text-xs text-gray-500 mb-3">
-          Obligatorio. El nombre del archivo debe incluir <span className="font-mono">claro</span> o{' '}
+          Obligatorio. El nombre del archivo debe incluir <span className="font-mono">entel</span> o{' '}
           <span className="font-mono">movistar</span> como segmento (p. ej. PLANTILLA_movistar_20260928.xlsx).
         </p>
         <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Operador">
-          {(['CLARO', 'MOVISTAR'] as const).map((op) => {
+          {(['ENTEL', 'MOVISTAR'] as const).map((op) => {
             const selected = importOperator === op
             return (
               <button
@@ -866,7 +866,7 @@ export default function Imports() {
         onDrop={handleDrop}
         onClick={() => {
           if (!importOperator) {
-            toast.error('Elige operador (Claro o Movistar) antes de importar.')
+            toast.error('Elige operador (Entel o Movistar) antes de importar.')
             return
           }
           fileRef.current?.click()
@@ -905,9 +905,9 @@ export default function Imports() {
             <p className="text-sm text-gray-400 mt-1">
               {importOperator === 'MOVISTAR'
                 ? 'Excel Movistar (.xlsx) con hojas Resumen / Usuarios / Productos · Máximo 20 MB'
-                : importOperator === 'CLARO'
-                  ? 'Excel Claro (.xlsx) con hoja Contactos (opcional ProductosMovil, DetallePlan) · CSV · Máximo 20 MB'
-                  : 'Elige Claro o Movistar arriba para habilitar la carga'}
+                : importOperator === 'ENTEL'
+                  ? 'Excel Entel (.xlsx) con hoja Contactos (opcional ProductosMovil, DetallePlan) · CSV · Máximo 20 MB'
+                  : 'Elige Entel o Movistar arriba para habilitar la carga'}
             </p>
           </>
         )}
@@ -950,7 +950,7 @@ export default function Imports() {
         </div>
       )}
 
-      <ImportSheetHeadersHelp operator={importOperator ?? 'CLARO'} />
+      <ImportSheetHeadersHelp operator={importOperator ?? 'ENTEL'} />
 
       <DepuradoExportPanel />
 
@@ -961,7 +961,7 @@ export default function Imports() {
           <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-gray-50" role="group" aria-label="Filtrar por operador">
             {([
               { id: 'ALL' as const, label: 'Todos' },
-              { id: 'CLARO' as const, label: 'Claro' },
+              { id: 'ENTEL' as const, label: 'Entel' },
               { id: 'MOVISTAR' as const, label: 'Movistar' },
             ]).map((opt) => (
               <button
@@ -1043,15 +1043,7 @@ export default function Imports() {
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <p className="font-medium text-gray-900 truncate">{batchLabel(batch)}</p>
-                                  <span
-                                    className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${
-                                      (batch.operator ?? 'CLARO') === 'MOVISTAR'
-                                        ? 'bg-sky-100 text-sky-800'
-                                        : 'bg-red-50 text-red-700'
-                                    }`}
-                                  >
-                                    {operatorLabelEs((batch.operator === 'MOVISTAR' ? 'MOVISTAR' : 'CLARO'))}
-                                  </span>
+                                  <OperatorChip operator={batch.operator === 'MOVISTAR' ? 'MOVISTAR' : 'ENTEL'} />
                                   {batch.blocked && (
                                     <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-red-100 text-red-700">
                                       Bloqueado

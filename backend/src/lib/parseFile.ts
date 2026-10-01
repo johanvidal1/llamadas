@@ -35,7 +35,7 @@ export interface ParsedCompany {
   estado?: string     // OK | NO_ENCONTRADO | SIN_CONTACTOS
   fechaConsulta?: string
   contacts: ParsedContact[]
-  /** Movistar: true if at least one Usuarios row. Claro Contactos rows count as true. */
+  /** Movistar: true if at least one Usuarios row. Entel Contactos rows count as true. */
   hasUsuarios?: boolean
 }
 
@@ -359,7 +359,7 @@ export class MissingContactosSheetError extends Error {
 
 export async function parseExcel(
   buffer: Buffer,
-  operator: ImportOperator = 'CLARO'
+  operator: ImportOperator = 'ENTEL'
 ): Promise<ParseResult> {
   if (operator === 'MOVISTAR') {
     return parseMovistarExcel(buffer)
@@ -398,7 +398,7 @@ export async function parseExcel(
 }
 
 export function parseExcelOperator(operator: unknown): ImportOperator {
-  return isImportOperator(operator) ? operator : 'CLARO'
+  return isImportOperator(operator) ? operator : 'ENTEL'
 }
 
 export async function parseCsv(buffer: Buffer): Promise<ParseResult> {

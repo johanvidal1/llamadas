@@ -35,33 +35,41 @@ function workbookBuffer(sheets: { name: string; rows: Record<string, unknown>[] 
 section('filename token: segment anywhere, not substring')
 assert.deepEqual(filenameOperatorTokens('PLANTILLA_movistar_20260928_124441.xlsx'), ['MOVISTAR'])
 assert.equal(detectFilenameOperator('PLANTILLA_movistar_20260928_124441.xlsx'), 'MOVISTAR')
-assert.equal(detectFilenameOperator('foo-claro-bar.xlsx'), 'CLARO')
-assert.equal(detectFilenameOperator('claro.xlsx'), 'CLARO')
+assert.equal(detectFilenameOperator('foo-entel-bar.xlsx'), 'ENTEL')
+assert.equal(detectFilenameOperator('entel.xlsx'), 'ENTEL')
+assert.equal(detectFilenameOperator('claro.xlsx'), null)
+assert.equal(detectFilenameOperator('foo-claro-bar.xlsx'), null)
 assert.equal(detectFilenameOperator('MOVISTAR_base.XLSX'), 'MOVISTAR')
 assert.equal(detectFilenameOperator('aclaracion.xlsx'), null)
 assert.equal(detectFilenameOperator('plantillaclaro.xlsx'), null)
+assert.equal(detectFilenameOperator('plantillaentel.xlsx'), null)
 assert.equal(detectFilenameOperator('base.xlsx'), null)
-assert.deepEqual(filenameOperatorTokens('claro_movistar.xlsx').sort(), ['CLARO', 'MOVISTAR'])
-assert.equal(detectFilenameOperator('claro_movistar.xlsx'), null)
+assert.deepEqual(filenameOperatorTokens('entel_movistar.xlsx').sort(), ['ENTEL', 'MOVISTAR'])
+assert.equal(detectFilenameOperator('entel_movistar.xlsx'), null)
+assert.deepEqual(filenameOperatorTokens('claro_movistar.xlsx'), ['MOVISTAR'])
 
 section('filename must match UI selection')
 assert.doesNotThrow(() =>
   assertFilenameMatchesOperator('PLANTILLA_movistar_20260928_124441.xlsx', 'MOVISTAR')
 )
-assert.doesNotThrow(() => assertFilenameMatchesOperator('lote-claro-01.xlsx', 'CLARO'))
+assert.doesNotThrow(() => assertFilenameMatchesOperator('lote-entel-01.xlsx', 'ENTEL'))
 assert.throws(
-  () => assertFilenameMatchesOperator('aclaracion.xlsx', 'CLARO'),
+  () => assertFilenameMatchesOperator('aclaracion.xlsx', 'ENTEL'),
   (err: unknown) => err instanceof FilenameOperatorError && /segmento/.test((err as Error).message)
 )
 assert.throws(
-  () => assertFilenameMatchesOperator('PLANTILLA_movistar_20260928.xlsx', 'CLARO'),
+  () => assertFilenameMatchesOperator('lote_claro.xlsx', 'ENTEL'),
+  (err: unknown) => err instanceof FilenameOperatorError && /segmento/.test((err as Error).message)
+)
+assert.throws(
+  () => assertFilenameMatchesOperator('PLANTILLA_movistar_20260928.xlsx', 'ENTEL'),
   (err: unknown) =>
     err instanceof FilenameOperatorError &&
     /Movistar/.test((err as Error).message) &&
-    /Claro/.test((err as Error).message)
+    /Entel/.test((err as Error).message)
 )
 assert.throws(
-  () => assertFilenameMatchesOperator('lote_claro.xlsx', 'MOVISTAR'),
+  () => assertFilenameMatchesOperator('lote_entel.xlsx', 'MOVISTAR'),
   FilenameOperatorError
 )
 assert.throws(
@@ -283,17 +291,17 @@ if (existsSync(REAL_PATH)) {
 }
 
 async function runAsyncChecks() {
-  section('parseExcel(operator) dispatches; Claro still requires Contactos')
+  section('parseExcel(operator) dispatches; Entel still requires Contactos')
   const movistarViaDispatch = await parseExcel(vacioBuffer, 'MOVISTAR')
   assert.equal(movistarViaDispatch.companies.length, 2)
 
-  let claroMissing = false
+  let entelMissing = false
   try {
-    await parseExcel(vacioBuffer, 'CLARO')
+    await parseExcel(vacioBuffer, 'ENTEL')
   } catch (err) {
-    claroMissing = (err as { name?: string }).name === 'MissingContactosSheetError'
+    entelMissing = (err as { name?: string }).name === 'MissingContactosSheetError'
   }
-  assert.equal(claroMissing, true)
+  assert.equal(entelMissing, true)
 }
 
 runAsyncChecks()

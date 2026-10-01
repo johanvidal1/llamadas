@@ -32,7 +32,7 @@ const router = Router()
 const assignSchema = z.object({
   agentId: z.string().min(1, 'Agente requerido'),
   batchId: z.string().optional(),
-  operator: z.enum(['CLARO', 'MOVISTAR']).optional(),
+  operator: z.enum(['ENTEL', 'MOVISTAR']).optional(),
   count: z.number().int().positive().optional(),
   clientIds: z.array(z.string()).optional(),
   contactIds: z.array(z.string()).optional(),
@@ -51,7 +51,7 @@ const legacyReleaseSchema = z.object({
 const previewSchema = z.object({
   agentId: z.string().min(1, 'Agente requerido'),
   batchId: z.string().optional(),
-  operator: z.enum(['CLARO', 'MOVISTAR']).optional(),
+  operator: z.enum(['ENTEL', 'MOVISTAR']).optional(),
   count: z.number().int().positive().optional(),
 })
 
@@ -334,7 +334,7 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
     assignedAt: string
     importBatchId: string | null
     filename: string | null
-    operator: 'CLARO' | 'MOVISTAR'
+    operator: 'ENTEL' | 'MOVISTAR'
     companyCount: number
     contactCount: number
     assignedBy: { id: string; name: string }
@@ -409,7 +409,7 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
         contact: { select: { company: { select: { importBatch: { select: { operator: true } } } } } },
       },
     })
-    const opByRun = new Map<string, 'CLARO' | 'MOVISTAR'>()
+    const opByRun = new Map<string, 'ENTEL' | 'MOVISTAR'>()
     for (const row of samples) {
       if (!row.assignmentRunId || opByRun.has(row.assignmentRunId)) continue
       opByRun.set(
@@ -418,7 +418,7 @@ router.get('/runs', requireAdmin, async (req: AuthRequest, res: Response) => {
       )
     }
     mappedRuns = mappedRuns.map((run) =>
-      run.importBatchId ? run : { ...run, operator: opByRun.get(run.id) ?? 'CLARO' }
+      run.importBatchId ? run : { ...run, operator: opByRun.get(run.id) ?? 'ENTEL' }
     )
   }
   if (operator) {

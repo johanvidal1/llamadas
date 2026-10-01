@@ -1,33 +1,44 @@
-export const IMPORT_OPERATORS = ['CLARO', 'MOVISTAR'] as const
+export const IMPORT_OPERATORS = ['ENTEL', 'MOVISTAR'] as const
 export type ImportOperator = (typeof IMPORT_OPERATORS)[number]
 
 const EXTENSION_SEGMENTS = new Set(['xlsx', 'xls', 'csv'])
 
 const TOKEN_TO_OPERATOR: Record<string, ImportOperator> = {
-  claro: 'CLARO',
+  entel: 'ENTEL',
   movistar: 'MOVISTAR',
 }
 
 export function isImportOperator(value: unknown): value is ImportOperator {
-  return value === 'CLARO' || value === 'MOVISTAR'
+  return value === 'ENTEL' || value === 'MOVISTAR'
 }
 
-/** URL / query helper: unknown values become Todos (`''`). */
+/**
+ * Parse operator from query/API. ENTEL | MOVISTAR are valid.
+ * CLARO is mapped to ENTEL only when reading (open tabs during rollout).
+ */
+export function parseImportOperator(value: unknown): ImportOperator | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim().toUpperCase()
+  if (normalized === 'CLARO') return 'ENTEL'
+  return isImportOperator(normalized) ? normalized : null
+}
+
+/** URL / query helper: unknown values become Todos (`''`). CLARO maps to ENTEL. */
 export function operatorFilterFromQuery(value: string | null | undefined): ImportOperator | '' {
-  return isImportOperator(value) ? value : ''
+  return parseImportOperator(value) ?? ''
 }
 
-/** Historical batches without operator are treated as Claro (phase 1). */
+/** Historical / missing operator is Entel (home). */
 export function resolveImportOperator(value: unknown): ImportOperator {
-  return value === 'MOVISTAR' ? 'MOVISTAR' : 'CLARO'
+  return value === 'MOVISTAR' ? 'MOVISTAR' : 'ENTEL'
 }
 
 export function operatorChipClassName(operator: ImportOperator): string {
-  return operator === 'MOVISTAR' ? 'bg-green-100 text-green-800' : 'bg-red-50 text-red-700'
+  return operator === 'MOVISTAR' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
 }
 
 export function operatorLabelEs(operator: ImportOperator): string {
-  return operator === 'MOVISTAR' ? 'Movistar' : 'Claro'
+  return operator === 'MOVISTAR' ? 'Movistar' : 'Entel'
 }
 
 export function filenameOperatorTokens(filename: string): ImportOperator[] {
@@ -63,7 +74,7 @@ export const MY_LEADS_OPERATOR_CHANGED_EVENT = 'my-leads-operator-changed'
 export function readStoredMyLeadsOperator(): ImportOperator | null {
   try {
     const stored = sessionStorage.getItem(MY_LEADS_OPERATOR_KEY)
-    return isImportOperator(stored) ? stored : null
+    return parseImportOperator(stored)
   } catch {
     return null
   }
@@ -90,15 +101,15 @@ export function filenameOperatorError(
   selected: ImportOperator | null
 ): string | null {
   if (!selected) {
-    return 'Elige operador (Claro o Movistar) antes de importar.'
+    return 'Elige operador (Entel o Movistar) antes de importar.'
   }
   const tokens = filenameOperatorTokens(filename)
   const selectedLabel = operatorLabelEs(selected)
   if (tokens.length === 0) {
-    return 'El nombre del archivo debe incluir «claro» o «movistar» como segmento (separado por _ - .), no como parte de otra palabra. Ejemplo: PLANTILLA_movistar_20260928.xlsx. «aclaracion.xlsx» no vale. Corrige el archivo o la selección.'
+    return 'El nombre del archivo debe incluir «entel» o «movistar» como segmento (separado por _ - .), no como parte de otra palabra. Ejemplo: PLANTILLA_movistar_20260928.xlsx. «aclaracion.xlsx» no vale. Corrige el archivo o la selección.'
   }
   if (tokens.length > 1) {
-    return 'El archivo menciona más de un operador (claro y movistar). Deja un solo segmento en el nombre o corrige la selección.'
+    return 'El archivo menciona más de un operador (entel y movistar). Deja un solo segmento en el nombre o corrige la selección.'
   }
   if (tokens[0] !== selected) {
     return `El archivo es de ${operatorLabelEs(tokens[0])} pero elegiste ${selectedLabel}. Corrige el nombre del archivo o la selección.`

@@ -4,7 +4,7 @@ export type OperatorFilterValue = ImportOperator | ''
 
 const OPTIONS: { id: OperatorFilterValue; label: string }[] = [
   { id: '', label: 'Todos' },
-  { id: 'CLARO', label: 'Claro' },
+  { id: 'ENTEL', label: 'Entel' },
   { id: 'MOVISTAR', label: 'Movistar' },
 ]
 

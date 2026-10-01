@@ -26,6 +26,14 @@ function persistUser(next: User | null) {
   }
 }
 
+/** Map leftover workingBatchIdClaro from an open tab / older localStorage. */
+function hydrateUser(raw: User & { workingBatchIdClaro?: string | null }): User {
+  return {
+    ...raw,
+    workingBatchIdEntel: raw.workingBatchIdEntel ?? raw.workingBatchIdClaro ?? raw.workingBatchId ?? null,
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -56,7 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           avatarVersion: prev?.avatarVersion,
           batchQueueMode: me.batchQueueMode,
           workingBatchId: me.workingBatchId ?? null,
-          workingBatchIdClaro: me.workingBatchIdClaro ?? me.workingBatchId ?? null,
+          workingBatchIdEntel: me.workingBatchIdEntel ?? me.workingBatchId ?? null,
           workingBatchIdMovistar: me.workingBatchIdMovistar ?? null,
         }
         persistUser(next)
@@ -72,7 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const token = localStorage.getItem('token')
     if (stored && token) {
       try {
-        setUser(JSON.parse(stored) as User)
+        setUser(hydrateUser(JSON.parse(stored) as User))
       } catch {
         localStorage.removeItem('user')
         localStorage.removeItem('token')

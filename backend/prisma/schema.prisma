@@ -80,10 +80,10 @@ model User {
   /// Agent lote queue: FIFO | LIFO | ALL. Default FIFO (finish current lote first).
   batchQueueMode   String   @default("FIFO")
   /// Pinned lote while FIFO/LIFO. Null = not pinned (ALL, or no pending lote).
-  /// Legacy Claro pin; kept in sync with workingBatchIdClaro.
+  /// Legacy home-operator pin; kept in sync with workingBatchIdEntel.
   workingBatchId   String?
-  /// FIFO/LIFO pin for Claro batches (persisted via /me).
-  workingBatchIdClaro String?
+  /// FIFO/LIFO pin for Entel batches (persisted via /me).
+  workingBatchIdEntel String?
   /// FIFO/LIFO pin for Movistar batches (persisted via /me).
   workingBatchIdMovistar String?
   createdAt        DateTime @default(now())
@@ -164,8 +164,8 @@ model ImportBatch {
   storagePath    String?
   totalRecords   Int
   blocked        Boolean  @default(false)
-  /// CLARO | MOVISTAR. Existing rows default CLARO (no rewrite beyond DEFAULT).
-  operator       String   @default("CLARO")
+  /// ENTEL | MOVISTAR. Existing rows backfilled CLARO→ENTEL; default ENTEL.
+  operator       String   @default("ENTEL")
   importedById   String
   importedBy     User     @relation(fields: [importedById], references: [id])
   createdAt      DateTime @default(now())

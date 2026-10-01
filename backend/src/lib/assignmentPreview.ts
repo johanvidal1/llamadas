@@ -65,7 +65,7 @@ export async function buildAssignmentPreview(
   agentId: string,
   batchId?: string,
   count?: number,
-  operator?: 'CLARO' | 'MOVISTAR' | null
+  operator?: 'ENTEL' | 'MOVISTAR' | null
 ): Promise<AssignmentPreviewResult> {
   const allOrdered = await getUnassignedCompaniesOrdered(batchId, undefined, operator)
   const requestedCompanyCount = count ?? allOrdered.length

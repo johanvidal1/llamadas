@@ -94,7 +94,7 @@ export type BuildClientsUrlOpts = {
   registeredFrom?: string
   registeredTo?: string
   from?: 'reports' | 'dashboard'
-  operator?: 'CLARO' | 'MOVISTAR'
+  operator?: 'ENTEL' | 'MOVISTAR'
 }
 
 export function buildClientsUrl(opts?: BuildClientsUrlOpts): string {

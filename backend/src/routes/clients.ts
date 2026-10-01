@@ -33,7 +33,7 @@ import {
   sortCompanyIdsByRegisteredCreatedAtQueue,
   type LastDispositionMap,
 } from '../lib/companyDisposition'
-import { parseImportOperator } from '../lib/operator'
+import { parseImportOperator, resolveImportOperator } from '../lib/operator'
 import { countUnassignedCompanies, BatchBlockedError } from '../lib/assignmentOrder'
 
 const MAX_CLIENTS_LIMIT = 2000
@@ -372,7 +372,7 @@ async function buildClientsFilterContext(
 
   if (batchId) where.importBatchId = batchId
   const operatorFilter =
-    query.operator === 'CLARO' || query.operator === 'MOVISTAR' ? query.operator : null
+    parseImportOperator(query.operator)
   if (operatorFilter) {
     where.importBatch = { ...(where.importBatch as object | undefined), operator: operatorFilter }
   }
@@ -1049,8 +1049,8 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     return
   }
 
-  const currentOperator = company.importBatch?.operator === 'MOVISTAR' ? 'MOVISTAR' : 'CLARO'
-  const otherOperator = currentOperator === 'CLARO' ? 'MOVISTAR' : 'CLARO'
+  const currentOperator = resolveImportOperator(company.importBatch?.operator)
+  const otherOperator = currentOperator === 'ENTEL' ? 'MOVISTAR' : 'ENTEL'
   const otherOperatorCompanies = await prisma.company.findMany({
     where: {
       ruc: company.ruc,

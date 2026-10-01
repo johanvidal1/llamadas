@@ -255,10 +255,10 @@ function parseAgentIdsQuery(raw: unknown): string[] {
 
 const depuradoExportBodySchema = z.object({
   agentIds: z.array(z.string().min(1)).min(1, 'Selecciona al menos un agente'),
-  operator: z.enum(['CLARO', 'MOVISTAR']).optional(),
+  operator: z.enum(['ENTEL', 'MOVISTAR']).optional(),
 })
 
-function parseOptionalOperatorQuery(raw: unknown): { ok: true; operator?: 'CLARO' | 'MOVISTAR' } | { ok: false } {
+function parseOptionalOperatorQuery(raw: unknown): { ok: true; operator?: 'ENTEL' | 'MOVISTAR' } | { ok: false } {
   if (raw == null || raw === '') return { ok: true }
   const value = Array.isArray(raw) ? raw[0] : raw
   const parsed = parseImportOperator(value)
@@ -281,7 +281,7 @@ router.get('/depurado-export/preview', requireAdmin, async (req: AuthRequest, re
   }
   const operatorQuery = parseOptionalOperatorQuery(req.query.operator)
   if (!operatorQuery.ok) {
-    res.status(400).json({ error: 'Operador inválido. Usa CLARO o MOVISTAR.' })
+    res.status(400).json({ error: 'Operador inválido. Usa ENTEL o MOVISTAR.' })
     return
   }
   try {
@@ -586,7 +586,7 @@ router.post(
       const operator = parseImportOperator(req.body?.operator)
       if (!operator) {
         res.status(400).json({
-          error: 'Elige operador (Claro o Movistar) antes de importar.',
+          error: 'Elige operador (Entel o Movistar) antes de importar.',
         })
         return
       }
@@ -603,7 +603,7 @@ router.post(
 
       if (filename.match(/\.csv$/i) && operator === 'MOVISTAR') {
         res.status(400).json({
-          error: 'La plantilla Movistar es Excel (Resumen / Usuarios / Productos). El CSV solo se usa para Claro.',
+          error: 'La plantilla Movistar es Excel (Resumen / Usuarios / Productos). El CSV solo se usa para Entel.',
         })
         return
       }

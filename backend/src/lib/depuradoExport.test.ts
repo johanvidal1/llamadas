@@ -90,8 +90,8 @@ section('filename America/Lima compact stamp')
 const limaNoon = new Date('2026-09-13T18:48:00.000Z') // 13:48 America/Lima (UTC-5)
 assert.equal(formatCompactTimestampInAppTz(limaNoon, 'America/Lima'), '20260913-1348')
 assert.equal(
-  depuradoExportFilename(limaNoon, 'Richard Vargas', 'CLARO'),
-  '20260913-1348_nocontestadodep_claro_Richard.xlsx'
+  depuradoExportFilename(limaNoon, 'Richard Vargas', 'ENTEL'),
+  '20260913-1348_nocontestadodep_entel_Richard.xlsx'
 )
 assert.equal(
   depuradoExportFilename(limaNoon, 'Carlos Pérez', 'MOVISTAR'),
@@ -103,22 +103,22 @@ assert.equal(agentFirstName('  /  '), 'Agente')
 
 const collided = uniqueExportFilenames(
   [
-    { agentId: 'a1', agentName: 'Richard Uno', operator: 'CLARO' },
-    { agentId: 'a2', agentName: 'Richard Dos', operator: 'CLARO' },
+    { agentId: 'a1', agentName: 'Richard Uno', operator: 'ENTEL' },
+    { agentId: 'a2', agentName: 'Richard Dos', operator: 'ENTEL' },
   ],
   limaNoon
 )
-assert.equal(collided.get('a1:CLARO'), '20260913-1348_nocontestadodep_claro_Richard.xlsx')
-assert.equal(collided.get('a2:CLARO'), '20260913-1348_nocontestadodep_claro_Richard_2.xlsx')
+assert.equal(collided.get('a1:ENTEL'), '20260913-1348_nocontestadodep_entel_Richard.xlsx')
+assert.equal(collided.get('a2:ENTEL'), '20260913-1348_nocontestadodep_entel_Richard_2.xlsx')
 
 const mixedNames = uniqueExportFilenames(
   [
-    { agentId: 'c1', agentName: 'Carlos Rivera', operator: 'CLARO' },
+    { agentId: 'c1', agentName: 'Carlos Rivera', operator: 'ENTEL' },
     { agentId: 'c1', agentName: 'Carlos Rivera', operator: 'MOVISTAR' },
   ],
   limaNoon
 )
-assert.equal(mixedNames.get('c1:CLARO'), '20260913-1348_nocontestadodep_claro_Carlos.xlsx')
+assert.equal(mixedNames.get('c1:ENTEL'), '20260913-1348_nocontestadodep_entel_Carlos.xlsx')
 assert.equal(mixedNames.get('c1:MOVISTAR'), '20260913-1348_nocontestadodep_movistar_Carlos.xlsx')
 
 section('shared-with-other-agent warning count')
@@ -158,7 +158,7 @@ const companies: LoadedDepuradoCompany[] = [
     importBatchId: 'batch-demo',
     importStatus: 'OK',
     fechaConsulta: new Date('2026-01-15T00:00:00.000Z'),
-    importBatch: { operator: 'CLARO' },
+    importBatch: { operator: 'ENTEL' },
     contacts: [
       {
         id: 'ct1',
@@ -288,7 +288,7 @@ const missingRazon: LoadedDepuradoCompany[] = [
     ruc: '20999999999',
     razonSocial: null,
     importBatchId: 'batch-original',
-    importBatch: { operator: 'CLARO' },
+    importBatch: { operator: 'ENTEL' },
     contacts: companies[0].contacts.map((c) => ({ ...c })),
     mobileLines: companies[0].mobileLines.map((line) => ({ ...line, ruc: '20999999999' })),
   },
@@ -347,7 +347,7 @@ const dbWinsCompanies: LoadedDepuradoCompany[] = [
     importBatchId: 'batch-original',
     ruc: '20999999999',
     razonSocial: 'CRM Razon SAC',
-    importBatch: { operator: 'CLARO' },
+    importBatch: { operator: 'ENTEL' },
     mobileLines: companies[0].mobileLines.map((line) => ({ ...line, ruc: '20999999999' })),
   },
 ]
@@ -381,8 +381,8 @@ assert.equal(toImportMobileRows(fromMobile)[0].razon_social, 'From Original SAC'
 
 section('filename operator tokens are segments')
 assert.deepEqual(
-  filenameOperatorTokens('20260913-1348_nocontestadodep_claro_Richard.xlsx'),
-  ['CLARO']
+  filenameOperatorTokens('20260913-1348_nocontestadodep_entel_Richard.xlsx'),
+  ['ENTEL']
 )
 assert.deepEqual(
   filenameOperatorTokens('20260913-1348_nocontestadodep_movistar_Carlos.xlsx'),
@@ -400,8 +400,8 @@ const movistarTwin: LoadedDepuradoCompany = {
   plan: 'Plan Max',
   importBatch: { operator: 'MOVISTAR' },
 }
-assert.equal(companyImportOperator(companies[0]), 'CLARO')
-assert.equal(companyImportOperator({ importBatch: null }), 'CLARO')
+assert.equal(companyImportOperator(companies[0]), 'ENTEL')
+assert.equal(companyImportOperator({ importBatch: null }), 'ENTEL')
 assert.equal(companyImportOperator(movistarTwin), 'MOVISTAR')
 
 const mixedUnits = toExportUnits([
@@ -412,7 +412,7 @@ const mixedUnits = toExportUnits([
   },
 ])
 assert.equal(mixedUnits.length, 2)
-assert.equal(mixedUnits[0].operator, 'CLARO')
+assert.equal(mixedUnits[0].operator, 'ENTEL')
 assert.equal(mixedUnits[1].operator, 'MOVISTAR')
 assert.equal(mixedUnits[0].companies[0].ruc, mixedUnits[1].companies[0].ruc)
 assert.equal(mixedUnits[0].companies.length, 1)
@@ -426,10 +426,10 @@ const recoveredMovistarUnits = toExportUnits([
 ])
 assert.equal(recoveredMovistarUnits.length, 1)
 assert.equal(recoveredMovistarUnits[0].operator, 'MOVISTAR')
-assert.equal(filterCompaniesByOperator([companies[0], movistarTwin], 'CLARO')[0].id, 'c1')
+assert.equal(filterCompaniesByOperator([companies[0], movistarTwin], 'ENTEL')[0].id, 'c1')
 assert.equal(filterCompaniesByOperator([companies[0], movistarTwin]).length, 2)
 
-section('Movistar reconstruct uses import template sheets, never Claro names')
+section('Movistar reconstruct uses import template sheets, never Entel names')
 const movistarResumen = toMovistarResumenRows([movistarTwin])
 const movistarUsuarios = toMovistarUsuariosRows([movistarTwin])
 const movistarProductos = toMovistarProductosRows([movistarTwin])
@@ -463,9 +463,9 @@ assert.deepEqual(workbookSheetHeaders(movistarWb, MOVISTAR_PRODUCTOS_SHEET_NAME)
   ...MOVISTAR_PRODUCTOS_COLUMNS,
 ])
 
-const claroWbNames = workbookSheetNames(wb)
-assert.deepEqual(claroWbNames, ['Contactos', 'ProductosMovil', 'DetallePlan'])
-assert.ok(!claroWbNames.includes('Resumen'))
+const entelWbNames = workbookSheetNames(wb)
+assert.deepEqual(entelWbNames, ['Contactos', 'ProductosMovil', 'DetallePlan'])
+assert.ok(!entelWbNames.includes('Resumen'))
 
 section('Movistar original lote rows win over CRM reconstruct')
 const originalMovistarBuffer = writeMovistarImportWorkbookBuffer(
@@ -661,7 +661,7 @@ async function runAsyncChecks() {
   assert.equal(parsed.mobileLines[0].rentaBasicaConDesc, '49.90')
   assert.equal(parsed.mobileLines[0].plan, 'Max')
 
-  section('Movistar export buffer roundtrips without Claro sheets')
+  section('Movistar export buffer roundtrips without Entel sheets')
   const movistarBuffer = writeMovistarImportWorkbookBuffer(
     movistarResumen,
     movistarUsuarios,
@@ -678,8 +678,8 @@ async function runAsyncChecks() {
 
   section('zip contains one entry per agent file')
   const zip = buildZipBuffer([
-    { name: '20260913-1348_nocontestadodep_claro_Richard.xlsx', data: buffer },
-    { name: '20260913-1348_nocontestadodep_claro_Maria.xlsx', data: buffer },
+    { name: '20260913-1348_nocontestadodep_entel_Richard.xlsx', data: buffer },
+    { name: '20260913-1348_nocontestadodep_entel_Maria.xlsx', data: buffer },
   ])
   assert.ok(zip.length > 0)
   assert.equal(zip.readUInt32LE(0), 0x04034b50)

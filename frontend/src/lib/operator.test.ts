@@ -7,6 +7,7 @@ import {
   MY_LEADS_OPERATOR_KEY,
   operatorChipClassName,
   operatorFilterFromQuery,
+  parseImportOperator,
   readStoredMyLeadsOperator,
   resolveImportOperator,
   writeStoredMyLeadsOperator,
@@ -20,14 +21,18 @@ section('filename token is a segment, not a substring')
 assert.deepEqual(filenameOperatorTokens('PLANTILLA_movistar_20260928_124441.xlsx'), ['MOVISTAR'])
 assert.equal(detectFilenameOperator('aclaracion.xlsx'), null)
 assert.equal(detectFilenameOperator('plantillaclaro.xlsx'), null)
-assert.equal(detectFilenameOperator('claro.xlsx'), 'CLARO')
-assert.ok(filenameOperatorError('aclaracion.xlsx', 'CLARO'))
-assert.ok(filenameOperatorError('PLANTILLA_movistar_20260928.xlsx', 'CLARO')?.includes('Movistar'))
-assert.equal(filenameOperatorError('lote_claro.xlsx', 'CLARO'), null)
+assert.equal(detectFilenameOperator('plantillaentel.xlsx'), null)
+assert.equal(detectFilenameOperator('claro.xlsx'), null)
+assert.equal(detectFilenameOperator('entel.xlsx'), 'ENTEL')
+assert.ok(filenameOperatorError('aclaracion.xlsx', 'ENTEL'))
+assert.ok(filenameOperatorError('lote_claro.xlsx', 'ENTEL'))
+assert.ok(filenameOperatorError('PLANTILLA_movistar_20260928.xlsx', 'ENTEL')?.includes('Movistar'))
+assert.equal(filenameOperatorError('lote_entel.xlsx', 'ENTEL'), null)
 assert.ok(filenameOperatorError('base.xlsx', null))
+assert.deepEqual(filenameOperatorTokens('20260913-1348_nocontestadodep_claro_Richard.xlsx'), [])
 assert.deepEqual(
-  filenameOperatorTokens('20260913-1348_nocontestadodep_claro_Richard.xlsx'),
-  ['CLARO']
+  filenameOperatorTokens('20260913-1348_nocontestadodep_entel_Richard.xlsx'),
+  ['ENTEL']
 )
 assert.deepEqual(
   filenameOperatorTokens('20260913-1348_nocontestadodep_movistar_Carlos.xlsx'),
@@ -66,24 +71,31 @@ Object.defineProperty(globalThis, 'sessionStorage', {
 assert.equal(readStoredMyLeadsOperator(), null)
 writeStoredMyLeadsOperator('MOVISTAR')
 assert.equal(readStoredMyLeadsOperator(), 'MOVISTAR')
-writeStoredMyLeadsOperator('CLARO')
-assert.equal(readStoredMyLeadsOperator(), 'CLARO')
+writeStoredMyLeadsOperator('ENTEL')
+assert.equal(readStoredMyLeadsOperator(), 'ENTEL')
+memory.set(MY_LEADS_OPERATOR_KEY, 'CLARO')
+assert.equal(readStoredMyLeadsOperator(), 'ENTEL')
 Object.defineProperty(globalThis, 'sessionStorage', {
   configurable: true,
   value: prevSession,
 })
 
-section('historical / missing operator is Claro')
-assert.equal(resolveImportOperator(undefined), 'CLARO')
-assert.equal(resolveImportOperator(null), 'CLARO')
-assert.equal(resolveImportOperator('CLARO'), 'CLARO')
+section('historical / missing operator is Entel; CLARO reads as ENTEL')
+assert.equal(resolveImportOperator(undefined), 'ENTEL')
+assert.equal(resolveImportOperator(null), 'ENTEL')
+assert.equal(resolveImportOperator('CLARO'), 'ENTEL')
+assert.equal(resolveImportOperator('ENTEL'), 'ENTEL')
 assert.equal(resolveImportOperator('MOVISTAR'), 'MOVISTAR')
-assert.equal(resolveImportOperator('movistar'), 'CLARO')
-assert.ok(operatorChipClassName('CLARO').includes('red'))
+assert.equal(resolveImportOperator('movistar'), 'ENTEL')
+assert.equal(parseImportOperator('CLARO'), 'ENTEL')
+assert.equal(parseImportOperator('ENTEL'), 'ENTEL')
+assert.equal(parseImportOperator('MOVISTAR'), 'MOVISTAR')
+assert.ok(operatorChipClassName('ENTEL').includes('blue'))
 assert.ok(operatorChipClassName('MOVISTAR').includes('green'))
 
 section('query param helper')
-assert.equal(operatorFilterFromQuery('CLARO'), 'CLARO')
+assert.equal(operatorFilterFromQuery('CLARO'), 'ENTEL')
+assert.equal(operatorFilterFromQuery('ENTEL'), 'ENTEL')
 assert.equal(operatorFilterFromQuery('MOVISTAR'), 'MOVISTAR')
 assert.equal(operatorFilterFromQuery('todos'), '')
 assert.equal(operatorFilterFromQuery(null), '')

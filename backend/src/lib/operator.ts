@@ -1,28 +1,33 @@
 import { Prisma } from '@prisma/client'
 
-export const IMPORT_OPERATORS = ['CLARO', 'MOVISTAR'] as const
+export const IMPORT_OPERATORS = ['ENTEL', 'MOVISTAR'] as const
 export type ImportOperator = (typeof IMPORT_OPERATORS)[number]
 
 const EXTENSION_SEGMENTS = new Set(['xlsx', 'xls', 'csv'])
 
 const TOKEN_TO_OPERATOR: Record<string, ImportOperator> = {
-  claro: 'CLARO',
+  entel: 'ENTEL',
   movistar: 'MOVISTAR',
 }
 
 export function isImportOperator(value: unknown): value is ImportOperator {
-  return value === 'CLARO' || value === 'MOVISTAR'
+  return value === 'ENTEL' || value === 'MOVISTAR'
 }
 
+/**
+ * Parse operator from API/query/DB. ENTEL | MOVISTAR are valid.
+ * CLARO is mapped to ENTEL only when reading (rollout); it is not a filename token.
+ */
 export function parseImportOperator(value: unknown): ImportOperator | null {
   if (typeof value !== 'string') return null
   const normalized = value.trim().toUpperCase()
+  if (normalized === 'CLARO') return 'ENTEL'
   return isImportOperator(normalized) ? normalized : null
 }
 
-/** Historical batches without operator are treated as Claro. */
+/** Historical / missing operator is Entel (home). MOVISTAR stays MOVISTAR. */
 export function resolveImportOperator(value: unknown): ImportOperator {
-  return value === 'MOVISTAR' ? 'MOVISTAR' : 'CLARO'
+  return value === 'MOVISTAR' ? 'MOVISTAR' : 'ENTEL'
 }
 
 /** Prisma where fragment for Company (and CallLog via company). Empty when unfiltered. */
@@ -62,18 +67,19 @@ export function sqlCallLogCompanyOperatorFilter(
   )`
 }
 
-/** Filename segment token (`_claro_` / `_movistar_`), not a substring. */
-export function operatorFilenameSegment(operator: ImportOperator): 'claro' | 'movistar' {
-  return operator === 'MOVISTAR' ? 'movistar' : 'claro'
+/** Filename segment token (`_entel_` / `_movistar_`), not a substring. */
+export function operatorFilenameSegment(operator: ImportOperator): 'entel' | 'movistar' {
+  return operator === 'MOVISTAR' ? 'movistar' : 'entel'
 }
 
 export function operatorLabelEs(operator: ImportOperator): string {
-  return operator === 'MOVISTAR' ? 'Movistar' : 'Claro'
+  return operator === 'MOVISTAR' ? 'Movistar' : 'Entel'
 }
 
 /**
  * Operator tokens in a filename: segments split by `_`, `-`, `.` or string edges.
- * `PLANTILLA_movistar_20260928.xlsx` → Movistar; `aclaracion.xlsx` is not Claro.
+ * `PLANTILLA_movistar_20260928.xlsx` → Movistar; `aclaracion.xlsx` is not Entel.
+ * `_claro_` is not a valid token.
  */
 export function filenameOperatorTokens(filename: string): ImportOperator[] {
   const base = filename.replace(/\\/g, '/').split('/').pop() ?? filename
@@ -115,13 +121,13 @@ export function assertFilenameMatchesOperator(
 
   if (tokens.length === 0) {
     throw new FilenameOperatorError(
-      `El nombre del archivo debe incluir «claro» o «movistar» como segmento (separado por _ - .), no como parte de otra palabra. Ejemplo: PLANTILLA_movistar_20260928.xlsx. «aclaracion.xlsx» no vale. Elige el operador o corrige el archivo.`
+      `El nombre del archivo debe incluir «entel» o «movistar» como segmento (separado por _ - .), no como parte de otra palabra. Ejemplo: PLANTILLA_movistar_20260928.xlsx. «aclaracion.xlsx» no vale. Elige el operador o corrige el archivo.`
     )
   }
 
   if (tokens.length > 1) {
     throw new FilenameOperatorError(
-      'El archivo menciona más de un operador (claro y movistar). Deja un solo segmento en el nombre o corrige la selección.'
+      'El archivo menciona más de un operador (entel y movistar). Deja un solo segmento en el nombre o corrige la selección.'
     )
   }
 

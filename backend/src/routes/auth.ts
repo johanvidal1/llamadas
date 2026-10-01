@@ -74,7 +74,7 @@ const authUserPublicSelect = {
   avatarUrl: true,
   batchQueueMode: true,
   workingBatchId: true,
-  workingBatchIdClaro: true,
+  workingBatchIdEntel: true,
   workingBatchIdMovistar: true,
 } as const
 
@@ -88,10 +88,10 @@ function publicUserFields(user: {
   avatarUrl?: string | null
   batchQueueMode?: string | null
   workingBatchId?: string | null
-  workingBatchIdClaro?: string | null
+  workingBatchIdEntel?: string | null
   workingBatchIdMovistar?: string | null
 }) {
-  const workingBatchIdClaro = user.workingBatchIdClaro ?? user.workingBatchId ?? null
+  const workingBatchIdEntel = user.workingBatchIdEntel ?? user.workingBatchId ?? null
   return {
     id: user.id,
     name: user.name,
@@ -101,8 +101,8 @@ function publicUserFields(user: {
     isSystemOwner: user.isSystemOwner,
     hasAvatar: Boolean(user.avatarUrl),
     batchQueueMode: user.batchQueueMode === 'LIFO' || user.batchQueueMode === 'ALL' ? user.batchQueueMode : 'FIFO',
-    workingBatchId: workingBatchIdClaro,
-    workingBatchIdClaro,
+    workingBatchId: workingBatchIdEntel,
+    workingBatchIdEntel,
     workingBatchIdMovistar: user.workingBatchIdMovistar ?? null,
   }
 }
@@ -114,9 +114,9 @@ const loginSchema = z.object({
 
 const patchMeSchema = z.object({
   workingBatchId: z.union([z.string().min(1), z.null()]).optional(),
-  workingBatchIdClaro: z.union([z.string().min(1), z.null()]).optional(),
+  workingBatchIdEntel: z.union([z.string().min(1), z.null()]).optional(),
   workingBatchIdMovistar: z.union([z.string().min(1), z.null()]).optional(),
-  operator: z.enum(['CLARO', 'MOVISTAR']).optional(),
+  operator: z.enum(['ENTEL', 'MOVISTAR']).optional(),
 })
 
 /** Password required; email optional (legacy path when provided). */
@@ -154,7 +154,7 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
       avatarUrl: true,
       batchQueueMode: true,
       workingBatchId: true,
-      workingBatchIdClaro: true,
+      workingBatchIdEntel: true,
       workingBatchIdMovistar: true,
     },
   })
@@ -287,7 +287,7 @@ router.patch('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const data = patchMeSchema.parse(req.body)
   const hasAny =
     data.workingBatchId !== undefined ||
-    data.workingBatchIdClaro !== undefined ||
+    data.workingBatchIdEntel !== undefined ||
     data.workingBatchIdMovistar !== undefined
   if (!hasAny) {
     res.status(400).json({ error: 'Nada que actualizar' })
@@ -296,13 +296,13 @@ router.patch('/me', requireAuth, async (req: AuthRequest, res: Response) => {
 
   const updateData: {
     workingBatchId?: string | null
-    workingBatchIdClaro?: string | null
+    workingBatchIdEntel?: string | null
     workingBatchIdMovistar?: string | null
   } = {}
 
-  if (data.workingBatchIdClaro !== undefined) {
-    updateData.workingBatchIdClaro = data.workingBatchIdClaro
-    updateData.workingBatchId = data.workingBatchIdClaro
+  if (data.workingBatchIdEntel !== undefined) {
+    updateData.workingBatchIdEntel = data.workingBatchIdEntel
+    updateData.workingBatchId = data.workingBatchIdEntel
   }
   if (data.workingBatchIdMovistar !== undefined) {
     updateData.workingBatchIdMovistar = data.workingBatchIdMovistar
@@ -312,9 +312,9 @@ router.patch('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     if (data.operator === 'MOVISTAR') {
       updateData.workingBatchIdMovistar = data.workingBatchId
     } else {
-      // CLARO, or legacy clients that only send workingBatchId
+      // ENTEL, or legacy clients that only send workingBatchId
       updateData.workingBatchId = data.workingBatchId
-      updateData.workingBatchIdClaro = data.workingBatchId
+      updateData.workingBatchIdEntel = data.workingBatchId
     }
   }
 
@@ -341,7 +341,7 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
       avatarUrl: true,
       batchQueueMode: true,
       workingBatchId: true,
-      workingBatchIdClaro: true,
+      workingBatchIdEntel: true,
       workingBatchIdMovistar: true,
     },
   })

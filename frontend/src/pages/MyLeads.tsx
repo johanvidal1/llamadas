@@ -857,7 +857,7 @@ export default function MyLeads() {
     if (mode === 'ALL') return ''
     if (!selectedOperator) return ''
     if (selectedOperator === 'MOVISTAR') return user?.workingBatchIdMovistar ?? ''
-    return user?.workingBatchIdClaro ?? user?.workingBatchId ?? ''
+    return user?.workingBatchIdEntel ?? user?.workingBatchId ?? ''
   })
   const queueHydratedRef = useRef(queueDeepLinkWins)
   const explicitTodosRef = useRef(false)
@@ -1086,7 +1086,7 @@ export default function MyLeads() {
   const workingBatchId =
     selectedOperator === 'MOVISTAR'
       ? user?.workingBatchIdMovistar ?? null
-      : user?.workingBatchIdClaro ?? user?.workingBatchId ?? null
+      : user?.workingBatchIdEntel ?? user?.workingBatchId ?? null
   const queueBatches: QueueBatchInput[] = useMemo(
     () =>
       batches.map((b) => {
@@ -1110,12 +1110,12 @@ export default function MyLeads() {
       const current =
         selectedOperator === 'MOVISTAR'
           ? user.workingBatchIdMovistar ?? null
-          : user.workingBatchIdClaro ?? user.workingBatchId ?? null
+          : user.workingBatchIdEntel ?? user.workingBatchId ?? null
       if (current === batchId) return
       if (selectedOperator === 'MOVISTAR') {
         patchAuthUser({ workingBatchIdMovistar: batchId })
       } else {
-        patchAuthUser({ workingBatchIdClaro: batchId, workingBatchId: batchId })
+        patchAuthUser({ workingBatchIdEntel: batchId, workingBatchId: batchId })
       }
       void patchMe({ operator: selectedOperator, workingBatchId: batchId }).catch(() => {
         toast.error('No se pudo guardar el lote en curso')
@@ -2552,7 +2552,7 @@ export default function MyLeads() {
 
   const otherOperatorBanner = useMemo(() => {
     if (!selectedOperator || !user?.id) return null
-    const other: ImportOperator = selectedOperator === 'MOVISTAR' ? 'CLARO' : 'MOVISTAR'
+    const other: ImportOperator = selectedOperator === 'MOVISTAR' ? 'ENTEL' : 'MOVISTAR'
     const others = callbackList
       .filter(
         (c) =>
@@ -2723,7 +2723,7 @@ export default function MyLeads() {
             </div>
 
             <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-gray-50 shrink-0" role="group" aria-label="Operador">
-              {(['CLARO', 'MOVISTAR'] as const).map((op) => (
+              {(['ENTEL', 'MOVISTAR'] as const).map((op) => (
                 <button
                   key={op}
                   type="button"
@@ -2909,12 +2909,12 @@ export default function MyLeads() {
               <div className="flex items-center justify-center h-full">
                 <div className="text-center text-gray-400 max-w-sm px-4">
                   <User size={48} className="mx-auto mb-3" />
-                  <p className="font-medium text-gray-700">Elige operador (Claro / Movistar)</p>
+                  <p className="font-medium text-gray-700">Elige operador (Entel / Movistar)</p>
                   <p className="text-sm mt-1">
                     Hasta que elijas, no se muestran empresas ni lotes. La cola FIFO es solo de ese operador.
                   </p>
                   <div className="mt-4 flex justify-center gap-2">
-                    {(['CLARO', 'MOVISTAR'] as const).map((op) => (
+                    {(['ENTEL', 'MOVISTAR'] as const).map((op) => (
                       <button
                         key={op}
                         type="button"
@@ -2986,7 +2986,7 @@ export default function MyLeads() {
                       operator={
                         displayDetail.otherOperatorPresence.operator === 'MOVISTAR'
                           ? 'MOVISTAR'
-                          : 'CLARO'
+                          : 'ENTEL'
                       }
                     />
                   )}
@@ -3545,7 +3545,7 @@ export default function MyLeads() {
       {viewMode === 'grid' && !operatorChosen && (
         <div className="flex-1 flex items-center justify-center bg-gray-50">
           <div className="text-center text-gray-400 max-w-sm px-4">
-            <p className="font-medium text-gray-700">Elige operador (Claro / Movistar)</p>
+            <p className="font-medium text-gray-700">Elige operador (Entel / Movistar)</p>
             <p className="text-sm mt-1">Hasta que elijas, no se muestran empresas ni lotes.</p>
           </div>
         </div>
@@ -3750,7 +3750,7 @@ export default function MyLeads() {
       {viewMode === 'list' && !operatorChosen && (
         <div className="flex-1 flex items-center justify-center bg-gray-50">
           <div className="text-center text-gray-400 max-w-sm px-4">
-            <p className="font-medium text-gray-700">Elige operador (Claro / Movistar)</p>
+            <p className="font-medium text-gray-700">Elige operador (Entel / Movistar)</p>
             <p className="text-sm mt-1">Hasta que elijas, no se muestran empresas ni lotes.</p>
           </div>
         </div>

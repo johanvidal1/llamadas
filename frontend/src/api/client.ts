@@ -76,7 +76,7 @@ export type AuthUser = {
   avatarVersion?: number
   batchQueueMode?: BatchQueueMode
   workingBatchId?: string | null
-  workingBatchIdClaro?: string | null
+  workingBatchIdEntel?: string | null
   workingBatchIdMovistar?: string | null
 }
 
@@ -86,9 +86,9 @@ export const getMe = () =>
 /** Agent (or admin-as-self) pin for lote queue. Mode is admin-only via updateUser. */
 export const patchMe = (data: {
   workingBatchId?: string | null
-  workingBatchIdClaro?: string | null
+  workingBatchIdEntel?: string | null
   workingBatchIdMovistar?: string | null
-  operator?: 'CLARO' | 'MOVISTAR'
+  operator?: 'ENTEL' | 'MOVISTAR'
 }) => api.patch<AuthUser>('/auth/me', data).then((r) => r.data)
 
 export const uploadAvatar = (file: File) => {
@@ -197,7 +197,7 @@ export type AppUser = {
   callbacksToday?: number
   batchQueueMode?: BatchQueueMode
   workingBatchId?: string | null
-  workingBatchIdClaro?: string | null
+  workingBatchIdEntel?: string | null
   workingBatchIdMovistar?: string | null
   _count: {
     assignments: number
@@ -408,7 +408,7 @@ export type DepuradoExportPreview = {
     firstName: string
     companyCount: number
     contactCount: number
-    claroCount: number
+    entelCount: number
     movistarCount: number
     sample: { ruc: string; razonSocial: string | null }[]
     sharedWithOtherAgentCount: number
@@ -417,15 +417,15 @@ export type DepuradoExportPreview = {
   totalCompanies: number
   totalContacts: number
   totalSharedWithOtherAgent: number
-  totalClaro: number
+  totalEntel: number
   totalMovistar: number
   fileCount: number
-  operatorFilter: 'CLARO' | 'MOVISTAR' | null
+  operatorFilter: 'ENTEL' | 'MOVISTAR' | null
 }
 
 export const previewDepuradoExport = (
   agentIds: string[],
-  operator?: 'CLARO' | 'MOVISTAR'
+  operator?: 'ENTEL' | 'MOVISTAR'
 ) =>
   api
     .get<DepuradoExportPreview>('/imports/depurado-export/preview', {
@@ -454,7 +454,7 @@ async function readBlobErrorMessage(err: unknown): Promise<string | undefined> {
 
 export const downloadDepuradoExport = async (
   agentIds: string[],
-  operator?: 'CLARO' | 'MOVISTAR'
+  operator?: 'ENTEL' | 'MOVISTAR'
 ) => {
   try {
     const response = await api.post(

@@ -60,7 +60,7 @@ export type DepuradoAgentPreview = {
   firstName: string
   companyCount: number
   contactCount: number
-  claroCount: number
+  entelCount: number
   movistarCount: number
   sample: DepuradoCompanySample[]
   sharedWithOtherAgentCount: number
@@ -72,7 +72,7 @@ export type DepuradoExportPreview = {
   totalCompanies: number
   totalContacts: number
   totalSharedWithOtherAgent: number
-  totalClaro: number
+  totalEntel: number
   totalMovistar: number
   fileCount: number
   operatorFilter: ImportOperator | null
@@ -240,10 +240,10 @@ export type DepuradoExportUnit = {
 export function splitCompaniesByOperator(
   companies: LoadedDepuradoCompany[]
 ): { operator: ImportOperator; companies: LoadedDepuradoCompany[] }[] {
-  const claro = companies.filter((company) => companyImportOperator(company) === 'CLARO')
+  const entel = companies.filter((company) => companyImportOperator(company) === 'ENTEL')
   const movistar = companies.filter((company) => companyImportOperator(company) === 'MOVISTAR')
   const groups: { operator: ImportOperator; companies: LoadedDepuradoCompany[] }[] = []
-  if (claro.length) groups.push({ operator: 'CLARO', companies: claro })
+  if (entel.length) groups.push({ operator: 'ENTEL', companies: entel })
   if (movistar.length) groups.push({ operator: 'MOVISTAR', companies: movistar })
   return groups
 }
@@ -465,13 +465,13 @@ async function selectDepuradoByAgents(
 }
 
 function operatorCounts(companies: LoadedDepuradoCompany[]) {
-  let claroCount = 0
+  let entelCount = 0
   let movistarCount = 0
   for (const company of companies) {
     if (companyImportOperator(company) === 'MOVISTAR') movistarCount += 1
-    else claroCount += 1
+    else entelCount += 1
   }
-  return { claroCount, movistarCount }
+  return { entelCount, movistarCount }
 }
 
 export async function previewDepuradoExport(
@@ -483,14 +483,14 @@ export async function previewDepuradoExport(
   const agents: DepuradoAgentPreview[] = selected.map((row) => {
     const contactCount = row.companies.reduce((sum, c) => sum + c.contacts.length, 0)
     const sharedWithOtherAgentCount = countSharedWithOtherAgent(row.companies, row.agentId)
-    const { claroCount, movistarCount } = operatorCounts(row.companies)
+    const { entelCount, movistarCount } = operatorCounts(row.companies)
     return {
       agentId: row.agentId,
       agentName: row.agentName,
       firstName: agentFirstName(row.agentName),
       companyCount: row.companies.length,
       contactCount,
-      claroCount,
+      entelCount,
       movistarCount,
       sample: row.companies.slice(0, SAMPLE_LIMIT).map((c) => ({
         ruc: c.ruc,
@@ -500,7 +500,7 @@ export async function previewDepuradoExport(
     }
   })
 
-  const totalClaro = agents.reduce((sum, a) => sum + a.claroCount, 0)
+  const totalEntel = agents.reduce((sum, a) => sum + a.entelCount, 0)
   const totalMovistar = agents.reduce((sum, a) => sum + a.movistarCount, 0)
 
   return {
@@ -509,10 +509,10 @@ export async function previewDepuradoExport(
     totalCompanies: agents.reduce((sum, a) => sum + a.companyCount, 0),
     totalContacts: agents.reduce((sum, a) => sum + a.contactCount, 0),
     totalSharedWithOtherAgent: agents.reduce((sum, a) => sum + a.sharedWithOtherAgentCount, 0),
-    totalClaro,
+    totalEntel,
     totalMovistar,
     fileCount: agents.reduce(
-      (sum, a) => sum + (a.claroCount > 0 ? 1 : 0) + (a.movistarCount > 0 ? 1 : 0),
+      (sum, a) => sum + (a.entelCount > 0 ? 1 : 0) + (a.movistarCount > 0 ? 1 : 0),
       0
     ),
     operatorFilter: operator ?? null,
