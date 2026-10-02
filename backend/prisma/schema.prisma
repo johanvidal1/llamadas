@@ -42,6 +42,10 @@ model Tenant {
   billingContact String?
   /// Notas internas del dueño (no se muestran en el banner).
   billingNotes   String?
+  /// Cupo de plazas de cliente (agentes + admins + super admin del tenant).
+  /// No cuenta isSystemOwner, isArchivedAgent ni active=false. Default 25.
+  /// Persistido por tenant (antes constante MAX_AGENTS). Docs históricos: maxAgents.
+  maxUsers Int @default(25)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

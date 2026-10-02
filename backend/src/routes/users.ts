@@ -3,21 +3,21 @@ import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { invalidateAuthUserCache } from '../lib/authUserCache'
 import { prisma } from '../lib/prisma'
-import { requireAdmin, AuthRequest } from '../middleware/auth'
+import { requireAdmin, requireSystemOwner, AuthRequest } from '../middleware/auth'
 import {
   getAgentAssignmentRunStatsByAgentId,
   getDistinctCompanyIdsByAgentId,
   getPendingCompaniesByAgentId,
 } from '../lib/companyDisposition'
 import {
-  assertAgentLimit,
-  assertRegularAdminLimit,
+  assertClientSeatLimit,
   canManageUser,
+  getClientSeatSnapshot,
   isAdminUser,
   isSuperAdminOrOwner,
   loadActor,
-  MAX_AGENTS,
-  MAX_REGULAR_ADMINS,
+  occupiesClientSeat,
+  validateMaxUsers,
 } from '../lib/userPermissions'
 import { excludeArchivedAgentWhere } from '../lib/archivedAgent'
 import { countCallLogsAfterResetByAgentIds } from '../lib/agentReset'
@@ -88,6 +88,10 @@ const updateUserSchema = z.object({
   workingBatchId: z.union([z.string().min(1), z.null()]).optional(),
   workingBatchIdEntel: z.union([z.string().min(1), z.null()]).optional(),
   workingBatchIdMovistar: z.union([z.string().min(1), z.null()]).optional(),
+})
+
+const patchSeatsSchema = z.object({
+  maxUsers: z.number({ required_error: 'maxUsers es obligatorio' }).int(),
 })
 
 // GET /api/users — list all users
@@ -177,27 +181,49 @@ router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   res.json(enriched)
 })
 
+function requestTenantId(req: AuthRequest): string {
+  return req.tenant?.id ?? OPTICK_TENANT_ID
+}
+
+// GET /api/users/seats — occupancy of the client seat pool
+router.get('/seats', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const snapshot = await getClientSeatSnapshot(requestTenantId(req))
+  res.json(snapshot)
+})
+
+// PATCH /api/users/seats — owner only: persist Tenant.maxUsers
+router.patch('/seats', requireSystemOwner, async (req: AuthRequest, res: Response) => {
+  const { maxUsers } = patchSeatsSchema.parse(req.body)
+  const tenantId = requestTenantId(req)
+  const snapshot = await getClientSeatSnapshot(tenantId)
+  const error = validateMaxUsers(maxUsers, snapshot.used)
+  if (error) {
+    res.status(409).json({ error })
+    return
+  }
+
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: { maxUsers },
+  })
+  res.json(await getClientSeatSnapshot(tenantId))
+})
+
 // POST /api/users — create user
 router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   const data = createUserSchema.parse(req.body)
+  const tenantId = requestTenantId(req)
 
-  if (data.role === 'AGENT') {
+  if (data.role === 'AGENT' || data.role === 'ADMIN') {
     try {
-      await assertAgentLimit()
+      await assertClientSeatLimit(tenantId)
     } catch (err) {
-      res.status(409).json({ error: err instanceof Error ? err.message : 'Límite de agentes alcanzado' })
-      return
-    }
-  } else if (data.role === 'ADMIN') {
-    try {
-      await assertRegularAdminLimit()
-    } catch (err) {
-      res.status(409).json({ error: err instanceof Error ? err.message : 'Límite de administradores alcanzado' })
+      res.status(409).json({
+        error: err instanceof Error ? err.message : 'Límite de usuarios activos alcanzado',
+      })
       return
     }
   }
-
-  const tenantId = req.tenant?.id ?? OPTICK_TENANT_ID
   const existing = await prisma.user.findFirst({
     where: { email: data.email.toLowerCase(), tenantId },
   })
@@ -237,7 +263,14 @@ router.put('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
 
   const target = await prisma.user.findUnique({
     where: { id: targetId },
-    select: { id: true, role: true, isSuperAdmin: true, isSystemOwner: true, active: true },
+    select: {
+      id: true,
+      role: true,
+      isSuperAdmin: true,
+      isSystemOwner: true,
+      active: true,
+      isArchivedAgent: true,
+    },
   })
   if (!target) {
     res.status(404).json({ error: 'Usuario no encontrado' })
@@ -267,11 +300,22 @@ router.put('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
     }
   }
 
-  if (data.role === 'ADMIN' && target.role !== 'ADMIN') {
+  const nextRole = data.role ?? target.role
+  const nextActive = data.active ?? target.active
+  const nextOccupiesSeat = occupiesClientSeat({
+    role: nextRole,
+    active: nextActive,
+    isSuperAdmin: target.isSuperAdmin,
+    isSystemOwner: target.isSystemOwner,
+    isArchivedAgent: target.isArchivedAgent,
+  })
+  if (nextOccupiesSeat && !occupiesClientSeat(target)) {
     try {
-      await assertRegularAdminLimit(targetId)
+      await assertClientSeatLimit(requestTenantId(req))
     } catch (err) {
-      res.status(409).json({ error: err instanceof Error ? err.message : 'Límite de administradores alcanzado' })
+      res.status(409).json({
+        error: err instanceof Error ? err.message : 'Límite de usuarios activos alcanzado',
+      })
       return
     }
   }
@@ -387,5 +431,4 @@ router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
   res.json({ ok: true })
 })
 
-export { MAX_AGENTS, MAX_REGULAR_ADMINS }
 export default router

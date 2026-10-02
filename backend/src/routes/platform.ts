@@ -26,7 +26,7 @@ const createTenantSchema = z.object({
   adminEmail: z.string().trim().email('Email inválido'),
   adminName: z.string().trim().min(2, 'Nombre del admin mínimo 2 caracteres').max(120),
   adminPassword: z.string().min(6, 'Contraseña mínimo 6 caracteres'),
-  // maxAgents: omitido en MVP — Tenant no tiene el campo; ver docs/TENANT-ONBOARDING.md (Fase 2)
+  // maxUsers: Tenant.maxUsers default 25; el dueño lo ajusta en Usuarios (PATCH /api/users/seats)
 })
 
 const patchTenantSchema = z

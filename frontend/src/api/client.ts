@@ -215,6 +215,18 @@ export const deactivateUser = (id: string) => updateUser(id, { active: false })
 export const reactivateUser = (id: string) => updateUser(id, { active: true })
 export const deleteUser = (id: string) => api.delete(`/users/${id}`).then((r) => r.data)
 
+export type UserSeats = {
+  used: number
+  max: number
+  available: number
+  agents: number
+  admins: number
+}
+
+export const getUserSeats = () => api.get<UserSeats>('/users/seats').then((r) => r.data)
+export const patchUserSeats = (maxUsers: number) =>
+  api.patch<UserSeats>('/users/seats', { maxUsers }).then((r) => r.data)
+
 // ─── Imports ──────────────────────────────────────────────
 export type { ImportOperator } from '../lib/operator'
 

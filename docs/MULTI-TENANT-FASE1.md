@@ -55,7 +55,8 @@ model Tenant {
 ```
 
 - **Slug = subdominio.** No exponer el `id` en la URL pública.
-- Campos opcionales para fases posteriores (no Día 1): `plan`, `maxAgents`, `customDomain`, `settings` (JSON).
+- Campos opcionales para fases posteriores (no Día 1): `plan`, `customDomain`, `settings` (JSON).
+- `maxUsers` (Int, default 25): cupo de plazas de cliente por tenant (agentes + admins + super admin; no cuenta owner). Docs históricos: `maxAgents`.
 
 ### Tablas que necesitan `tenantId` (mínimo Fase 1)
 

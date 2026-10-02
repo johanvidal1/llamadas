@@ -14,9 +14,12 @@ import {
   resetAgent,
   getAgentPresence,
   revokeAgentSessions,
+  getUserSeats,
+  patchUserSeats,
   type AppUser,
   type AgentPresence,
   type AgentPresenceStatus,
+  type UserSeats,
 } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
@@ -35,6 +38,9 @@ import {
   ChevronRight,
   RotateCcw,
   ArrowLeft,
+  Minus,
+  Plus,
+  Users,
 } from 'lucide-react'
 import { PresenceDetailPopover, formatTimeAgo, formatPresenceDateTime } from '../components/PresenceDetailPopover'
 import BatchQueueModeCards, {
@@ -62,8 +68,6 @@ function hasHistory(u: AppUser) {
   )
 }
 
-const MAX_AGENTS = 25
-const MAX_REGULAR_ADMINS = 2
 const SHOW_TOTAL_CALLS_KEY = 'agents-show-total-calls'
 const SHOW_TOTAL_CALLBACKS_KEY = 'agents-show-total-callbacks'
 
@@ -555,6 +559,114 @@ function UserTable({
   )
 }
 
+function occupancyBarClass(used: number, max: number): string {
+  if (max <= 0 || used >= max) return 'bg-red-500'
+  if (used / max >= 0.8) return 'bg-amber-500'
+  return 'bg-blue-600'
+}
+
+function PlanDeUsuariosCard({
+  seats,
+  isSystemOwner,
+  onSaveMax,
+  saving,
+}: {
+  seats: UserSeats
+  isSystemOwner: boolean
+  onSaveMax: (maxUsers: number) => void
+  saving: boolean
+}) {
+  const [draft, setDraft] = useState(seats.max)
+  useEffect(() => {
+    setDraft(seats.max)
+  }, [seats.max])
+
+  const pct = seats.max > 0 ? Math.min(100, (seats.used / seats.max) * 100) : 0
+  const available = seats.available
+  const dirty = draft !== seats.max
+  const minusDisabled = draft <= seats.used || draft <= 1
+  const plusDisabled = draft >= 500
+
+  return (
+    <div className="card p-5">
+      <div className="flex items-start gap-3">
+        <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
+          <Users size={18} className="text-blue-600" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold text-gray-900">Plan de usuarios</h2>
+          <p className="mt-1 text-3xl font-bold text-gray-900 tabular-nums tracking-tight">
+            {seats.used}{' '}
+            <span className="text-gray-300 font-semibold">/</span>{' '}
+            <span className="text-gray-800">{seats.max}</span>
+          </p>
+          <p className={`text-sm mt-1 ${available > 0 ? 'text-gray-500' : 'text-red-600 font-medium'}`}>
+            {available > 0
+              ? `${available} disponible${available === 1 ? '' : 's'}`
+              : 'Sin plazas libres'}
+          </p>
+          <div className="mt-3 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all ${occupancyBarClass(seats.used, seats.max)}`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <p className="text-xs text-gray-400 mt-2">
+            {seats.agents} agentes · {seats.admins} admins
+          </p>
+        </div>
+      </div>
+
+      {isSystemOwner && (
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Plan Optick</p>
+          <p className="text-xs text-gray-500 mt-1">Cupo máximo del tenant (solo dueño).</p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="btn-secondary px-2.5 py-1.5"
+              disabled={minusDisabled || saving}
+              onClick={() => setDraft((n) => Math.max(seats.used, n - 1))}
+              title={minusDisabled ? 'No se puede bajar por debajo de los usuarios en uso' : 'Bajar cupo'}
+            >
+              <Minus size={14} />
+            </button>
+            <input
+              type="number"
+              min={seats.used}
+              max={500}
+              className="input w-24 text-center tabular-nums"
+              value={draft}
+              disabled={saving}
+              onChange={(e) => {
+                const n = Number(e.target.value)
+                if (Number.isFinite(n)) setDraft(Math.round(n))
+              }}
+            />
+            <button
+              type="button"
+              className="btn-secondary px-2.5 py-1.5"
+              disabled={plusDisabled || saving}
+              onClick={() => setDraft((n) => Math.min(500, n + 1))}
+              title="Subir cupo"
+            >
+              <Plus size={14} />
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={!dirty || saving || draft < seats.used}
+              onClick={() => onSaveMax(draft)}
+            >
+              Guardar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Agents() {
   const { user, updateUser: patchAuthUser } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -633,6 +745,7 @@ export default function Agents() {
       setAgentResetReason('')
       setDeletePendingCallbacks(true)
       qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['user-seats'] })
       qc.invalidateQueries({ queryKey: ['agent-presence'] })
       qc.invalidateQueries({ queryKey: ['assignments'] })
       qc.invalidateQueries({ queryKey: ['clients'] })
@@ -661,6 +774,12 @@ export default function Agents() {
 
   const { data: users = [], isLoading } = useQuery({ queryKey: ['users'], queryFn: getUsers })
 
+  const { data: seats } = useQuery({
+    queryKey: ['user-seats'],
+    queryFn: getUserSeats,
+    enabled: isAdmin || isSystemOwner,
+  })
+
   const { data: agentPresence = [] } = useQuery({
     queryKey: ['agent-presence'],
     queryFn: getAgentPresence,
@@ -672,17 +791,14 @@ export default function Agents() {
 
   const visibleUsers = users.filter((u) => !u.isSystemOwner || isSystemOwner)
 
-  const agentCount = visibleUsers.filter((u) => u.role === 'AGENT').length
-  const regularAdminCount = visibleUsers.filter(
-    (u) => u.role === 'ADMIN' && !u.isSuperAdmin && !u.isSystemOwner
-  ).length
   const editingUser = editId ? visibleUsers.find((u) => u.id === editId) : null
   const editingAdmin = editingUser ? isAdminUser(editingUser) : false
   const canEditRole = !editingAdmin || isSuperAdminOrOwner
-  const atAgentLimit = agentCount >= MAX_AGENTS
-  const atAdminLimit = regularAdminCount >= MAX_REGULAR_ADMINS
+  const atSeatCap = seats ? seats.available <= 0 : false
 
   const activeUsers = visibleUsers.filter((u) => u.active)
+  const clientActiveUsers = activeUsers.filter((u) => !u.isSystemOwner)
+  const ownerUsers = activeUsers.filter((u) => u.isSystemOwner)
   const inactiveUsers = visibleUsers.filter((u) => !u.active)
   const highlightParam = searchParams.get('highlight')
 
@@ -739,6 +855,7 @@ export default function Agents() {
     onSuccess: () => {
       toast.success('Usuario creado correctamente')
       qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['user-seats'] })
       setShowForm(false)
       setForm(emptyForm)
     },
@@ -752,6 +869,7 @@ export default function Agents() {
     onSuccess: (updated: AppUser, variables) => {
       toast.success('Usuario actualizado')
       qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['user-seats'] })
       const keys = Object.keys(variables.data as object)
       if (!(keys.length === 1 && keys[0] === 'batchQueueMode')) {
         setEditId(null)
@@ -773,6 +891,7 @@ export default function Agents() {
     onSuccess: () => {
       toast.success('Usuario desactivado')
       qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['user-seats'] })
     },
     onError: (err: { response?: { data?: { error?: string } } }) => {
       toast.error(err?.response?.data?.error ?? 'Error al desactivar el usuario')
@@ -784,6 +903,7 @@ export default function Agents() {
     onSuccess: () => {
       toast.success('Usuario reactivado')
       qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['user-seats'] })
     },
     onError: (err: { response?: { data?: { error?: string } } }) => {
       toast.error(err?.response?.data?.error ?? 'Error al reactivar el usuario')
@@ -795,9 +915,22 @@ export default function Agents() {
     onSuccess: () => {
       toast.success('Usuario eliminado permanentemente')
       qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['user-seats'] })
     },
     onError: (err: { response?: { data?: { error?: string } } }) => {
       toast.error(err?.response?.data?.error ?? 'Error al eliminar el usuario')
+    },
+  })
+
+  const patchSeatsMutation = useMutation({
+    mutationFn: (maxUsers: number) => patchUserSeats(maxUsers),
+    onSuccess: (data) => {
+      toast.success(`Cupo actualizado a ${data.max} usuarios`)
+      qc.setQueryData(['user-seats'], data)
+      qc.invalidateQueries({ queryKey: ['user-seats'] })
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      toast.error(err?.response?.data?.error ?? 'Error al actualizar el cupo')
     },
   })
 
@@ -824,6 +957,7 @@ export default function Agents() {
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault()
+    if (atSeatCap) return
     createMutation.mutate(form)
   }
 
@@ -899,9 +1033,6 @@ export default function Agents() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Gestión de agentes</h1>
           <p className="text-gray-500 text-sm mt-1">Administra los usuarios del sistema</p>
-          <p className="text-xs text-gray-400 mt-1">
-            Agentes: {agentCount}/{MAX_AGENTS} · Admins: {regularAdminCount}/{MAX_REGULAR_ADMINS}
-          </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
           {returnToDashboard && (
@@ -913,12 +1044,41 @@ export default function Agents() {
               Volver al Dashboard
             </Link>
           )}
-          <button onClick={() => { setShowForm(true); setEditId(null); setForm(emptyForm) }} className="btn-primary">
+          <button
+            onClick={() => {
+              if (atSeatCap) return
+              setShowForm(true)
+              setEditId(null)
+              setForm(emptyForm)
+            }}
+            className="btn-primary"
+            disabled={atSeatCap}
+            title={
+              atSeatCap
+                ? 'Sin plazas libres. Desactiva a quien ya no trabaja o pide más cupos.'
+                : undefined
+            }
+          >
             <UserPlus size={18} />
             Nuevo usuario
           </button>
         </div>
       </div>
+
+      {atSeatCap && (
+        <p className="text-sm text-slate-600 -mt-4">
+          Sin plazas libres. Desactiva a quien ya no trabaja o pide más cupos.
+        </p>
+      )}
+
+      {seats && (
+        <PlanDeUsuariosCard
+          seats={seats}
+          isSystemOwner={isSystemOwner}
+          onSaveMax={(maxUsers) => patchSeatsMutation.mutate(maxUsers)}
+          saving={patchSeatsMutation.isPending}
+        />
+      )}
 
       {/* Create / Edit form */}
       {(showForm || editId) && (
@@ -970,9 +1130,7 @@ export default function Agents() {
                   onChange={(e) => setForm({ ...form, role: e.target.value as 'ADMIN' | 'AGENT' })}
                 >
                   <option value="AGENT">Agente</option>
-                  <option value="ADMIN" disabled={!editId && atAdminLimit}>
-                    Administrador{!editId && atAdminLimit ? ' (límite alcanzado)' : ''}
-                  </option>
+                  <option value="ADMIN">Administrador</option>
                 </select>
               ) : (
                 <input
@@ -982,8 +1140,10 @@ export default function Agents() {
                   title="Solo el super admin puede cambiar el rol de administradores"
                 />
               )}
-              {!editId && atAgentLimit && form.role === 'AGENT' && (
-                <p className="text-xs text-amber-600 mt-1">Límite de agentes alcanzado ({MAX_AGENTS} máximo)</p>
+              {!editId && atSeatCap && (
+                <p className="text-xs text-amber-600 mt-1">
+                  Sin plazas libres. Desactiva a quien ya no trabaja o pide más cupos.
+                </p>
               )}
             </div>
             <div className="md:col-span-2">
@@ -996,7 +1156,11 @@ export default function Agents() {
               <button
                 type="submit"
                 className="btn-primary"
-                disabled={createMutation.isPending || updateMutation.isPending}
+                disabled={
+                  createMutation.isPending ||
+                  updateMutation.isPending ||
+                  (!editId && atSeatCap)
+                }
               >
                 <Check size={16} />
                 {editId ? 'Guardar cambios' : 'Crear usuario'}
@@ -1018,13 +1182,13 @@ export default function Agents() {
       <div className="card overflow-x-auto">
         <div className="px-4 py-3 border-b border-gray-200 bg-white">
           <h2 className="font-semibold text-gray-900">Agentes activos</h2>
-          <p className="text-xs text-gray-500 mt-0.5">{activeUsers.length} usuario(s) activo(s)</p>
+          <p className="text-xs text-gray-500 mt-0.5">{clientActiveUsers.length} usuario(s) activo(s)</p>
         </div>
         {isLoading ? (
           <div className="p-8 text-center text-gray-400">Cargando...</div>
         ) : (
           <UserTable
-            users={activeUsers}
+            users={clientActiveUsers}
             onEdit={handleEdit}
             onDeactivate={handleDeactivate}
             onDelete={handleDelete}
@@ -1044,6 +1208,34 @@ export default function Agents() {
           />
         )}
       </div>
+
+      {isSystemOwner && ownerUsers.length > 0 && (
+        <div className="card overflow-x-auto border-slate-200">
+          <div className="px-4 py-3 border-b border-slate-200 bg-slate-50">
+            <h2 className="font-semibold text-slate-600">Optick / mantenimiento</h2>
+            <p className="text-xs text-slate-400 mt-0.5">Cuenta del dueño; no ocupa plaza del cliente.</p>
+          </div>
+          <UserTable
+            users={ownerUsers}
+            onEdit={handleEdit}
+            onDeactivate={handleDeactivate}
+            onDelete={handleDelete}
+            currentUserId={user?.id}
+            isSuperAdminOrOwner={isSuperAdminOrOwner}
+            currentUserIsSystemOwner={isSystemOwner}
+            presenceByUserId={presenceByUserId}
+            onRevokeSessions={handleRevokeSessions}
+            muted
+            showTotalCallsColumn={showTotalCallsColumn}
+            onToggleShowTotalCallsColumn={toggleShowTotalCallsColumn}
+            showTotalCallbacksColumn={showTotalCallbacksColumn}
+            onToggleShowTotalCallbacksColumn={toggleShowTotalCallbacksColumn}
+            highlightedUserId={highlightedUserId}
+            rowRefs={rowRefs}
+            onQueueModeChange={handleQueueModeChange}
+          />
+        </div>
+      )}
 
       {/* Inactive agents */}
       {inactiveUsers.length > 0 && (

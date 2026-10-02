@@ -68,7 +68,7 @@ Patrón correcto en `POST /api/platform/tenants`:
 2. `getPrismaBase().user.create({ data: { tenantId: newId, … } })` — cliente sin extensión
 3. Guard: rechazar si `admin.tenantId !== tenant.id`
 
-`maxAgents` no está en el schema; el tope sigue siendo global (`MAX_AGENTS`).
+`Tenant.maxUsers` (default 25) es el cupo de plazas de cliente (agentes + admins + super admin del tenant; no cuenta owner, Agente borrado ni inactivos). Solo el dueño (`isSystemOwner`) lo cambia vía `PATCH /api/users/seats`.
 
 ## Staging smoke (no usar prod)
 
@@ -105,6 +105,6 @@ curl -sS -X PATCH -H 'Host: pruebacrm.optickcloud.com' \
 
 ## Fuera de MVP (Fase 2)
 
-- `maxAgents` / plan / settings por tenant (hoy el tope de agentes es global `MAX_AGENTS = 25`)
+- plan / settings JSON por tenant (`maxUsers` ya está en schema; default 25)
 - Onboarding self-serve / facturación
 - UI de borrado definitivo de tenant
