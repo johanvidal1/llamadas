@@ -318,6 +318,31 @@ class SaveCancelled extends Error {
   }
 }
 
+type SaveAutoNext = false | true | 'sequential' | 'nextPending'
+
+const OTHER_CONTACT_CONFIRM_SKIP_PREFIX = 'optick:skipOtherContactConfirm:'
+const SAVE_DUP_GUARD_MS = 1600
+
+function otherContactConfirmSkipKey(companyId: string) {
+  return `${OTHER_CONTACT_CONFIRM_SKIP_PREFIX}${companyId}`
+}
+
+function readSkipOtherContactConfirm(companyId: string): boolean {
+  try {
+    return sessionStorage.getItem(otherContactConfirmSkipKey(companyId)) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeSkipOtherContactConfirm(companyId: string) {
+  try {
+    sessionStorage.setItem(otherContactConfirmSkipKey(companyId), '1')
+  } catch {
+    /* private mode / quota */
+  }
+}
+
 function DetailRecordNav({
   onFirstRegistered,
   onPrev,
@@ -949,6 +974,7 @@ export default function MyLeads() {
   const pendingCallLogIdRef = useRef<string | null>(null)
   /** After Guardar resultado: skip prefill clear while client-detail refetch catches up. */
   const stayAfterSaveRef = useRef(false)
+  const stayAfterSaveContactIdRef = useRef<string | null>(null)
   const pendingContactIdRef = useRef<string | null>(null)
   const pendingContactIdxRef = useRef<number | null>(null)
   /** After Duplicate RUC “Ver en ese lote”: switch batch, then jump to this company id. */
@@ -965,6 +991,16 @@ export default function MyLeads() {
   const agendaConfirmResolveRef = useRef<((conservar: boolean) => void) | null>(null)
   const [saveNotice, setSaveNotice] = useState<{ message: string; variant?: 'success' | 'info' } | null>(null)
   const saveNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [otherContactConfirm, setOtherContactConfirm] = useState<{
+    otherName: string
+    thisName: string
+    companyId: string
+    autoNext: SaveAutoNext
+  } | null>(null)
+  const [skipOtherContactAsk, setSkipOtherContactAsk] = useState(false)
+  const [queueRefreshing, setQueueRefreshing] = useState(false)
+  const lastSaveGuardRef = useRef<{ at: number; signature: string } | null>(null)
+  const savedCompanyPinRef = useRef<string | null>(null)
   const savedContactRef = useRef<{ id: string; telefono: string; email: string; dni: string } | null>(null)
   const lastSyncedContactKey = useRef<string | null>(null)
   const contactTabRefs = useRef<(HTMLButtonElement | null)[]>([])
@@ -1462,6 +1498,31 @@ export default function MyLeads() {
       agentContactLogs.slice(prefillStartIdx).find((l) => isAgentSelectableDisposition(l.disposition)) ??
       null
 
+    if (stayAfterSaveRef.current && pendingCallLogIdRef.current && !pinnedLogId) {
+      return
+    }
+
+    if (stayAfterSaveRef.current) {
+      const sameContact =
+        !!stayAfterSaveContactIdRef.current && contact.id === stayAfterSaveContactIdRef.current
+      if (sameContact && targetLog) {
+        const agentLogIds = new Set(
+          detail.callLogs.filter((l) => l.agentId === user.id).map((l) => l.id)
+        )
+        const agentPendingCb = detail.callbacks?.find(
+          (c) => !c.completed && (!c.callLogId || agentLogIds.has(c.callLogId))
+        )
+        const snap = snapshotFromLog(targetLog, detail.callbacks, agentPendingCb)
+        setLatestLogSnapshot(snap)
+        setEditingCallLogId(targetLog.id)
+      } else if (!sameContact) {
+        // Keep Respuesta; a save on this contact must create a new log, not edit the previous one.
+        setLatestLogSnapshot(null)
+        setEditingCallLogId(null)
+      }
+      return
+    }
+
     if (targetLog) {
       const agentLogIds = new Set(
         detail.callLogs.filter((l) => l.agentId === user.id).map((l) => l.id)
@@ -1478,7 +1539,7 @@ export default function MyLeads() {
       setEditingCallLogId(targetLog.id)
       stayAfterSaveRef.current = false
     } else if (stayAfterSaveRef.current) {
-      // Keep disposition/notes/agenda visible while client-detail refetch catches up.
+      // Keep selected Respuesta until the just-saved log is in client-detail (or the agent navigates).
       return
     } else {
       setLatestLogSnapshot(null)
@@ -1487,7 +1548,7 @@ export default function MyLeads() {
     }
   }, [detail, activeContactIdx, user?.id, clearEditableCallFields, displayContacts, currentClient?.id])
 
-  const saveActiveContactIfDirty = useCallback(async (): Promise<boolean> => {
+  const saveActiveContactIfDirty = useCallback(async (opts?: { refresh?: boolean }): Promise<boolean> => {
     if (!displayContacts.length) return false
     const idx = Math.min(activeContactIdx, displayContacts.length - 1)
     const ct = displayContacts[idx]
@@ -1509,10 +1570,13 @@ export default function MyLeads() {
     })
     savedContactRef.current = { id: ct.id, telefono, email, dni }
     lastSyncedContactKey.current = `${ct.id}:${telefono}:${email}:${dni}`
-    if (currentClient?.id) {
-      qc.invalidateQueries({ queryKey: ['client-detail', currentClient.id] })
+    // List/detail refresh is fire-and-forget so logCall is never blocked on cola refetch.
+    if (opts?.refresh !== false) {
+      if (currentClient?.id) {
+        void qc.invalidateQueries({ queryKey: ['client-detail', currentClient.id] })
+      }
+      void qc.invalidateQueries({ queryKey: ['clients'] })
     }
-    qc.invalidateQueries({ queryKey: ['clients'] })
     return true
   }, [displayContacts, activeContactIdx, editTelefono, editEmail, editDni, currentClient?.id, qc])
 
@@ -1716,7 +1780,9 @@ export default function MyLeads() {
   const navigateToCompany = useCallback(
     async (clientIdx: number) => {
       await saveActiveContactIfDirty()
+      savedCompanyPinRef.current = null
       stayAfterSaveRef.current = false
+      stayAfterSaveContactIdRef.current = null
       const resolvedIdx = resolveContactIdxForCompany(clientIdx)
       const contactId = contactIdAt(clientIdx, resolvedIdx)
       needsContactResolveRef.current = true
@@ -2249,8 +2315,6 @@ export default function MyLeads() {
     }, 3500)
   }, [])
 
-  type SaveAutoNext = false | true | 'sequential' | 'nextPending'
-
   const saveMutation = useMutation({
     mutationFn: async (autoNext: SaveAutoNext) => {
       const navSnapshot: CompanyNavItem[] = clients.map((c) => ({
@@ -2272,7 +2336,7 @@ export default function MyLeads() {
       }
       if (!currentClient) return emptyResult
 
-      const contactSaved = await saveActiveContactIfDirty()
+      const contactSaved = await saveActiveContactIfDirty({ refresh: false })
       const planChanged = (editPlan || '') !== (detail?.plan ?? '')
       const razonSocialChanged = isRazonSocialDirty()
       if (planChanged || razonSocialChanged) {
@@ -2377,17 +2441,6 @@ export default function MyLeads() {
         if (!editTelefono.trim()) {
           throw new Error('Sin teléfono de usuario: no se puede guardar el resultado de la llamada.')
         }
-        if (!editingCallLogId) {
-          const otherContact = findOtherContactWithAgentLog(contactId)
-          if (
-            otherContact &&
-            !confirm(
-              `Esta empresa ya tiene un contacto registrado (${otherContact.nombre}). ¿Está seguro de que desea registrar este contacto?`
-            )
-          ) {
-            throw new SaveCancelled()
-          }
-        }
 
         const callPayload: Record<string, unknown> = {}
         if (disposition) callPayload.disposition = disposition
@@ -2399,6 +2452,11 @@ export default function MyLeads() {
           if (rescheduleOnly) callPayload.callbackDate = null
         } else if (agendaModified && schedDate && callbackDateIso) {
           callPayload.callbackDate = callbackDateIso
+        }
+
+        if (autoNext === false) {
+          stayAfterSaveRef.current = true
+          stayAfterSaveContactIdRef.current = contactId ?? null
         }
 
         if (rescheduleOnly) {
@@ -2465,7 +2523,7 @@ export default function MyLeads() {
         navSnapshot,
       }
     },
-    onSuccess: async (result) => {
+    onSuccess: (result) => {
       setRespuestaError(false)
       if (result.callLogSaved) {
         if (result.autoNext !== false) {
@@ -2474,8 +2532,8 @@ export default function MyLeads() {
           setSchedTime('09:00')
           setEditingCallLogId(null)
           stayAfterSaveRef.current = false
+          stayAfterSaveContactIdRef.current = null
         } else {
-          // Stay on record: pin the just-saved log and skip prefill clears until it appears.
           stayAfterSaveRef.current = true
           if (result.savedCallLogId) {
             pendingCallLogIdRef.current = result.savedCallLogId
@@ -2509,112 +2567,146 @@ export default function MyLeads() {
         }
         preserveDetailScrollRef.current = true
       }
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ['client-detail', savedCompanyId ?? currentClient?.id] }),
-        qc.invalidateQueries({ queryKey: ['callbacks'] }),
-        qc.invalidateQueries({ queryKey: ['clients'] }),
-        qc.invalidateQueries({ queryKey: ['dashboard'] }),
-      ])
+
+      const pinCompany = (companyId: string, list: ClientSummary[]) => {
+        const idx = companyIndexById(list, companyId)
+        if (idx < 0) return false
+        stayAfterSaveRef.current = false
+        stayAfterSaveContactIdRef.current = null
+        needsContactResolveRef.current = true
+        pendingContactIdRef.current = null
+        pendingContactIdxRef.current = 0
+        setActiveContactIdx(0)
+        setCurrentIndex(idx)
+        return true
+      }
+
       const shouldAdvance = result.autoNext === 'nextPending' || Boolean(result.autoNext)
-      if (shouldAdvance || (stayOnRecord && savedCompanyId)) {
-        const fresh = await qc.fetchQuery({
-          queryKey: ['clients', 'my-leads', 'nav', selectedBatchId, selectedOperator],
-          queryFn: () =>
-            fetchAllMyLeadClients({
-              batchId: selectedBatchId || undefined,
-              sortBy: 'registeredCreatedAt',
-              operator: selectedOperator ?? undefined,
-            }),
-        })
-        const freshRaw: ClientSummary[] = fresh?.clients ?? []
-        const freshVisible = isAdmin
-          ? freshRaw
-          : freshRaw.filter((c) => !isHiddenFromAgentNav(c.lastDisposition, c.callLogCount))
-
-        if (shouldAdvance && savedCompanyId) {
-          const snapshot = result.navSnapshot ?? []
-          const wantPending = result.autoNext === 'nextPending'
-          const targetId = wantPending
-            ? nextPendingCompanyIdAfter(
-                snapshot,
-                savedCompanyId,
-                (item) => !companySummaryHasAgentLog(item)
-              )
-            : nextCompanyIdAfter(snapshot, savedCompanyId)
-
-          const pinNextCompany = (companyId: string) => {
-            const idx = companyIndexById(freshVisible, companyId)
-            if (idx < 0) return false
-            stayAfterSaveRef.current = false
-            needsContactResolveRef.current = true
-            pendingContactIdRef.current = null
-            pendingContactIdxRef.current = 0
-            setActiveContactIdx(0)
-            setCurrentIndex(idx)
-            return true
-          }
-
-          if (targetId && pinNextCompany(targetId)) return
-
-          const fallbackId = wantPending
-            ? nextPendingCompanyIdAfter(
-                freshVisible,
-                savedCompanyId,
-                (c) => !companySummaryHasAgentLog(c)
-              )
-            : nextCompanyIdAfter(freshVisible, savedCompanyId)
-          if (fallbackId && pinNextCompany(fallbackId)) return
-
+      const snapshot = result.navSnapshot ?? []
+      const wantPending = result.autoNext === 'nextPending'
+      let advanceTargetId: string | null = null
+      if (shouldAdvance && savedCompanyId) {
+        advanceTargetId = wantPending
+          ? nextPendingCompanyIdAfter(
+              snapshot,
+              savedCompanyId,
+              (item) => !companySummaryHasAgentLog(item)
+            )
+          : nextCompanyIdAfter(snapshot, savedCompanyId)
+        if (advanceTargetId && pinCompany(advanceTargetId, clients)) {
+          savedCompanyPinRef.current = advanceTargetId
+        } else if (!advanceTargetId) {
           toast(
             wantPending
               ? 'No hay más empresas pendientes en este lote'
               : 'Ya estás en la última empresa de la cola',
             { icon: 'ℹ️' }
           )
-          const stayIdx = companyIndexById(freshVisible, savedCompanyId)
-          if (stayIdx >= 0) setCurrentIndex(stayIdx)
-          return
+          savedCompanyPinRef.current = savedCompanyId
+        } else {
+          savedCompanyPinRef.current = advanceTargetId
         }
-
-        if (stayOnRecord && savedCompanyId) {
-          const pinnedIdx = companyIndexById(freshVisible, savedCompanyId)
-          if (pinnedIdx >= 0) {
-            if (pinnedIdx !== currentIndex) setCurrentIndex(pinnedIdx)
-          } else {
-            const from = Math.min(currentIndex, Math.max(freshVisible.length - 1, 0))
-            let nextPending = freshVisible.findIndex(
-              (c, i) => i >= from && !companySummaryHasAgentLog(c)
-            )
-            if (nextPending < 0) {
-              nextPending = freshVisible.findIndex((c) => !companySummaryHasAgentLog(c))
-            }
-            if (nextPending >= 0) {
-              toast('Empresa fuera de la cola visible; pasando a la siguiente pendiente', {
-                icon: 'ℹ️',
-              })
-              setCurrentIndex(nextPending)
-            } else if (freshVisible.length > 0) {
-              toast('Empresa fuera de la cola visible', { icon: 'ℹ️' })
-              setCurrentIndex(Math.min(currentIndex, freshVisible.length - 1))
-            } else {
-              toast('Empresa fuera de la cola visible; no quedan empresas', { icon: 'ℹ️' })
-              setCurrentIndex(0)
-            }
-          }
-          if (savedDetailScrollRef.current) {
-            const saved = savedDetailScrollRef.current
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => {
-                if (detailFormScrollRef.current) detailFormScrollRef.current.scrollTop = saved.form
-                if (historialScrollRef.current) historialScrollRef.current.scrollTop = saved.historial
-                if (agendadosScrollRef.current) agendadosScrollRef.current.scrollTop = saved.agendados
-                preserveDetailScrollRef.current = false
-                savedDetailScrollRef.current = null
-              })
-            })
-          }
-        }
+      } else if (stayOnRecord && savedCompanyId) {
+        savedCompanyPinRef.current = savedCompanyId
       }
+
+      setQueueRefreshing(true)
+      void (async () => {
+        try {
+          await Promise.all([
+            qc.invalidateQueries({ queryKey: ['client-detail', savedCompanyId ?? currentClient?.id] }),
+            qc.invalidateQueries({ queryKey: ['callbacks'] }),
+            qc.invalidateQueries({ queryKey: ['clients'] }),
+            qc.invalidateQueries({ queryKey: ['dashboard'] }),
+          ])
+          const fresh = qc.getQueryData<{ clients?: ClientSummary[] }>([
+            'clients',
+            'my-leads',
+            'nav',
+            selectedBatchId,
+            selectedOperator,
+          ])
+          const freshRaw: ClientSummary[] = fresh?.clients ?? []
+          const freshVisible = isAdmin
+            ? freshRaw
+            : freshRaw.filter((c) => !isHiddenFromAgentNav(c.lastDisposition, c.callLogCount))
+
+          if (shouldAdvance && savedCompanyId) {
+            const targetId =
+              advanceTargetId ??
+              (wantPending
+                ? nextPendingCompanyIdAfter(
+                    freshVisible,
+                    savedCompanyId,
+                    (c) => !companySummaryHasAgentLog(c)
+                  )
+                : nextCompanyIdAfter(freshVisible, savedCompanyId))
+            if (targetId && pinCompany(targetId, freshVisible)) {
+              savedCompanyPinRef.current = targetId
+            } else {
+              const fallbackId = wantPending
+                ? nextPendingCompanyIdAfter(
+                    freshVisible,
+                    savedCompanyId,
+                    (c) => !companySummaryHasAgentLog(c)
+                  )
+                : nextCompanyIdAfter(freshVisible, savedCompanyId)
+              if (fallbackId && pinCompany(fallbackId, freshVisible)) {
+                savedCompanyPinRef.current = fallbackId
+              } else {
+                const stayIdx = companyIndexById(freshVisible, savedCompanyId)
+                if (stayIdx >= 0) {
+                  savedCompanyPinRef.current = savedCompanyId
+                  setCurrentIndex(stayIdx)
+                }
+              }
+            }
+          } else if (stayOnRecord && savedCompanyId) {
+            const pinnedIdx = companyIndexById(freshVisible, savedCompanyId)
+            if (pinnedIdx >= 0) {
+              savedCompanyPinRef.current = savedCompanyId
+              if (pinnedIdx !== currentIndex) setCurrentIndex(pinnedIdx)
+            } else {
+              const from = Math.min(currentIndex, Math.max(freshVisible.length - 1, 0))
+              let nextPending = freshVisible.findIndex(
+                (c, i) => i >= from && !companySummaryHasAgentLog(c)
+              )
+              if (nextPending < 0) {
+                nextPending = freshVisible.findIndex((c) => !companySummaryHasAgentLog(c))
+              }
+              if (nextPending >= 0) {
+                toast('Empresa fuera de la cola visible; pasando a la siguiente pendiente', {
+                  icon: 'ℹ️',
+                })
+                savedCompanyPinRef.current = freshVisible[nextPending]!.id
+                setCurrentIndex(nextPending)
+              } else if (freshVisible.length > 0) {
+                toast('Empresa fuera de la cola visible', { icon: 'ℹ️' })
+                savedCompanyPinRef.current = null
+                setCurrentIndex(Math.min(currentIndex, freshVisible.length - 1))
+              } else {
+                toast('Empresa fuera de la cola visible; no quedan empresas', { icon: 'ℹ️' })
+                savedCompanyPinRef.current = null
+                setCurrentIndex(0)
+              }
+            }
+            if (savedDetailScrollRef.current) {
+              const saved = savedDetailScrollRef.current
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                  if (detailFormScrollRef.current) detailFormScrollRef.current.scrollTop = saved.form
+                  if (historialScrollRef.current) historialScrollRef.current.scrollTop = saved.historial
+                  if (agendadosScrollRef.current) agendadosScrollRef.current.scrollTop = saved.agendados
+                  preserveDetailScrollRef.current = false
+                  savedDetailScrollRef.current = null
+                })
+              })
+            }
+          }
+        } finally {
+          setQueueRefreshing(false)
+        }
+      })()
     },
 
     onError: (err: unknown) => {
@@ -2643,6 +2735,118 @@ export default function MyLeads() {
       toast.error(message)
     },
   })
+
+  useEffect(() => {
+    const pinId = savedCompanyPinRef.current
+    if (!pinId || clients.length === 0) return
+    const idx = companyIndexById(clients, pinId)
+    if (idx >= 0 && idx !== currentIndex) setCurrentIndex(idx)
+  }, [clients, currentIndex])
+
+  const requestSave = useCallback(
+    (autoNext: SaveAutoNext) => {
+      if (saveMutation.isPending || !canSaveCallResult) return
+      if (autoNext === 'nextPending' && !nextPendingTarget) return
+      if (otherContactConfirm) return
+
+      const contactForSave =
+        displayContacts.length > 0
+          ? displayContacts[Math.min(activeContactIdx, displayContacts.length - 1)]
+          : undefined
+      const contactId =
+        contactForSave?.id && !contactForSave.id.startsWith('summary-')
+          ? contactForSave.id
+          : undefined
+      const signature = [
+        currentClient?.id ?? '',
+        contactId ?? '',
+        disposition,
+        callNotes,
+        schedDate,
+        schedTime,
+        String(autoNext),
+      ].join('|')
+      const now = Date.now()
+      const prev = lastSaveGuardRef.current
+      if (prev && prev.signature === signature && now - prev.at < SAVE_DUP_GUARD_MS) return
+
+      if (!editingCallLogId && currentClient?.id) {
+        const other = findOtherContactWithAgentLog(contactId)
+        if (other && !readSkipOtherContactConfirm(currentClient.id)) {
+          const thisName = (contactForSave?.nombre ?? '').trim() || 'este contacto'
+          setSkipOtherContactAsk(false)
+          setOtherContactConfirm({
+            otherName: other.nombre?.trim() || 'otro contacto',
+            thisName,
+            companyId: currentClient.id,
+            autoNext,
+          })
+          return
+        }
+      }
+
+      lastSaveGuardRef.current = { at: now, signature }
+      saveMutation.mutate(autoNext)
+    },
+    [
+      saveMutation,
+      canSaveCallResult,
+      nextPendingTarget,
+      otherContactConfirm,
+      displayContacts,
+      activeContactIdx,
+      currentClient?.id,
+      disposition,
+      callNotes,
+      schedDate,
+      schedTime,
+      editingCallLogId,
+      findOtherContactWithAgentLog,
+    ]
+  )
+
+  const confirmOtherContactAndSave = useCallback(() => {
+    if (!otherContactConfirm) return
+    if (skipOtherContactAsk) writeSkipOtherContactConfirm(otherContactConfirm.companyId)
+    const autoNext = otherContactConfirm.autoNext
+    const contactForSave =
+      displayContacts.length > 0
+        ? displayContacts[Math.min(activeContactIdx, displayContacts.length - 1)]
+        : undefined
+    const contactId =
+      contactForSave?.id && !contactForSave.id.startsWith('summary-')
+        ? contactForSave.id
+        : undefined
+    lastSaveGuardRef.current = {
+      at: Date.now(),
+      signature: [
+        otherContactConfirm.companyId,
+        contactId ?? '',
+        disposition,
+        callNotes,
+        schedDate,
+        schedTime,
+        String(autoNext),
+      ].join('|'),
+    }
+    setOtherContactConfirm(null)
+    saveMutation.mutate(autoNext)
+  }, [
+    otherContactConfirm,
+    skipOtherContactAsk,
+    displayContacts,
+    activeContactIdx,
+    disposition,
+    callNotes,
+    schedDate,
+    schedTime,
+    saveMutation,
+  ])
+
+  const cancelOtherContactConfirm = useCallback(() => {
+    setOtherContactConfirm(null)
+    setSkipOtherContactAsk(false)
+  }, [])
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -2832,18 +3036,18 @@ export default function MyLeads() {
       if (e.shiftKey) {
         if (saveMutation.isPending || !canSaveCallResult || !nextPendingTarget) return
         e.preventDefault()
-        saveMutation.mutate('nextPending')
+        requestSave('nextPending')
         return
       }
 
       if (saveMutation.isPending || !canSaveCallResult) return
       e.preventDefault()
-      saveMutation.mutate(false)
+      requestSave(false)
     }
 
     window.addEventListener('keydown', handleSaveKeyDown)
     return () => window.removeEventListener('keydown', handleSaveKeyDown)
-  }, [viewMode, saveMutation, canSaveCallResult, nextPendingTarget])
+  }, [viewMode, saveMutation.isPending, canSaveCallResult, nextPendingTarget, requestSave])
 
   const toolbarHasExtras =
     viewMode === 'detail' || (viewMode === 'list' && returnToDashboard)
@@ -3363,24 +3567,33 @@ export default function MyLeads() {
           {!loadingList && clients.length > 0 && !isInitialDetailLoad && displayDetail && (
             <div className="shrink-0 border-t border-gray-200 bg-white px-3 py-3 lg:px-4">
               <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
-                <button onClick={() => saveMutation.mutate(false)} disabled={saveMutation.isPending || !canSaveCallResult}
+                <button onClick={() => requestSave(false)} disabled={saveMutation.isPending || !canSaveCallResult}
                   title="Guardar resultado (Ctrl+Enter)"
                   className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
                   <Save size={15} />
-                  {saveMutation.isPending ? 'Guardando...' : latestLogSnapshot ? 'Guardar actualización' : 'Guardar resultado'}
+                  {saveMutation.isPending ? 'Guardando…' : latestLogSnapshot ? 'Guardar actualización' : 'Guardar resultado'}
                 </button>
-                <button onClick={() => saveMutation.mutate(true)} disabled={saveMutation.isPending || isLast || !canSaveCallResult}
+                <button onClick={() => requestSave(true)} disabled={saveMutation.isPending || isLast || !canSaveCallResult}
                   className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
                   Guardar y siguiente empresa <ChevronRight size={15} />
                 </button>
                 <button
-                  onClick={() => saveMutation.mutate('nextPending')}
+                  onClick={() => requestSave('nextPending')}
                   disabled={saveMutation.isPending || !canSaveCallResult || !nextPendingTarget}
                   title="Guarda y salta a la próxima empresa sin registro en este lote (Ctrl+Shift+Enter)"
                   className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] border-2 border-indigo-500 text-indigo-700 hover:bg-indigo-50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none"
                 >
                   Guardar y siguiente pendiente <ChevronRight size={15} />
                 </button>
+                {queueRefreshing && (
+                  <span
+                    role="status"
+                    className="flex items-center gap-1.5 text-xs font-medium rounded-full px-2.5 py-1.5 bg-slate-50 text-slate-600 border border-slate-200 self-center"
+                  >
+                    <span className="w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+                    Actualizando cola…
+                  </span>
+                )}
                 {!editTelefono.trim() && (
                   <p className="text-xs text-amber-700 sm:basis-full">
                     Sin teléfono de usuario: no se puede guardar el resultado de la llamada.
@@ -3832,6 +4045,55 @@ export default function MyLeads() {
           onViewFullRecord={openCallbackFullRecord}
           onClose={() => setCallbackResult(null)}
         />
+      )}
+
+      {/* Other contact already logged — confirm before save (not window.confirm) */}
+      {otherContactConfirm && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-40" onClick={cancelOtherContactConfirm} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="other-contact-confirm-title"
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center shrink-0">
+                  <Phone size={20} className="text-amber-700" />
+                </div>
+                <div>
+                  <h3 id="other-contact-confirm-title" className="font-bold text-gray-900">
+                    Esta empresa ya tiene una llamada en otro contacto
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Ya registraste a <strong>{otherContactConfirm.otherName}</strong>. Vas a guardar
+                    también a <strong>{otherContactConfirm.thisName}</strong>. Es válido (por ejemplo{' '}
+                    <strong>No contesta</strong> en más de un número).
+                  </p>
+                </div>
+              </div>
+              <label className="flex items-start gap-2 text-sm text-gray-600 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  checked={skipOtherContactAsk}
+                  onChange={(e) => setSkipOtherContactAsk(e.target.checked)}
+                />
+                <span>No volver a preguntar en esta empresa</span>
+              </label>
+              <div className="flex gap-3">
+                <button type="button" onClick={cancelOtherContactConfirm} className="flex-1 btn-secondary">
+                  Cancelar
+                </button>
+                <button type="button" onClick={confirmOtherContactAndSave} className="flex-1 btn-primary justify-center">
+                  Sí, registrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
       )}
 
       {/* Conservar agenda confirmation */}
