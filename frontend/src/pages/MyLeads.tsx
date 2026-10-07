@@ -46,6 +46,14 @@ import CallModal from '../components/CallModal'
 import CompleteCallbackModal, { type CompleteConfirm } from '../components/CompleteCallbackModal'
 import DispositionSelector from '../components/DispositionSelector'
 import { ColaFilterDropdown } from '../components/ColaFilterDropdown'
+import { ListLastCallFilter } from '../components/ListLastCallFilter'
+import {
+  listLastCallChipLabel,
+  listLastCallQueryParams,
+  resolveListLastCallRange,
+  todayYmdInAppTz,
+  type ListLastCallPreset,
+} from '../lib/listLastCallRange'
 import AdminElevationModal from '../components/AdminElevationModal'
 import { hasValidElevation } from '../lib/adminElevation'
 import {
@@ -900,9 +908,21 @@ export default function MyLeads() {
   const [listSearch, setListSearch] = useState('')
   const [listCola, setListCola] = useState<ListCola>(safeInitialCola)
   const [listDrilldown, setListDrilldown] = useState<string | null>(initialListFilters.drilldown)
+  const [listLastCallPreset, setListLastCallPreset] = useState<ListLastCallPreset | null>(null)
+  const [listLastCallFrom, setListLastCallFrom] = useState('')
+  const [listLastCallTo, setListLastCallTo] = useState('')
   const [elevationModalOpen, setElevationModalOpen] = useState(false)
   const [pendingElevatedCola, setPendingElevatedCola] = useState<ListCola | null>(null)
   const listColaOptions = useMemo(() => [...LIST_COLA_OPTIONS], [])
+  const listLastCallRange = useMemo(
+    () => resolveListLastCallRange(listLastCallPreset, listLastCallFrom, listLastCallTo),
+    [listLastCallPreset, listLastCallFrom, listLastCallTo]
+  )
+  const listLastCallChip = listLastCallChipLabel(
+    listLastCallPreset,
+    listLastCallFrom,
+    listLastCallTo
+  )
 
   // ── Grid view state
   const [gridSearch, setGridSearch] = useState(initialQ)
@@ -1103,13 +1123,25 @@ export default function MyLeads() {
     isLoading: loadingListView,
     error: listViewError,
   } = useQuery({
-    queryKey: ['clients', 'my-leads', 'list', selectedBatchId, listCola, listDrilldown, selectedOperator],
+    queryKey: [
+      'clients',
+      'my-leads',
+      'list',
+      selectedBatchId,
+      listCola,
+      listDrilldown,
+      selectedOperator,
+      listLastCallPreset,
+      listLastCallRange?.from ?? '',
+      listLastCallRange?.to ?? '',
+    ],
     queryFn: () =>
       fetchAllMyLeadClients({
         batchId: selectedBatchId || undefined,
         sortBy: 'registeredCreatedAt',
         operator: selectedOperator ?? undefined,
         ...getListApiParams(listCola, listDrilldown),
+        ...listLastCallQueryParams(listLastCallRange),
       }),
     enabled: viewMode === 'list' && operatorChosen,
     retry: (failureCount, err) => {
@@ -2322,6 +2354,23 @@ export default function MyLeads() {
     },
     [isAdmin, applyListFilters]
   )
+
+  const applyListLastCallPreset = useCallback((preset: ListLastCallPreset) => {
+    setListLastCallPreset(preset)
+    if (preset === 'range') {
+      setListLastCallFrom((prev) => prev || todayYmdInAppTz())
+      setListLastCallTo((prev) => prev || todayYmdInAppTz())
+      return
+    }
+    setListLastCallFrom('')
+    setListLastCallTo('')
+  }, [])
+
+  const clearListLastCallFilter = useCallback(() => {
+    setListLastCallPreset(null)
+    setListLastCallFrom('')
+    setListLastCallTo('')
+  }, [])
 
   // If elevation expired mid-session while viewing depurado, re-prompt.
   useEffect(() => {
@@ -4478,6 +4527,17 @@ export default function MyLeads() {
                     onChange={(cola) => requestListCola(cola)}
                   />
                 </div>
+                <ListLastCallFilter
+                  preset={listLastCallPreset}
+                  from={listLastCallFrom}
+                  to={listLastCallTo}
+                  onPreset={applyListLastCallPreset}
+                  onRangeChange={(nextFrom, nextTo) => {
+                    setListLastCallPreset('range')
+                    setListLastCallFrom(nextFrom)
+                    setListLastCallTo(nextTo)
+                  }}
+                />
                 <div className="flex items-center gap-2 shrink-0 pb-0.5 sm:ml-auto">
                   {(listDrilldown || (listCola !== 'FUNNEL' && listCola !== 'ALL')) && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">
@@ -4487,6 +4547,19 @@ export default function MyLeads() {
                         onClick={() => applyListFilters('ALL', null)}
                         className="p-0.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
                         aria-label="Quitar filtro"
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  )}
+                  {listLastCallPreset && listLastCallChip && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">
+                      Última llamada: {listLastCallChip}
+                      <button
+                        type="button"
+                        onClick={clearListLastCallFilter}
+                        className="p-0.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
+                        aria-label="Quitar filtro de última llamada"
                       >
                         <X size={12} />
                       </button>
