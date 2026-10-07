@@ -333,7 +333,7 @@ def build():
     )
     p(
         doc,
-        "Si la empresa tiene tres contactos, usted decide a cuál llama. Guardar en un contacto no cambia automáticamente al siguiente contacto: cambia de **empresa** solo si usted pulsa **Guardar y siguiente empresa** o **Guardar y siguiente pendiente**.",
+        "Si la empresa tiene tres contactos, usted decide a cuál llama. **Guardar resultado** / **Guardar actualización** no cambia de persona: se queda en la pestaña actual. El cambio de contacto es solo a mano (pestañas o flechas). Cada pestaña muestra su última **Respuesta**. Cambia de **empresa** solo si usted pulsa **Guardar y siguiente empresa** o **Guardar y siguiente pendiente**.",
     )
 
     # 5
@@ -345,8 +345,8 @@ def build():
         [
             [
                 "Guardar resultado",
-                "Graba la respuesta en el contacto actual y se queda en la misma ficha. Si ya había un registro, el botón dice Guardar actualización.",
-                "Cuando quiere revisar o corregir sin saltar.",
+                "Graba la respuesta en el contacto actual y se queda en la misma persona (misma pestaña). No cambia de contacto. Si ya había un registro, el botón dice Guardar actualización. Cada pestaña muestra su última respuesta.",
+                "Cuando quiere revisar o corregir sin saltar de persona ni de empresa.",
             ],
             [
                 "Guardar y siguiente empresa",
@@ -360,6 +360,10 @@ def build():
             ],
         ],
         col_widths=[5.0, 6.5, 5.5],
+    )
+    p(
+        doc,
+        "El botón verde **Guardar resultado** / **Guardar actualización** no cambia de persona: las pestañas (o las flechas) son el único cambio de contacto. Al abrir otra pestaña, **Respuesta** y las notas son las de ese contacto (o **— Seleccionar —** si aún no tiene registro suyo). **Guardar y siguiente empresa** y **Guardar y siguiente pendiente** sí cambian de **RUC**.",
     )
     p(
         doc,
@@ -592,7 +596,13 @@ def build():
     add_heading_styled(doc, "¿Qué hago si hay dos contactos y ya llamé a uno?", 2)
     p(
         doc,
-        "Cambie de pestaña a mano. Si guarda en el segundo, el aviso de segundo contacto le pedirá confirmar. Es correcto registrar más de un número de la misma empresa.",
+        "Cambie de pestaña a mano. Cada pestaña muestra su última respuesta; **Guardar resultado** no salta a otra persona. Si guarda en el segundo, el aviso de segundo contacto le pedirá confirmar. Es correcto registrar más de un número de la misma empresa.",
+    )
+
+    add_heading_styled(doc, "Guardé y me cambió de persona (otra pestaña). ¿Es normal?", 2)
+    p(
+        doc,
+        "No. El botón verde se queda en el mismo contacto. Si ve la **Respuesta** de Mario en la pestaña de otra persona, pulse esa pestaña de nuevo: debe cargar la respuesta de ese contacto (o **— Seleccionar —** si no tiene registro). El cambio de persona es solo con las pestañas o las flechas.",
     )
 
     add_heading_styled(doc, "Cierre para quien capacita", 2)

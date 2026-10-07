@@ -76,6 +76,11 @@ import {
   nextPendingCompanyIndexAfter,
   type CompanyNavItem,
 } from '../lib/myLeadsCompanyNav'
+import {
+  contactIdxForStayAfterSave,
+  prefillFromContactLogs,
+  shouldSkipCompanyLatestContactResolve,
+} from '../lib/myLeadsContactPrefill'
 import { DuplicateRucBanner } from '../components/DuplicateRucBanner'
 import OtherOperatorRucBanner from '../components/OtherOperatorRucBanner'
 import {
@@ -1359,7 +1364,8 @@ export default function MyLeads() {
     if (
       pendingContactIdRef.current !== null ||
       pendingContactIdxRef.current !== null ||
-      needsContactResolveRef.current
+      needsContactResolveRef.current ||
+      stayAfterSaveRef.current
     ) {
       return
     }
@@ -1449,6 +1455,47 @@ export default function MyLeads() {
     setSchedTime('')
   }, [])
 
+  const applyContactLogPrefill = useCallback(
+    (contactId: string | undefined, opts?: { pinnedLogId?: string | null; fields?: boolean }) => {
+      const writeFields = opts?.fields !== false
+      if (!detail || !user?.id || !contactId || contactId.startsWith('summary-')) {
+        setLatestLogSnapshot(null)
+        setEditingCallLogId(null)
+        if (writeFields) clearEditableCallFields()
+        return
+      }
+      const targetLog = prefillFromContactLogs(
+        detail.callLogs,
+        contactId,
+        user.id,
+        isAgentSelectableDisposition,
+        opts?.pinnedLogId
+      )
+      if (!targetLog) {
+        setLatestLogSnapshot(null)
+        setEditingCallLogId(null)
+        if (writeFields) clearEditableCallFields()
+        return
+      }
+      const agentLogIds = new Set(
+        detail.callLogs.filter((l) => l.agentId === user.id).map((l) => l.id)
+      )
+      const agentPendingCb = detail.callbacks?.find(
+        (c) => !c.completed && (!c.callLogId || agentLogIds.has(c.callLogId))
+      )
+      const snap = snapshotFromLog(targetLog, detail.callbacks, agentPendingCb)
+      setLatestLogSnapshot(snap)
+      setEditingCallLogId(targetLog.id)
+      if (writeFields) {
+        setDisposition(targetLog.disposition)
+        setCallNotes(targetLog.notes ?? '')
+        setSchedDate(snap.schedDate)
+        setSchedTime(snap.schedTime)
+      }
+    },
+    [detail, user?.id, clearEditableCallFields]
+  )
+
   const askConservarAgenda = useCallback((dateStr: string): Promise<boolean> => {
     return new Promise((resolve) => {
       agendaConfirmResolveRef.current = resolve
@@ -1468,7 +1515,20 @@ export default function MyLeads() {
     if (detail.id !== currentClient.id) return
 
     let contactIdx = activeContactIdx
-    if (needsContactResolveRef.current && detail.id === currentClient?.id) {
+    const stayContactId = stayAfterSaveContactIdRef.current
+    const skipCompanyLatest = shouldSkipCompanyLatestContactResolve(
+      stayAfterSaveRef.current,
+      stayContactId
+    )
+
+    if (skipCompanyLatest) {
+      // Stay-on-record save: pin this contact. Company-latest jump is only for navigateToCompany.
+      contactIdx = contactIdxForStayAfterSave(displayContacts, stayContactId, contactIdx)
+      if (contactIdx !== activeContactIdx) setActiveContactIdx(contactIdx)
+      needsContactResolveRef.current = false
+      pendingContactIdRef.current = null
+      pendingContactIdxRef.current = null
+    } else if (needsContactResolveRef.current && detail.id === currentClient?.id) {
       const agentLogs = [...detail.callLogs]
         .filter((l) => l.agentId === user.id && l.contact?.id)
         .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())
@@ -1503,7 +1563,7 @@ export default function MyLeads() {
       if (pinnedLog) {
         pendingCallLogIdRef.current = null
         pinnedLogId = pinnedLog.id
-        if (pinnedLog.contact?.id) {
+        if (!skipCompanyLatest && pinnedLog.contact?.id) {
           const cIdx = displayContacts.findIndex((c) => c.id === pinnedLog.contact!.id)
           if (cIdx >= 0) {
             contactIdx = cIdx
@@ -1521,73 +1581,44 @@ export default function MyLeads() {
     const contact = displayContacts[idx]
     if (!contact?.id || contact.id.startsWith('summary-')) {
       if (stayAfterSaveRef.current) return
-      setLatestLogSnapshot(null)
-      setEditingCallLogId(null)
-      clearEditableCallFields()
+      applyContactLogPrefill(undefined)
       return
     }
-
-    const agentContactLogs = [...detail.callLogs]
-      .filter((l) => l.contact?.id === contact.id && l.agentId === user.id)
-      .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())
-
-    const prefillStartIdx = pinnedLogId
-      ? Math.max(0, agentContactLogs.findIndex((l) => l.id === pinnedLogId))
-      : 0
-
-    const targetLog =
-      agentContactLogs.slice(prefillStartIdx).find((l) => isAgentSelectableDisposition(l.disposition)) ??
-      null
 
     if (stayAfterSaveRef.current && pendingCallLogIdRef.current && !pinnedLogId) {
       return
     }
 
+    const targetLog = prefillFromContactLogs(
+      detail.callLogs,
+      contact.id,
+      user.id,
+      isAgentSelectableDisposition,
+      pinnedLogId
+    )
+
     if (stayAfterSaveRef.current) {
       const sameContact =
         !!stayAfterSaveContactIdRef.current && contact.id === stayAfterSaveContactIdRef.current
-      if (sameContact && targetLog) {
-        const agentLogIds = new Set(
-          detail.callLogs.filter((l) => l.agentId === user.id).map((l) => l.id)
-        )
-        const agentPendingCb = detail.callbacks?.find(
-          (c) => !c.completed && (!c.callLogId || agentLogIds.has(c.callLogId))
-        )
-        const snap = snapshotFromLog(targetLog, detail.callbacks, agentPendingCb)
-        setLatestLogSnapshot(snap)
-        setEditingCallLogId(targetLog.id)
-      } else if (!sameContact) {
-        // Keep Respuesta; a save on this contact must create a new log, not edit the previous one.
-        setLatestLogSnapshot(null)
-        setEditingCallLogId(null)
+      if (sameContact) {
+        if (targetLog) applyContactLogPrefill(contact.id, { pinnedLogId, fields: false })
+        return
       }
-      return
+      // Manual tab change should have cleared this; never keep the previous tab's Respuesta.
+      stayAfterSaveRef.current = false
+      stayAfterSaveContactIdRef.current = null
     }
 
-    if (targetLog) {
-      const agentLogIds = new Set(
-        detail.callLogs.filter((l) => l.agentId === user.id).map((l) => l.id)
-      )
-      const agentPendingCb = detail.callbacks?.find(
-        (c) => !c.completed && (!c.callLogId || agentLogIds.has(c.callLogId))
-      )
-      const snap = snapshotFromLog(targetLog, detail.callbacks, agentPendingCb)
-      setLatestLogSnapshot(snap)
-      setDisposition(targetLog.disposition)
-      setCallNotes(targetLog.notes ?? '')
-      setSchedDate(snap.schedDate)
-      setSchedTime(snap.schedTime)
-      setEditingCallLogId(targetLog.id)
-      stayAfterSaveRef.current = false
-    } else if (stayAfterSaveRef.current) {
-      // Keep selected Respuesta until the just-saved log is in client-detail (or the agent navigates).
-      return
-    } else {
-      setLatestLogSnapshot(null)
-      setEditingCallLogId(null)
-      clearEditableCallFields()
-    }
-  }, [detail, activeContactIdx, user?.id, clearEditableCallFields, displayContacts, currentClient?.id])
+    applyContactLogPrefill(contact.id, { pinnedLogId })
+    stayAfterSaveRef.current = false
+  }, [
+    detail,
+    activeContactIdx,
+    user?.id,
+    applyContactLogPrefill,
+    displayContacts,
+    currentClient?.id,
+  ])
 
   const saveActiveContactIfDirty = useCallback(async (opts?: { refresh?: boolean }): Promise<boolean> => {
     if (!displayContacts.length) return false
@@ -1620,6 +1651,19 @@ export default function MyLeads() {
     }
     return true
   }, [displayContacts, activeContactIdx, editTelefono, editEmail, editDni, currentClient?.id, qc])
+
+  const switchToContactTab = useCallback(
+    async (idx: number) => {
+      await saveActiveContactIfDirty()
+      stayAfterSaveRef.current = false
+      stayAfterSaveContactIdRef.current = null
+      pendingCallLogIdRef.current = null
+      setActiveContactIdx(idx)
+      const contact = displayContacts[idx]
+      applyContactLogPrefill(contact?.id)
+    },
+    [saveActiveContactIfDirty, displayContacts, applyContactLogPrefill]
+  )
 
   // Sync editable contact fields when active contact changes
   const activeContactIdForSync =
@@ -2638,12 +2682,15 @@ export default function MyLeads() {
       const pinCompany = (companyId: string, list: ClientSummary[]) => {
         const idx = companyIndexById(list, companyId)
         if (idx < 0) return false
-        stayAfterSaveRef.current = false
-        stayAfterSaveContactIdRef.current = null
-        needsContactResolveRef.current = true
-        pendingContactIdRef.current = null
-        pendingContactIdxRef.current = 0
-        setActiveContactIdx(0)
+        const stayingOnSameCompany = companyId === savedCompanyId
+        if (!stayingOnSameCompany) {
+          stayAfterSaveRef.current = false
+          stayAfterSaveContactIdRef.current = null
+          needsContactResolveRef.current = true
+          pendingContactIdRef.current = null
+          pendingContactIdxRef.current = 0
+          setActiveContactIdx(0)
+        }
         setCurrentIndex(idx)
         return true
       }
@@ -3137,8 +3184,7 @@ export default function MyLeads() {
 
     const switchToContact = (idx: number) => {
       void navigateWithSave(async () => {
-        await saveActiveContactIfDirty()
-        setActiveContactIdx(idx)
+        await switchToContactTab(idx)
       })()
     }
 
@@ -3165,7 +3211,7 @@ export default function MyLeads() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [viewMode, displayContacts.length, safeContactIdx, navigateWithSave, saveActiveContactIfDirty])
+  }, [viewMode, displayContacts.length, safeContactIdx, navigateWithSave, switchToContactTab])
 
   useEffect(() => {
     if (viewMode !== 'detail') return
@@ -3546,8 +3592,7 @@ export default function MyLeads() {
                             aria-selected={isActive}
                             title={tabTitle}
                             onClick={navigateWithSave(async () => {
-                              await saveActiveContactIfDirty()
-                              setActiveContactIdx(idx)
+                              await switchToContactTab(idx)
                             })}
                             className={`flex h-full min-w-[100px] max-w-[120px] shrink-0 flex-col items-center justify-center gap-0 px-3 py-0.5 text-xs font-medium leading-tight transition-colors ${tabClass}`}>
                             <span className="flex items-center gap-1 overflow-hidden max-w-full">
