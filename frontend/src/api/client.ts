@@ -356,6 +356,7 @@ export type ClientListItem = {
     nombre: string
     tipoContacto?: string
     telefono?: string
+    createdAt?: string
     assignment?: { agent?: { id?: string; name: string } }
   }[]
   importBatch?: { id?: string; filename: string; createdAt: string; operator?: string }

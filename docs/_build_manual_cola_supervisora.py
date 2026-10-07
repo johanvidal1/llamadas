@@ -333,7 +333,7 @@ def build():
     )
     p(
         doc,
-        "Si la empresa tiene tres contactos, usted decide a cuál llama. **Guardar resultado** / **Guardar actualización** no cambia de persona: se queda en la pestaña actual. El cambio de contacto es solo a mano (pestañas o flechas). Cada pestaña muestra su última **Respuesta**. Cambia de **empresa** solo si usted pulsa **Guardar y siguiente empresa** o **Guardar y siguiente pendiente**.",
+        "Si la empresa tiene tres contactos, las pestañas quedan de izquierda a derecha **como en el Excel** (orden de la plantilla) y no se reordenan. Usted decide a cuál llama. Al **Guardar resultado**, la pestaña se pone **verde en su mismo lugar** (1 de 3 sigue 1 de 3). **Guardar resultado** / **Guardar actualización** no cambia de persona: se queda en la pestaña actual. El cambio de contacto es solo a mano (pestañas o flechas). Cada pestaña muestra su última **Respuesta**. Cambia de **empresa** solo si usted pulsa **Guardar y siguiente empresa** o **Guardar y siguiente pendiente**.",
     )
 
     # 5
@@ -345,7 +345,7 @@ def build():
         [
             [
                 "Guardar resultado",
-                "Graba la respuesta en el contacto actual y se queda en la misma persona (misma pestaña). No cambia de contacto. Si ya había un registro, el botón dice Guardar actualización. Cada pestaña muestra su última respuesta.",
+                "Graba la respuesta en el contacto actual y se queda en la misma persona (misma pestaña, mismo 1 de 3). La pestaña se pone verde en su sitio; no pasa al final. Si ya había un registro, el botón dice Guardar actualización. Cada pestaña muestra su última respuesta.",
                 "Cuando quiere revisar o corregir sin saltar de persona ni de empresa.",
             ],
             [
@@ -596,13 +596,19 @@ def build():
     add_heading_styled(doc, "¿Qué hago si hay dos contactos y ya llamé a uno?", 2)
     p(
         doc,
-        "Cambie de pestaña a mano. Cada pestaña muestra su última respuesta; **Guardar resultado** no salta a otra persona. Si guarda en el segundo, el aviso de segundo contacto le pedirá confirmar. Es correcto registrar más de un número de la misma empresa.",
+        "Cambie de pestaña a mano. El orden de las pestañas es el del Excel y no cambia. Cada pestaña muestra su última respuesta; **Guardar resultado** no salta a otra persona ni mueve el verde al final. Si guarda en el segundo, el aviso de segundo contacto le pedirá confirmar. Es correcto registrar más de un número de la misma empresa.",
     )
 
     add_heading_styled(doc, "Guardé y me cambió de persona (otra pestaña). ¿Es normal?", 2)
     p(
         doc,
-        "No. El botón verde se queda en el mismo contacto. Si ve la **Respuesta** de Mario en la pestaña de otra persona, pulse esa pestaña de nuevo: debe cargar la respuesta de ese contacto (o **— Seleccionar —** si no tiene registro). El cambio de persona es solo con las pestañas o las flechas.",
+        "No. El botón verde se queda en el mismo contacto y en el **mismo lugar** (1 de 3 sigue 1 de 3). Las pestañas no se reordenan: el verde no pasa al final. Si ve la **Respuesta** de Mario en la pestaña de otra persona, pulse esa pestaña de nuevo: debe cargar la respuesta de ese contacto (o **— Seleccionar —** si no tiene registro). El cambio de persona es solo con las pestañas o las flechas.",
+    )
+
+    add_heading_styled(doc, "Guardé y la pestaña verde se fue al final. ¿Es normal?", 2)
+    p(
+        doc,
+        "No. Las pestañas quedan de izquierda a derecha como en el Excel. Al guardar, esa pestaña se pone verde **en su sitio**. El orden de la plantilla no cambia.",
     )
 
     add_heading_styled(doc, "Cierre para quien capacita", 2)

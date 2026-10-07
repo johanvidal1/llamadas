@@ -3,6 +3,7 @@ import {
   contactIdxForStayAfterSave,
   prefillFromContactLogs,
   shouldSkipCompanyLatestContactResolve,
+  sortContactsStable,
   type PrefillCallLog,
 } from './myLeadsContactPrefill.ts'
 
@@ -76,5 +77,42 @@ assert.equal(prefillFromContactLogs(logs, 'unknown', 'agent', selectable), null)
 section('pinned just-saved log wins even if a newer row exists')
 const pinned = prefillFromContactLogs(logs, 'lucia', 'agent', selectable, 'old-lucia')
 assert.equal(pinned?.id, 'old-lucia')
+
+section('sortContactsStable is createdAt then id — not registered / has-log')
+const tied = [
+  { id: 'c', createdAt: '2026-10-07T12:00:00.000Z', hasLog: true },
+  { id: 'a', createdAt: '2026-10-07T12:00:00.000Z', hasLog: false },
+  { id: 'b', createdAt: '2026-10-07T12:00:00.000Z', hasLog: true },
+]
+assert.deepEqual(
+  sortContactsStable(tied).map((c) => c.id),
+  ['a', 'b', 'c']
+)
+
+const mixedTime = [
+  { id: 'z', createdAt: '2026-10-07T12:00:02.000Z' },
+  { id: 'm', createdAt: '2026-10-07T12:00:00.000Z' },
+  { id: 'n', createdAt: '2026-10-07T12:00:01.000Z' },
+]
+assert.deepEqual(
+  sortContactsStable(mixedTime).map((c) => c.id),
+  ['m', 'n', 'z']
+)
+
+const registeredLastWouldWin = [
+  { id: 'lucia', createdAt: '2026-10-07T12:00:00.000Z', registered: true },
+  { id: 'mario', createdAt: '2026-10-07T12:00:00.000Z', registered: false },
+]
+assert.deepEqual(
+  sortContactsStable(registeredLastWouldWin).map((c) => c.id),
+  ['lucia', 'mario']
+)
+
+const original = [...tied]
+sortContactsStable(tied)
+assert.deepEqual(
+  tied.map((c) => c.id),
+  original.map((c) => c.id)
+)
 
 console.log('\nmyLeadsContactPrefill tests passed')

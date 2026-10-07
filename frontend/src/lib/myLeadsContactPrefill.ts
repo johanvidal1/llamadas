@@ -1,6 +1,32 @@
 /** Contact tab as shown in Mis clientes (shared form; prefill per contact). */
 export type PrefillContact = { id: string }
 
+/** Plantilla / import order: createdAt then id. Never by registered / has-log. */
+export type StableSortContact = {
+  id?: string
+  createdAt?: string | Date | null
+}
+
+function createdAtMs(value: string | Date | null | undefined): number | null {
+  if (value == null || value === '') return null
+  const ms = new Date(value).getTime()
+  return Number.isFinite(ms) ? ms : null
+}
+
+/** Left-to-right tab order: createdAt asc, then id asc. Does not mutate the input. */
+export function sortContactsStable<T extends StableSortContact>(contacts: readonly T[]): T[] {
+  return [...contacts].sort((a, b) => {
+    const ta = createdAtMs(a.createdAt)
+    const tb = createdAtMs(b.createdAt)
+    if (ta != null && tb != null && ta !== tb) return ta - tb
+    const ida = a.id ?? ''
+    const idb = b.id ?? ''
+    if (ida < idb) return -1
+    if (ida > idb) return 1
+    return 0
+  })
+}
+
 export type PrefillCallLog = {
   id: string
   agentId: string

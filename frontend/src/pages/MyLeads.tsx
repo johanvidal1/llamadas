@@ -80,6 +80,7 @@ import {
   contactIdxForStayAfterSave,
   prefillFromContactLogs,
   shouldSkipCompanyLatestContactResolve,
+  sortContactsStable,
 } from '../lib/myLeadsContactPrefill'
 import { DuplicateRucBanner } from '../components/DuplicateRucBanner'
 import OtherOperatorRucBanner from '../components/OtherOperatorRucBanner'
@@ -128,6 +129,7 @@ interface ClientSummary {
     telefono?: string
     email?: string
     dni?: string
+    createdAt?: string
     _count?: { callLogs: number }
   }[]
   importBatch?: { id: string; filename: string; createdAt: string; operator?: string }
@@ -165,7 +167,15 @@ interface ClientDetail {
   notes?: string
   status: string
   importBatch?: { id: string; filename: string; createdAt: string; operator?: string }
-  contacts: { id: string; nombre: string; tipoContacto?: string; telefono?: string; email?: string; dni?: string }[]
+  contacts: {
+    id: string
+    nombre: string
+    tipoContacto?: string
+    telefono?: string
+    email?: string
+    dni?: string
+    createdAt?: string
+  }[]
   callLogs: CallLogEntry[]
   callbacks: { id: string; callLogId?: string; scheduledAt: string; notes?: string; completed: boolean }[]
   mobileLines: {
@@ -1307,20 +1317,25 @@ export default function MyLeads() {
     savedDetailScrollRef.current = null
   }, [currentClient?.id])
 
-  // Prefer detail contacts; during stale placeholder keep showing previous client's contacts
-  const displayContacts: ClientDetail['contacts'] =
-    detail != null && (detail.contacts?.length ?? 0) > 0
-      ? detail.contacts
-      : detail?.id === currentClient?.id
-        ? (currentClient?.contacts ?? []).map((ct, idx) => ({
-            id: (ct as { id?: string }).id ?? `summary-${currentClient?.id ?? 'x'}-${idx}`,
-            nombre: ct.nombre ?? '',
-            tipoContacto: ct.tipoContacto,
-            telefono: ct.telefono,
-            email: ct.email,
-            dni: ct.dni,
-          }))
-        : []
+  // Prefer detail contacts; during stale placeholder keep showing previous client's contacts.
+  // Stable plantilla/import order (createdAt + id) — never by registered / has-log.
+  const displayContacts: ClientDetail['contacts'] = useMemo(() => {
+    const raw: ClientDetail['contacts'] =
+      detail != null && (detail.contacts?.length ?? 0) > 0
+        ? detail.contacts
+        : detail?.id === currentClient?.id
+          ? (currentClient?.contacts ?? []).map((ct, idx) => ({
+              id: (ct as { id?: string }).id ?? `summary-${currentClient?.id ?? 'x'}-${idx}`,
+              nombre: ct.nombre ?? '',
+              tipoContacto: ct.tipoContacto,
+              telefono: ct.telefono,
+              email: ct.email,
+              dni: ct.dni,
+              createdAt: ct.createdAt,
+            }))
+          : []
+    return sortContactsStable(raw)
+  }, [detail, currentClient])
 
   // Load pending callbacks for Agendados panel
   const { data: agendados = [] } = useQuery({

@@ -169,7 +169,7 @@ async function fetchCompanies(
       assignment: { include: { agent: { select: { name: true, id: true } } } },
       ...contactCallLogCountForUser(agentUserId),
     },
-    orderBy: { createdAt: 'asc' as const },
+    orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }],
   }
 
   return prisma.company.findMany({
@@ -1027,7 +1027,7 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
           assignment: { include: { agent: { select: { name: true } } } },
           ...contactCallLogCountForUser(req.user!.id),
         },
-        orderBy: { createdAt: 'asc' },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       },
       callLogs: {
         include: {
