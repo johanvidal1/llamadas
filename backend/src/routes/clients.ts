@@ -28,6 +28,7 @@ import {
   matchesFunnelFilter,
   pipelineBucketForDisposition,
   sortClientsByActivityQueue,
+  sortClientsByCreatedAtQueue,
   sortClientsByRegisteredCreatedAtQueue,
   sortCompanyIdsByActivityQueue,
   sortCompanyIdsByRegisteredCreatedAtQueue,
@@ -185,7 +186,7 @@ async function fetchCompanies(
         select: { scheduledAt: true, notes: true },
       },
     },
-    orderBy: { createdAt: 'asc' },
+    orderBy: [{ createdAt: 'asc' }, { ruc: 'asc' }],
     ...(take !== undefined ? { take } : {}),
     ...(skip !== undefined ? { skip } : {}),
   })
@@ -269,7 +270,7 @@ async function fetchLightweightCompanies(
   const rows = await prisma.company.findMany({
     where,
     select: { id: true, ruc: true, createdAt: true, _count: { select: { callLogs: true } } },
-    orderBy: { createdAt: 'asc' },
+    orderBy: [{ createdAt: 'asc' }, { ruc: 'asc' }],
   })
   return rows.map((r) => ({
     id: r.id,
@@ -505,7 +506,7 @@ async function getStableOrderedClientsPage(
   take: number
 ) {
   const lightweight = await fetchLightweightCompanies(ctx.where)
-  const orderedIds = lightweight.map((r) => r.id)
+  const orderedIds = sortClientsByCreatedAtQueue(lightweight).map((r) => r.id)
   const allLastByCompany =
     ctx.preloadedLastByCompany ??
     (await loadLastDispositionByCompanyIds(
@@ -577,7 +578,7 @@ async function getFilteredDispositionClientsPage(
   ctx: ClientsFilterContext,
   skip: number,
   take: number,
-  queueSort: 'activity' | 'registeredCreatedAt' = 'activity'
+  queueSort: 'activity' | 'registeredCreatedAt' | 'createdAt' = 'activity'
 ) {
   const lightweight = await fetchLightweightCompanies(ctx.where)
   const companyIds = lightweight.map((c) => c.id)
@@ -642,7 +643,9 @@ async function getFilteredDispositionClientsPage(
   const sortedIds =
     queueSort === 'registeredCreatedAt'
       ? sortClientsByRegisteredCreatedAtQueue(sortable).map((r) => r.id)
-      : sortClientsByActivityQueue(sortable).map((r) => r.id)
+      : queueSort === 'createdAt'
+        ? sortClientsByCreatedAtQueue(sortable).map((r) => r.id)
+        : sortClientsByActivityQueue(sortable).map((r) => r.id)
   const total = sortedIds.length
   const pageIds = sortedIds.slice(skip, skip + take)
   const pageLastByCompany = new Map(
@@ -906,9 +909,8 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     built.agentScopedNoContesta ||
     built.agentScopedNoContestaDepurado
 
-  // MyLeads: sortBy=registeredCreatedAt / queueOrder=registeredThenPending
-  // → registered first, then pending; within each group by company createdAt asc.
-  // Legacy: sortBy=createdAt / queueOrder=stable → pure createdAt (no registered-first).
+  // MyLeads: sortBy=createdAt / queueOrder=stable → lote createdAt asc, RUC tiebreak
+  // (no registered-first split). Clients admin may still use registeredCreatedAt.
   const wantsRegisteredCreatedAtOrder =
     sortBy === 'registeredCreatedAt' || query.queueOrder === 'registeredThenPending'
   const wantsStableOrder =
@@ -922,16 +924,16 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   if (
     needsDispositionFilter ||
     useActivitySort ||
-    (wantsStableOrder && built.agentQueueExcludeArchived) ||
+    wantsStableOrder ||
     wantsRegisteredCreatedAtOrder
   ) {
+    const filteredQueueSort = wantsRegisteredCreatedAtOrder
+      ? 'registeredCreatedAt'
+      : wantsStableOrder
+        ? 'createdAt'
+        : 'activity'
     const pageResult = needsDispositionFilter
-      ? await getFilteredDispositionClientsPage(
-          built,
-          skip,
-          take,
-          wantsRegisteredCreatedAtOrder ? 'registeredCreatedAt' : 'activity'
-        )
+      ? await getFilteredDispositionClientsPage(built, skip, take, filteredQueueSort)
       : wantsRegisteredCreatedAtOrder
         ? await getRegisteredCreatedAtOrderedClientsPage(built, skip, take)
         : wantsStableOrder

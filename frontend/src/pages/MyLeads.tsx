@@ -672,7 +672,7 @@ const LIST_COLA_OPTIONS = [
 
 type ListCola = (typeof LIST_COLA_OPTIONS)[number]['value']
 
-/** Registered in list sense: has disposition or any call log (matches queue hybrid). */
+/** Registered in list sense: has disposition or any call log (Lista styling; order is createdAt). */
 function listCompanyIsRegistered(c: ClientSummary): boolean {
   return (
     !!c.lastDisposition ||
@@ -1113,21 +1113,21 @@ export default function MyLeads() {
   })
 
   // Load clients for current batch (server-side filter) — used for detail view navigation.
-  // sortBy=registeredCreatedAt: registered first, then pending; within groups by createdAt asc.
-  // Pin-by-id after Guardar resultado keeps index on the saved company if order shifts.
+  // sortBy=createdAt: lote/import createdAt asc (RUC tiebreak). No registered-first split.
+  // Pin-by-id after Guardar resultado stays on the same ficha if it remains in the cola.
   const { data: clientsData, isLoading: loadingList } = useQuery({
     queryKey: ['clients', 'my-leads', 'nav', selectedBatchId, selectedOperator],
     queryFn: () =>
       fetchAllMyLeadClients({
         batchId: selectedBatchId || undefined,
-        sortBy: 'registeredCreatedAt',
+        sortBy: 'createdAt',
         operator: selectedOperator ?? undefined,
       }),
     enabled: operatorChosen,
   })
 
   // List view: server-side disposition / pending filters.
-  // Same registered-first + createdAt queue as Detalle / Tarjetas.
+  // Same createdAt queue as Detalle / Tarjetas (filters keep that order within the subset).
   const {
     data: listData,
     isLoading: loadingListView,
@@ -1148,7 +1148,7 @@ export default function MyLeads() {
     queryFn: () =>
       fetchAllMyLeadClients({
         batchId: selectedBatchId || undefined,
-        sortBy: 'registeredCreatedAt',
+        sortBy: 'createdAt',
         operator: selectedOperator ?? undefined,
         ...getListApiParams(listCola, listDrilldown),
         ...listLastCallQueryParams(listLastCallRange),
@@ -1172,7 +1172,7 @@ export default function MyLeads() {
         operator: selectedOperator ?? undefined,
         page: gridPage,
         limit: 30,
-        sortBy: 'registeredCreatedAt',
+        sortBy: 'createdAt',
       }),
     enabled: viewMode === 'grid' && operatorChosen,
   })
@@ -4552,7 +4552,7 @@ export default function MyLeads() {
           const matchSearch = !q || c.ruc.toLowerCase().includes(q) || (c.razonSocial ?? '').toLowerCase().includes(q) || c.contacts.some((ct) => ct.nombre.toLowerCase().includes(q) || (ct.telefono ?? '').includes(q))
           return matchSearch
         })
-        // Last registered in filtered list order (registered-first hybrid → end of registered block).
+        // Last registered in this lista (createdAt order): jump target for «Última registrada».
         let lastRegisteredListIdx = -1
         for (let i = listFiltered.length - 1; i >= 0; i--) {
           if (listCompanyIsRegistered(listFiltered[i])) {

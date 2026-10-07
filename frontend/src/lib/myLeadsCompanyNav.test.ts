@@ -35,11 +35,20 @@ section('index+1 after registered-first reorder can land on the same RUC; id loo
 const preSave = [r0, r1, r2, r3, x, y, z]
 const nextId = nextCompanyIdAfter(preSave, 'x')
 assert.equal(nextId, 'y')
-// x becomes registered and jumps to the front; stale currentIndex+1 would still be x’s old slot.
+// Historical registered-first split: x jumps to the front; stale currentIndex+1 would still be x’s old slot.
 const postSave = [x, r0, r1, r2, r3, y, z]
 assert.equal(postSave[4]?.id, 'r3')
 assert.equal(companyIndexById(postSave, nextId!), 5)
 assert.notEqual(postSave[4]?.id, 'y')
+
+section('stable createdAt order: first disposition keeps the same asiento')
+const stablePre = [r0, r1, r2, r3, x, y, z]
+const stablePost = [r0, r1, r2, r3, x, y, z]
+assert.equal(companyIndexById(stablePre, 'x'), 4)
+assert.equal(companyIndexById(stablePost, 'x'), 4)
+assert.deepEqual(resolveStayOnSavedCompany('x', stablePost), { kind: 'inQueue', index: 4 })
+assert.equal(nextCompanyIdAfter(stablePost, 'x'), 'y')
+assert.equal(nextCompanyIndexAfter(stablePost, 'x'), 5)
 
 section('skip duplicate rows / same RUC (contact-looking next)')
 const dupes: CompanyNavItem[] = [

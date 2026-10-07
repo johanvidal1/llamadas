@@ -1001,8 +1001,9 @@ export function sortClientsByActivityQueue<T extends ActivityQueueSortable>(clie
 }
 
 /**
- * MyLeads queue: registered first, then pending; within each group by company createdAt asc.
- * Uses the same pending detection as the activity queue (disposition / call logs).
+ * Clients admin / explicit registered-first: registered first, then pending;
+ * within each group by company createdAt asc (RUC tiebreak).
+ * MyLeads Detalle/Lista uses sortClientsByCreatedAtQueue instead.
  */
 export function sortClientsByRegisteredCreatedAtQueue<
   T extends RegisteredCreatedAtQueueSortable,
@@ -1012,6 +1013,20 @@ export function sortClientsByRegisteredCreatedAtQueue<
     const bPending = isActivityPending(b)
     if (aPending !== bPending) return aPending ? 1 : -1
 
+    const byCreated = createdAtMs(a) - createdAtMs(b)
+    if (byCreated !== 0) return byCreated
+    return a.ruc.localeCompare(b.ruc, 'es')
+  })
+}
+
+/**
+ * MyLeads stable cola: company createdAt asc, RUC tiebreak.
+ * A first disposition does not move the company; pendientes vs registrados are Lista filters.
+ */
+export function sortClientsByCreatedAtQueue<T extends { ruc: string; createdAt: string | Date }>(
+  clients: T[]
+): T[] {
+  return [...clients].sort((a, b) => {
     const byCreated = createdAtMs(a) - createdAtMs(b)
     if (byCreated !== 0) return byCreated
     return a.ruc.localeCompare(b.ruc, 'es')
