@@ -6,6 +6,10 @@ import {
   nextCompanyIndexAfter,
   nextPendingCompanyIdAfter,
   nextPendingCompanyIndexAfter,
+  resolveIndexForCompanyId,
+  resolveOpenDetailFromList,
+  resolveStayOnSavedCompany,
+  shouldApplySavedCompanyPin,
   type CompanyNavItem,
 } from './myLeadsCompanyNav.ts'
 
@@ -96,5 +100,47 @@ assert.equal(
   }),
   true
 )
+
+const frain: CompanyNavItem = { id: 'frain', ruc: '20609388499' }
+const daniel: CompanyNavItem = { id: 'daniel', ruc: '20614370425' }
+const visibleAfterDepurado: CompanyNavItem[] = Array.from({ length: 386 }, (_, i) =>
+  i === 328 ? frain : { id: `q${i}`, ruc: String(i) }
+)
+
+section('Lista click of depurado pins that company, not leftover Detalle index 328')
+assert.equal(visibleAfterDepurado[328]?.id, 'frain')
+const depuradoPlan = resolveOpenDetailFromList(daniel, visibleAfterDepurado)
+assert.equal(depuradoPlan.kind, 'outsideQueue')
+assert.equal(depuradoPlan.kind === 'outsideQueue' ? depuradoPlan.company.id : '', 'daniel')
+assert.equal(depuradoPlan.kind === 'outsideQueue' ? depuradoPlan.company.ruc : '', '20614370425')
+assert.notEqual(companyIndexById(visibleAfterDepurado, 'daniel'), 328)
+
+section('in-queue Lista click still opens that company by id')
+const inQueuePlan = resolveOpenDetailFromList(frain, visibleAfterDepurado)
+assert.equal(inQueuePlan.kind, 'inQueue')
+assert.equal(inQueuePlan.kind === 'inQueue' ? inQueuePlan.companyId : '', 'frain')
+assert.equal(companyIndexById(visibleAfterDepurado, 'frain'), 328)
+
+section('stale in-queue click re-resolves by id after cola refresh (328 becomes Frain)')
+const staleNav = visibleAfterDepurado.map((c, i) => (i === 328 ? daniel : c))
+assert.equal(resolveOpenDetailFromList(daniel, staleNav).kind, 'inQueue')
+assert.equal(companyIndexById(staleNav, 'daniel'), 328)
+const afterRefresh = resolveIndexForCompanyId(daniel.id, visibleAfterDepurado)
+assert.equal(afterRefresh.kind, 'pinOutside')
+assert.equal(afterRefresh.kind === 'pinOutside' ? afterRefresh.index : -1, 386)
+assert.notEqual(visibleAfterDepurado[328]?.id, daniel.id)
+
+section('savedCompanyPinRef does not apply after a Lista click')
+assert.equal(shouldApplySavedCompanyPin('next-pending', 'daniel'), false)
+assert.equal(shouldApplySavedCompanyPin('daniel', null), true)
+assert.equal(shouldApplySavedCompanyPin(null, 'daniel'), false)
+assert.equal(shouldApplySavedCompanyPin(null, null), false)
+
+section('stay on saved company when 2× No contesta leaves the working cola')
+assert.deepEqual(resolveStayOnSavedCompany('daniel', visibleAfterDepurado), { kind: 'pinOutside' })
+assert.deepEqual(resolveStayOnSavedCompany('frain', visibleAfterDepurado), {
+  kind: 'inQueue',
+  index: 328,
+})
 
 console.log('\nmyLeadsCompanyNav tests passed')

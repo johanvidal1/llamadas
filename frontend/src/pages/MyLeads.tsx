@@ -82,6 +82,10 @@ import {
   nextCompanyIndexAfter,
   nextPendingCompanyIdAfter,
   nextPendingCompanyIndexAfter,
+  resolveIndexForCompanyId,
+  resolveOpenDetailFromList,
+  resolveStayOnSavedCompany,
+  shouldApplySavedCompanyPin,
   type CompanyNavItem,
 } from '../lib/myLeadsCompanyNav'
 import {
@@ -1067,6 +1071,12 @@ export default function MyLeads() {
   const [queueRefreshing, setQueueRefreshing] = useState(false)
   const lastSaveGuardRef = useRef<{ at: number; signature: string } | null>(null)
   const savedCompanyPinRef = useRef<string | null>(null)
+  /** Snapshot of the company being saved — used to pin Fuera de la cola after 2× No contesta. */
+  const savedCompanySnapshotRef = useRef<ClientSummary | null>(null)
+  /** Lista row click: honor this company by id across cola refresh; wins over savedCompanyPinRef. */
+  const listClickCompanyRef = useRef<ClientSummary | null>(null)
+  /** Bumped on user navigation so an in-flight Guardar refetch cannot steal Detalle. */
+  const navEpochRef = useRef(0)
   const savedContactRef = useRef<{ id: string; telefono: string; email: string; dni: string } | null>(null)
   const lastSyncedContactKey = useRef<string | null>(null)
   const contactTabRefs = useRef<(HTMLButtonElement | null)[]>([])
@@ -1922,6 +1932,8 @@ export default function MyLeads() {
   const navigateToCompany = useCallback(
     async (clientIdx: number) => {
       await saveActiveContactIfDirty()
+      navEpochRef.current += 1
+      listClickCompanyRef.current = null
       setPinnedListCompany(null)
       savedCompanyPinRef.current = null
       stayAfterSaveRef.current = false
@@ -1952,25 +1964,36 @@ export default function MyLeads() {
   )
 
   const openDetailFromList = useCallback(
-    (companyId: string) => {
+    (company: ClientSummary) => {
       autoJumpToPendingRef.current = false
-      const navIdx = visibleNavClients.findIndex((c) => c.id === companyId)
-      if (navIdx >= 0) {
-        setPinnedListCompany(null)
-        void goTo(navIdx)
-      } else {
-        const fromList =
-          (listData?.clients ?? []).find((c) => c.id === companyId) ??
-          allClients.find((c) => c.id === companyId)
-        if (fromList) {
-          setPinnedListCompany(fromList)
+      stayAfterSaveRef.current = false
+      stayAfterSaveContactIdRef.current = null
+      navEpochRef.current += 1
+      savedCompanyPinRef.current = null
+      listClickCompanyRef.current = company
+      void saveActiveContactIfDirty().catch(() => {})
+
+      const plan = resolveOpenDetailFromList(company, visibleNavClients)
+      needsContactResolveRef.current = true
+      pendingContactIdRef.current = null
+      pendingContactIdxRef.current = null
+      if (plan.kind === 'inQueue') {
+        const navIdx = companyIndexById(visibleNavClients, company.id)
+        if (navIdx >= 0) {
+          setPinnedListCompany(null)
+          setCurrentIndex(navIdx)
+        } else {
+          setPinnedListCompany(company)
           setCurrentIndex(visibleNavClients.length)
         }
+      } else {
+        setPinnedListCompany(company)
+        setCurrentIndex(visibleNavClients.length)
       }
       setReturnToView('list')
       switchView('detail', { persist: false })
     },
-    [visibleNavClients, goTo, listData, allClients]
+    [visibleNavClients, saveActiveContactIfDirty]
   )
 
   const scrollToListCompany = useCallback((companyId: string) => {
@@ -1986,6 +2009,9 @@ export default function MyLeads() {
   }, [])
 
   const returnToList = useCallback(() => {
+    navEpochRef.current += 1
+    listClickCompanyRef.current = null
+    savedCompanyPinRef.current = null
     setPinnedListCompany(null)
     setReturnToView(null)
     switchView('list')
@@ -2100,6 +2126,9 @@ export default function MyLeads() {
   const switchBatch = (batchId: string) => {
     if (!batchId) explicitTodosRef.current = true
     else explicitTodosRef.current = false
+    navEpochRef.current += 1
+    listClickCompanyRef.current = null
+    savedCompanyPinRef.current = null
     setPinnedListCompany(null)
     setSelectedBatchId(batchId)
     setCurrentIndex(0)
@@ -2126,6 +2155,9 @@ export default function MyLeads() {
 
   const applyQueueBatch = useCallback(
     (batchId: string) => {
+      navEpochRef.current += 1
+      listClickCompanyRef.current = null
+      savedCompanyPinRef.current = null
       setPinnedListCompany(null)
       setSelectedBatchId(batchId)
       setCurrentIndex(0)
@@ -2510,6 +2542,7 @@ export default function MyLeads() {
         navSnapshot,
       }
       if (!currentClient) return emptyResult
+      savedCompanySnapshotRef.current = currentClient
 
       const contactSaved = await saveActiveContactIfDirty({ refresh: false })
       const planChanged = (editPlan || '') !== (detail?.plan ?? '')
@@ -2788,6 +2821,7 @@ export default function MyLeads() {
         savedCompanyPinRef.current = savedCompanyId
       }
 
+      const epochAtSave = navEpochRef.current
       setQueueRefreshing(true)
       void (async () => {
         try {
@@ -2797,6 +2831,7 @@ export default function MyLeads() {
             qc.invalidateQueries({ queryKey: ['clients'] }),
             qc.invalidateQueries({ queryKey: ['dashboard'] }),
           ])
+          if (navEpochRef.current !== epochAtSave) return
           const fresh = qc.getQueryData<{ clients?: ClientSummary[] }>([
             'clients',
             'my-leads',
@@ -2808,6 +2843,11 @@ export default function MyLeads() {
           const freshVisible = isAdmin
             ? freshRaw
             : freshRaw.filter((c) => !isHiddenFromAgentNav(c.lastDisposition, c.noContestaCount))
+
+          if (listClickCompanyRef.current) {
+            savedCompanyPinRef.current = null
+            return
+          }
 
           if (shouldAdvance && savedCompanyId) {
             const targetId =
@@ -2840,29 +2880,22 @@ export default function MyLeads() {
               }
             }
           } else if (stayOnRecord && savedCompanyId) {
-            const pinnedIdx = companyIndexById(freshVisible, savedCompanyId)
-            if (pinnedIdx >= 0) {
+            const stayPlan = resolveStayOnSavedCompany(savedCompanyId, freshVisible)
+            if (stayPlan.kind === 'inQueue') {
               setPinnedListCompany(null)
               savedCompanyPinRef.current = savedCompanyId
-              if (pinnedIdx !== currentIndex) setCurrentIndex(pinnedIdx)
-            } else if (pinnedListCompany?.id === savedCompanyId) {
-              savedCompanyPinRef.current = savedCompanyId
-              setCurrentIndex(freshVisible.length)
+              if (stayPlan.index !== currentIndex) setCurrentIndex(stayPlan.index)
             } else {
-              const from = Math.min(currentIndex, Math.max(freshVisible.length - 1, 0))
-              let nextPending = freshVisible.findIndex(
-                (c, i) => i >= from && !companySummaryHasAgentLog(c)
-              )
-              if (nextPending < 0) {
-                nextPending = freshVisible.findIndex((c) => !companySummaryHasAgentLog(c))
-              }
-              if (nextPending >= 0) {
-                toast('Empresa fuera de la cola visible; pasando a la siguiente pendiente', {
-                  icon: 'ℹ️',
-                })
-                setPinnedListCompany(null)
-                savedCompanyPinRef.current = freshVisible[nextPending]!.id
-                setCurrentIndex(nextPending)
+              const snapshot =
+                savedCompanySnapshotRef.current?.id === savedCompanyId
+                  ? savedCompanySnapshotRef.current
+                  : pinnedListCompany?.id === savedCompanyId
+                    ? pinnedListCompany
+                    : null
+              if (snapshot) {
+                setPinnedListCompany(snapshot)
+                savedCompanyPinRef.current = savedCompanyId
+                setCurrentIndex(freshVisible.length)
               } else if (freshVisible.length > 0) {
                 toast('Empresa fuera de la cola visible', { icon: 'ℹ️' })
                 setPinnedListCompany(null)
@@ -2922,26 +2955,53 @@ export default function MyLeads() {
   })
 
   useEffect(() => {
-    const pinId = savedCompanyPinRef.current
-    if (!pinId || clients.length === 0) return
-    const idx = companyIndexById(clients, pinId)
-    if (idx >= 0 && idx !== currentIndex) setCurrentIndex(idx)
-  }, [clients, currentIndex])
-
-  useEffect(() => {
-    if (!pinnedListCompany) return
-    const idx = visibleNavClients.findIndex((c) => c.id === pinnedListCompany.id)
-    if (idx >= 0) {
-      setPinnedListCompany(null)
-      if (idx !== currentIndex) setCurrentIndex(idx)
+    const wanted = listClickCompanyRef.current
+    if (wanted) {
+      const plan = resolveIndexForCompanyId(wanted.id, visibleNavClients)
+      if (plan.kind === 'inQueue') {
+        if (pinnedListCompany) setPinnedListCompany(null)
+        if (plan.index !== currentIndex) setCurrentIndex(plan.index)
+        else if (!queueRefreshing) listClickCompanyRef.current = null
+      } else if (plan.kind === 'pinOutside') {
+        if (pinnedListCompany?.id !== wanted.id) setPinnedListCompany(wanted)
+        else if (currentIndex !== plan.index) setCurrentIndex(plan.index)
+        else if (!queueRefreshing) listClickCompanyRef.current = null
+      }
+      return
     }
-  }, [visibleNavClients, pinnedListCompany, currentIndex])
 
-  useEffect(() => {
-    if (pinnedListCompany) return
+    const pinId = savedCompanyPinRef.current
+    if (shouldApplySavedCompanyPin(pinId, null) && pinId) {
+      const inVisible = companyIndexById(visibleNavClients, pinId)
+      if (inVisible >= 0) {
+        if (pinnedListCompany) setPinnedListCompany(null)
+        if (inVisible !== currentIndex) setCurrentIndex(inVisible)
+        return
+      }
+      const snap = savedCompanySnapshotRef.current
+      if (snap && snap.id === pinId) {
+        if (pinnedListCompany?.id !== pinId) setPinnedListCompany(snap)
+        const pinIdx = visibleNavClients.length
+        if (currentIndex !== pinIdx) setCurrentIndex(pinIdx)
+        return
+      }
+      const idx = companyIndexById(clients, pinId)
+      if (idx >= 0 && idx !== currentIndex) setCurrentIndex(idx)
+      return
+    }
+
+    if (pinnedListCompany) {
+      const idx = companyIndexById(visibleNavClients, pinnedListCompany.id)
+      if (idx >= 0) {
+        setPinnedListCompany(null)
+        if (idx !== currentIndex) setCurrentIndex(idx)
+      }
+      return
+    }
+
     if (clients.length === 0) return
     if (currentIndex >= clients.length) setCurrentIndex(clients.length - 1)
-  }, [pinnedListCompany, clients.length, currentIndex])
+  }, [clients, currentIndex, pinnedListCompany, queueRefreshing, visibleNavClients])
 
   const requestSave = useCallback(
     (autoNext: SaveAutoNext) => {
@@ -3424,6 +3484,9 @@ export default function MyLeads() {
             <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5 shrink-0 border border-gray-200">
               <button
                 onClick={() => {
+                  navEpochRef.current += 1
+                  listClickCompanyRef.current = null
+                  savedCompanyPinRef.current = null
                   setPinnedListCompany(null)
                   setReturnToView(null)
                   if (viewMode !== 'detail') autoJumpToPendingRef.current = true
@@ -4483,7 +4546,7 @@ export default function MyLeads() {
       )}
       {viewMode === 'list' && operatorChosen && (() => {
         // Map id → index in Detalle nav `clients` (same createdAt order as list API).
-        const queueIndexById = new Map(clients.map((c, i) => [c.id, i]))
+        const queueIndexById = new Map(visibleNavClients.map((c, i) => [c.id, i]))
         const listFiltered = listClients.filter((c) => {
           const q = listSearch.toLowerCase()
           const matchSearch = !q || c.ruc.toLowerCase().includes(q) || (c.razonSocial ?? '').toLowerCase().includes(q) || c.contacts.some((ct) => ct.nombre.toLowerCase().includes(q) || (ct.telefono ?? '').includes(q))
@@ -4714,9 +4777,14 @@ export default function MyLeads() {
                                 ? 'bg-amber-50 ring-2 ring-inset ring-amber-400'
                                 : ''
                             }`}
-                            onClick={() => openDetailFromList(c.id)}
+                            onClick={() => openDetailFromList(c)}
                           >
-                            <td className={`px-4 py-2.5 text-xs ${isPendingRow ? 'text-gray-400' : 'text-gray-900'}`}>{realIdx >= 0 ? realIdx + 1 : '—'}</td>
+                            <td
+                              className={`px-4 py-2.5 text-xs ${isPendingRow ? 'text-gray-400' : 'text-gray-900'}`}
+                              title={realIdx >= 0 ? undefined : 'Fuera de la cola de trabajo'}
+                            >
+                              {realIdx >= 0 ? realIdx + 1 : '—'}
+                            </td>
                             <td className={`px-4 py-2.5 font-mono text-xs ${isPendingRow ? 'text-gray-400' : 'text-gray-600'}`}>{c.ruc}</td>
                             <td className="px-4 py-2.5">
                               <p className={`text-sm ${isPendingRow ? 'text-gray-400 font-normal' : 'text-gray-900 font-medium'}`}>

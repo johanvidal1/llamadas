@@ -85,9 +85,73 @@ export function nextPendingCompanyIdAfter(
 
 /** Look up the post-refetch index of a company id. -1 if it left the visible queue. */
 export function companyIndexById(
-  list: readonly CompanyNavItem[],
+  list: readonly { id: string }[],
   companyId: string
 ): number {
   if (!companyId) return -1
   return list.findIndex((c) => c.id === companyId)
+}
+
+export type OpenDetailFromListPlan<T extends { id: string }> =
+  | { kind: 'inQueue'; companyId: string }
+  | { kind: 'outsideQueue'; company: T }
+
+/**
+ * Lista row click: always open that company by id, never a leftover Detalle index.
+ * If it is not in the working cola (depurado / archived), pin it for Fuera de la cola.
+ */
+export function resolveOpenDetailFromList<T extends { id: string }>(
+  company: T,
+  visibleNav: readonly { id: string }[]
+): OpenDetailFromListPlan<T> {
+  if (visibleNav.some((c) => c.id === company.id)) {
+    return { kind: 'inQueue', companyId: company.id }
+  }
+  return { kind: 'outsideQueue', company }
+}
+
+export type IndexForCompanyIdPlan =
+  | { kind: 'inQueue'; index: number }
+  | { kind: 'pinOutside'; index: number }
+  | { kind: 'missing' }
+
+/**
+ * After cola refresh, re-resolve the clicked/saved company by id.
+ * pinOutside.index is visibleNav.length (append slot once pinned).
+ */
+export function resolveIndexForCompanyId(
+  companyId: string,
+  visibleNav: readonly { id: string }[]
+): IndexForCompanyIdPlan {
+  if (!companyId) return { kind: 'missing' }
+  const index = companyIndexById(visibleNav, companyId)
+  if (index >= 0) return { kind: 'inQueue', index }
+  return { kind: 'pinOutside', index: visibleNav.length }
+}
+
+export type StayOnSavedPlan =
+  | { kind: 'inQueue'; index: number }
+  | { kind: 'pinOutside' }
+
+/**
+ * After Guardar (stay on record): if the company left the working cola,
+ * pin that ficha (Fuera de la cola) instead of jumping to the next pending index.
+ */
+export function resolveStayOnSavedCompany(
+  savedCompanyId: string,
+  freshVisible: readonly { id: string }[]
+): StayOnSavedPlan {
+  const index = companyIndexById(freshVisible, savedCompanyId)
+  if (index >= 0) return { kind: 'inQueue', index }
+  return { kind: 'pinOutside' }
+}
+
+/** A Lista click must ignore a leftover Guardar pin (savedCompanyPinRef). */
+export function shouldApplySavedCompanyPin(
+  savedPinId: string | null | undefined,
+  listClickCompanyId: string | null | undefined
+): boolean {
+  if (!savedPinId) return false
+  if (listClickCompanyId) return false
+  return true
 }
