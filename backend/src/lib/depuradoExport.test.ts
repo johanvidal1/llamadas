@@ -81,7 +81,17 @@ assert.equal(isDepuradoCompany('NO_INTERESADO', 5), false)
 assert.equal(isDepuradoCompany('VOLVER_A_LLAMAR', 2), false)
 assert.equal(isDepuradoCompany(null, 2), false)
 assert.equal(isActiveNoContesta('NO_CONTESTA', 1), true)
+assert.equal(isActiveNoContesta('NO_CONTESTA', 2), false)
+assert.equal(isDepuradoNoContesta('NO_CONTESTA', 1), false)
 assert.equal(isDepuradoNoContesta('NO_CONTESTA', 2), isDepuradoCompany('NO_CONTESTA', 2))
+
+section('depurado counts only No contesta (not all logs)')
+// Second arg is noContestaCount: Sin llegada + 1 No contesta stays active.
+assert.equal(isActiveNoContesta('NO_CONTESTA', 1), true)
+assert.equal(isDepuradoNoContesta('NO_CONTESTA', 1), false)
+assert.equal(isDepuradoCompany('NO_CONTESTA', 1), false)
+assert.equal(isDepuradoCompany('SIN_LLEGADA_DECISOR', 2), false)
+assert.equal(isDepuradoCompany('NO_CONTESTA', 3), true)
 
 section('recovered companies excluded from assignable pool')
 assert.deepEqual(notRecoveredWhere, { recoveredAt: null })

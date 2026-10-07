@@ -115,6 +115,7 @@ interface ClientSummary {
   lastDisposition?: string | null
   lastAclaracion?: string | null
   callLogCount?: number
+  noContestaCount?: number
   contacts: {
     id?: string
     nombre: string
@@ -321,10 +322,15 @@ class SaveCancelled extends Error {
 type SaveAutoNext = false | true | 'sequential' | 'nextPending'
 
 const OTHER_CONTACT_CONFIRM_SKIP_PREFIX = 'optick:skipOtherContactConfirm:'
+const SAME_CONTACT_DISPOSITION_SKIP_PREFIX = 'optick:skipSameContactDispositionConfirm:'
 const SAVE_DUP_GUARD_MS = 1600
 
 function otherContactConfirmSkipKey(companyId: string) {
   return `${OTHER_CONTACT_CONFIRM_SKIP_PREFIX}${companyId}`
+}
+
+function sameContactDispositionSkipKey(contactId: string) {
+  return `${SAME_CONTACT_DISPOSITION_SKIP_PREFIX}${contactId}`
 }
 
 function readSkipOtherContactConfirm(companyId: string): boolean {
@@ -338,6 +344,22 @@ function readSkipOtherContactConfirm(companyId: string): boolean {
 function writeSkipOtherContactConfirm(companyId: string) {
   try {
     sessionStorage.setItem(otherContactConfirmSkipKey(companyId), '1')
+  } catch {
+    /* private mode / quota */
+  }
+}
+
+function readSkipSameContactDispositionConfirm(contactId: string): boolean {
+  try {
+    return sessionStorage.getItem(sameContactDispositionSkipKey(contactId)) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeSkipSameContactDispositionConfirm(contactId: string) {
+  try {
+    sessionStorage.setItem(sameContactDispositionSkipKey(contactId), '1')
   } catch {
     /* private mode / quota */
   }
@@ -633,7 +655,7 @@ function listCompanyIsRegistered(c: ClientSummary): boolean {
 }
 
 const COLA_ALL_AGENT_TITLE =
-  'Cola activa: pendientes, no contesta (<2 intentos), sin llegada al decisor, volver a llamar, embudo y venta cerrada. Excluye no contesta depurado, no interesado, cliente actual y RUC suspendido.'
+  'Cola activa: pendientes, no contesta (<2 No contesta), sin llegada al decisor, volver a llamar, embudo y venta cerrada. Excluye no contesta depurado, no interesado, cliente actual y RUC suspendido.'
 const COLA_ALL_ADMIN_TITLE = 'Todas las empresas asignadas.'
 
 const COLA_OPTION_TITLES: Record<
@@ -647,12 +669,12 @@ const COLA_OPTION_TITLES: Record<
   PENDING: { agent: 'Sin respuesta registrada aún.' },
   VOLVER_A_LLAMAR: { agent: 'Empresas con seguimiento o callback pendiente.' },
   NO_CONTESTA: {
-    agent: 'Empresas sin contacto con menos de 2 intentos.',
-    admin: 'Empresas sin contacto con menos de 2 intentos del agente.',
+    agent: 'Última respuesta No contesta y menos de 2 No contesta en la empresa.',
+    admin: 'Última respuesta No contesta y menos de 2 No contesta del agente en la empresa.',
   },
   NO_CONTESTA_DEPURADO: {
-    agent: '2 o más intentos sin contacto; ya no aparece en la cola activa.',
-    admin: '2 o más intentos sin contacto del agente.',
+    agent: '2 o más No contesta en la empresa; ya no aparece en la cola activa.',
+    admin: '2 o más No contesta del agente en la empresa.',
   },
   OTROS: {
     agent:
@@ -1000,6 +1022,13 @@ export default function MyLeads() {
     autoNext: SaveAutoNext
   } | null>(null)
   const [skipOtherContactAsk, setSkipOtherContactAsk] = useState(false)
+  const [sameContactConfirm, setSameContactConfirm] = useState<{
+    oldLabel: string
+    newLabel: string
+    contactId: string
+    autoNext: SaveAutoNext
+  } | null>(null)
+  const [skipSameContactAsk, setSkipSameContactAsk] = useState(false)
   const [queueRefreshing, setQueueRefreshing] = useState(false)
   const lastSaveGuardRef = useRef<{ at: number; signature: string } | null>(null)
   const savedCompanyPinRef = useRef<string | null>(null)
@@ -1117,7 +1146,7 @@ export default function MyLeads() {
   const visibleNavClients: ClientSummary[] = useMemo(() => {
     if (isAdmin) return rawNavClients
     return rawNavClients.filter(
-      (c) => !isHiddenFromAgentNav(c.lastDisposition, c.callLogCount)
+      (c) => !isHiddenFromAgentNav(c.lastDisposition, c.noContestaCount)
     )
   }, [rawNavClients, isAdmin])
   const clients: ClientSummary[] = useMemo(() => {
@@ -1731,6 +1760,16 @@ export default function MyLeads() {
         (l) => l.agentId === user.id && l.contact?.id && l.contact.id !== contactIdToSave
       )
       return otherLog?.contact
+    },
+    [detail, user?.id]
+  )
+
+  const findThisContactLatestAgentLog = useCallback(
+    (contactIdToSave: string | undefined): CallLogEntry | undefined => {
+      if (!detail || !user?.id || !contactIdToSave) return undefined
+      return [...detail.callLogs]
+        .filter((l) => l.agentId === user.id && l.contact?.id === contactIdToSave)
+        .sort((a, b) => new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime())[0]
     },
     [detail, user?.id]
   )
@@ -2534,9 +2573,9 @@ export default function MyLeads() {
 
       const movedToDepuradoNoContesta =
         callLogSaved &&
-        !editingCallLogId &&
+        !rescheduleOnly &&
         isNoContestaDisposition(disposition) &&
-        (currentClient.callLogCount ?? 0) + 1 >= MAX_NO_ANSWER_ATTEMPTS
+        (currentClient.noContestaCount ?? 0) + 1 >= MAX_NO_ANSWER_ATTEMPTS
 
       return {
         autoNext,
@@ -2570,7 +2609,7 @@ export default function MyLeads() {
         }
         if (result.movedToDepuradoNoContesta) {
           showSaveNotice(
-            'Empresa movida a No contesta — depurado (2 o más intentos sin contacto).',
+            'Empresa movida a No contesta — depurado (2 o más No contesta).',
             'info'
           )
         } else {
@@ -2657,7 +2696,7 @@ export default function MyLeads() {
           const freshRaw: ClientSummary[] = fresh?.clients ?? []
           const freshVisible = isAdmin
             ? freshRaw
-            : freshRaw.filter((c) => !isHiddenFromAgentNav(c.lastDisposition, c.callLogCount))
+            : freshRaw.filter((c) => !isHiddenFromAgentNav(c.lastDisposition, c.noContestaCount))
 
           if (shouldAdvance && savedCompanyId) {
             const targetId =
@@ -2797,7 +2836,7 @@ export default function MyLeads() {
     (autoNext: SaveAutoNext) => {
       if (saveMutation.isPending || !canSaveCallResult) return
       if (autoNext === 'nextPending' && !nextPendingTarget) return
-      if (otherContactConfirm) return
+      if (otherContactConfirm || sameContactConfirm) return
 
       const contactForSave =
         displayContacts.length > 0
@@ -2819,6 +2858,20 @@ export default function MyLeads() {
       const now = Date.now()
       const prev = lastSaveGuardRef.current
       if (prev && prev.signature === signature && now - prev.at < SAVE_DUP_GUARD_MS) return
+
+      if (disposition && contactId && !readSkipSameContactDispositionConfirm(contactId)) {
+        const latest = findThisContactLatestAgentLog(contactId)
+        if (latest && latest.disposition !== disposition) {
+          setSkipSameContactAsk(false)
+          setSameContactConfirm({
+            oldLabel: getDispositionLabel(latest.disposition),
+            newLabel: getDispositionLabel(disposition),
+            contactId,
+            autoNext,
+          })
+          return
+        }
+      }
 
       if (!editingCallLogId && currentClient?.id) {
         const other = findOtherContactWithAgentLog(contactId)
@@ -2843,6 +2896,7 @@ export default function MyLeads() {
       canSaveCallResult,
       nextPendingTarget,
       otherContactConfirm,
+      sameContactConfirm,
       displayContacts,
       activeContactIdx,
       currentClient?.id,
@@ -2852,6 +2906,7 @@ export default function MyLeads() {
       schedTime,
       editingCallLogId,
       findOtherContactWithAgentLog,
+      findThisContactLatestAgentLog,
     ]
   )
 
@@ -2898,6 +2953,40 @@ export default function MyLeads() {
     setSkipOtherContactAsk(false)
   }, [])
 
+  const confirmSameContactAndSave = useCallback(() => {
+    if (!sameContactConfirm) return
+    if (skipSameContactAsk) writeSkipSameContactDispositionConfirm(sameContactConfirm.contactId)
+    const autoNext = sameContactConfirm.autoNext
+    lastSaveGuardRef.current = {
+      at: Date.now(),
+      signature: [
+        currentClient?.id ?? '',
+        sameContactConfirm.contactId,
+        disposition,
+        callNotes,
+        schedDate,
+        schedTime,
+        String(autoNext),
+      ].join('|'),
+    }
+    setSameContactConfirm(null)
+    saveMutation.mutate(autoNext)
+  }, [
+    sameContactConfirm,
+    skipSameContactAsk,
+    currentClient?.id,
+    disposition,
+    callNotes,
+    schedDate,
+    schedTime,
+    saveMutation,
+  ])
+
+  const cancelSameContactConfirm = useCallback(() => {
+    setSameContactConfirm(null)
+    setSkipSameContactAsk(false)
+  }, [])
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   const gridClients = gridData?.clients ?? []
@@ -2907,7 +2996,7 @@ export default function MyLeads() {
   const listClients: ClientSummary[] = useMemo(() => {
     if (!shouldHideArchivedInList) return rawListClients
     return rawListClients.filter(
-      (c) => !isHiddenFromAgentNav(c.lastDisposition, c.callLogCount)
+      (c) => !isHiddenFromAgentNav(c.lastDisposition, c.noContestaCount)
     )
   }, [rawListClients, shouldHideArchivedInList])
   const hiddenListCount = shouldHideArchivedInList ? rawListClients.length - listClients.length : 0
@@ -2986,7 +3075,7 @@ export default function MyLeads() {
     if (!detail?.ruc) return []
     const pool = isAdmin
       ? allClients
-      : allClients.filter((c) => !isHiddenFromAgentNav(c.lastDisposition, c.callLogCount))
+      : allClients.filter((c) => !isHiddenFromAgentNav(c.lastDisposition, c.noContestaCount))
     return pool.filter((c) => c.ruc === detail.ruc)
   }, [detail?.ruc, allClients, isAdmin])
   const safeContactIdx =
@@ -4109,6 +4198,59 @@ export default function MyLeads() {
           onViewFullRecord={openCallbackFullRecord}
           onClose={() => setCallbackResult(null)}
         />
+      )}
+
+      {/* Same contact: disposition change — confirm before save (not window.confirm) */}
+      {sameContactConfirm && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-40" onClick={cancelSameContactConfirm} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="same-contact-confirm-title"
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center shrink-0">
+                  <Phone size={20} className="text-amber-700" />
+                </div>
+                <div>
+                  <h3 id="same-contact-confirm-title" className="font-bold text-gray-900">
+                    Este contacto ya tiene una respuesta
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Ya registraste <strong>{sameContactConfirm.oldLabel}</strong>. Vas a guardar{' '}
+                    <strong>{sameContactConfirm.newLabel}</strong>. Quedará en el historial; no se
+                    borra la anterior.
+                  </p>
+                </div>
+              </div>
+              <label className="flex items-start gap-2 text-sm text-gray-600 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  checked={skipSameContactAsk}
+                  onChange={(e) => setSkipSameContactAsk(e.target.checked)}
+                />
+                <span>No volver a preguntar en este contacto</span>
+              </label>
+              <div className="flex gap-3">
+                <button type="button" onClick={cancelSameContactConfirm} className="flex-1 btn-secondary">
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmSameContactAndSave}
+                  className="flex-1 btn-primary justify-center"
+                >
+                  Sí, guardar nueva respuesta
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
       )}
 
       {/* Other contact already logged — confirm before save (not window.confirm) */}

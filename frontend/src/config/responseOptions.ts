@@ -157,28 +157,30 @@ export function isNoContestaDisposition(disposition?: string | null): boolean {
   return disposition === 'NO_CONTESTA' || disposition === 'NO_ANSWER'
 }
 
+/** Depurado iff last disposition is No contesta and the company has 2+ No-contesta logs. */
 export function isDepuradoNoContesta(
   lastDisposition?: string | null,
-  callLogCount = 0
+  noContestaCount = 0
 ): boolean {
-  return isNoContestaDisposition(lastDisposition) && callLogCount >= MAX_NO_ANSWER_ATTEMPTS
+  return isNoContestaDisposition(lastDisposition) && noContestaCount >= MAX_NO_ANSWER_ATTEMPTS
 }
 
+/** One No contesta (last disposition) stays in Detalle + cola No contesta. */
 export function isActiveNoContesta(
   lastDisposition?: string | null,
-  callLogCount = 0
+  noContestaCount = 0
 ): boolean {
-  return isNoContestaDisposition(lastDisposition) && callLogCount < MAX_NO_ANSWER_ATTEMPTS
+  return isNoContestaDisposition(lastDisposition) && noContestaCount < MAX_NO_ANSWER_ATTEMPTS
 }
 
 /** Agent detail nav + Cola Todos: archived closures and depurado no-contesta.
  * Sin llegada stays visible. */
 export function isHiddenFromAgentNav(
   lastDisposition?: string | null,
-  callLogCount?: number
+  noContestaCount?: number
 ): boolean {
   if (isHiddenFromAgentQueue(lastDisposition)) return true
-  if (isDepuradoNoContesta(lastDisposition, callLogCount ?? 0)) return true
+  if (isDepuradoNoContesta(lastDisposition, noContestaCount ?? 0)) return true
   return false
 }
 

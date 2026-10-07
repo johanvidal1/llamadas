@@ -267,9 +267,9 @@ export function toExportUnits(
 
 export function isDepuradoCompany(
   lastDisposition: string | null | undefined,
-  callLogCount: number
+  noContestaCount: number
 ): boolean {
-  return isDepuradoNoContesta(lastDisposition, callLogCount)
+  return isDepuradoNoContesta(lastDisposition, noContestaCount)
 }
 
 export function countSharedWithOtherAgent(
@@ -410,7 +410,7 @@ export async function findDepuradoCompaniesForAgent(
 
   return companies.filter((company) => {
     const last = lastByCompany.get(company.id)
-    return isDepuradoCompany(last?.disposition ?? null, last?.callLogCount ?? 0)
+    return isDepuradoCompany(last?.disposition ?? null, last?.noContestaCount ?? 0)
   })
 }
 

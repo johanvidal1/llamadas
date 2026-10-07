@@ -15,6 +15,7 @@
     "db:studio": "prisma studio",
     "db:seed": "ts-node src/seed.ts",
     "test:depurado-export": "ts-node --transpile-only src/lib/depuradoExport.test.ts",
+    "test:company-disposition": "ts-node --transpile-only src/lib/companyDisposition.test.ts",
     "test:parse-file": "ts-node --transpile-only src/lib/parseFile.test.ts",
     "test:operator-filter": "ts-node --transpile-only src/lib/operatorFilter.test.ts",
     "test:user-permissions": "ts-node --transpile-only src/lib/userPermissions.test.ts",

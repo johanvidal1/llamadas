@@ -12,6 +12,8 @@ export type LastDispositionEntry = {
   lastCallAgentId: string | null
   lastCallAgent: { id: string; name: string } | null
   callLogCount: number
+  /** Agent-scoped NO_CONTESTA / NO_ANSWER logs on this company (not all dispositions). */
+  noContestaCount: number
 }
 
 export type LastDispositionMap = Map<string, LastDispositionEntry>
@@ -40,6 +42,7 @@ type LatestLogSqlRow = {
 type CountSqlRow = {
   companyId: string
   count: bigint
+  noContestaCount: bigint
 }
 
 function emptyLastDispositionEntry(): LastDispositionEntry {
@@ -51,6 +54,7 @@ function emptyLastDispositionEntry(): LastDispositionEntry {
     lastCallAgentId: null,
     lastCallAgent: null,
     callLogCount: 0,
+    noContestaCount: 0,
   }
 }
 
@@ -74,6 +78,9 @@ function buildLastDispositionMap(
 ): LastDispositionMap {
   const result = new Map<string, LastDispositionEntry>()
   const countByCompany = new Map(countRows.map((row) => [row.companyId, Number(row.count)]))
+  const noContestaByCompany = new Map(
+    countRows.map((row) => [row.companyId, Number(row.noContestaCount)])
+  )
 
   for (const row of latestRows) {
     result.set(row.companyId, {
@@ -84,6 +91,7 @@ function buildLastDispositionMap(
       lastCallAgentId: row.agentId,
       lastCallAgent: { id: row.agentId, name: row.agentName },
       callLogCount: countByCompany.get(row.companyId) ?? 0,
+      noContestaCount: noContestaByCompany.get(row.companyId) ?? 0,
     })
   }
 
@@ -92,6 +100,7 @@ function buildLastDispositionMap(
       result.set(id, {
         ...emptyLastDispositionEntry(),
         callLogCount: countByCompany.get(id) ?? 0,
+        noContestaCount: noContestaByCompany.get(id) ?? 0,
       })
     }
   }
@@ -119,18 +128,20 @@ export function isNoContestaDisposition(disposition: string | null | undefined):
   return disposition === 'NO_CONTESTA' || disposition === 'NO_ANSWER'
 }
 
+/** Depurado iff last disposition is No contesta and the company has 2+ No-contesta logs. */
 export function isDepuradoNoContesta(
   lastDisposition: string | null | undefined,
-  callLogCount: number
+  noContestaCount: number
 ): boolean {
-  return isNoContestaDisposition(lastDisposition) && callLogCount >= MAX_NO_ANSWER_ATTEMPTS
+  return isNoContestaDisposition(lastDisposition) && noContestaCount >= MAX_NO_ANSWER_ATTEMPTS
 }
 
+/** One No contesta (last disposition) stays in Detalle + cola No contesta. */
 export function isActiveNoContesta(
   lastDisposition: string | null | undefined,
-  callLogCount: number
+  noContestaCount: number
 ): boolean {
-  return isNoContestaDisposition(lastDisposition) && callLogCount < MAX_NO_ANSWER_ATTEMPTS
+  return isNoContestaDisposition(lastDisposition) && noContestaCount < MAX_NO_ANSWER_ATTEMPTS
 }
 
 export function dispositionMatchesFilter(lastDisposition: string | null, filter: string): boolean {
@@ -188,7 +199,12 @@ export async function getLastDispositionByCompanyIds(
     ORDER BY cl."companyId", cl."calledAt" DESC, cl.id DESC
   `
   const countRows = await prisma.$queryRaw<CountSqlRow[]>`
-    SELECT cl."companyId", COUNT(*)::bigint AS count
+    SELECT
+      cl."companyId",
+      COUNT(*)::bigint AS count,
+      COUNT(*) FILTER (
+        WHERE cl.disposition IN ('NO_CONTESTA', 'NO_ANSWER')
+      )::bigint AS "noContestaCount"
     FROM "CallLog" cl
     WHERE cl."companyId" IN (${Prisma.join(companyIds)})
       ${sqlAndTenant('cl')}

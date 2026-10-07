@@ -224,12 +224,13 @@ def build():
         ("4.", "Empresa vs contacto"),
         ("5.", "Guardar, siguiente empresa y siguiente pendiente"),
         ("6.", "Modal de segundo contacto"),
-        ("7.", "Respuestas y porcentajes"),
-        ("8.", "Dónde va cada respuesta"),
-        ("9.", "Lista, Detalle y Tarjetas"),
-        ("10.", "Tras guardar: Resultado guardado vs Actualizando cola"),
-        ("11.", "Qué no hacer"),
-        ("12.", "Preguntas frecuentes"),
+        ("7.", "Modal al cambiar respuesta del mismo contacto"),
+        ("8.", "Respuestas y porcentajes"),
+        ("9.", "Dónde va cada respuesta"),
+        ("10.", "Lista, Detalle y Tarjetas"),
+        ("11.", "Tras guardar: Resultado guardado vs Actualizando cola"),
+        ("12.", "Qué no hacer"),
+        ("13.", "Preguntas frecuentes"),
     ]
     for num, label in index_items:
         para = doc.add_paragraph()
@@ -376,7 +377,28 @@ def build():
     bullet(doc, "Si se equivocó de pestaña, cancele y cambie de contacto a mano.")
 
     # 7
-    add_heading_styled(doc, "7. Respuestas y porcentajes", 1)
+    add_heading_styled(doc, "7. Modal al cambiar respuesta del mismo contacto", 1)
+    p(
+        doc,
+        "Si **este contacto** ya tiene una respuesta suya y usted elige **otra respuesta** distinta, aparece un aviso **antes** de Guardando…. No es el modal de segundo contacto: es el mismo número, otra etiqueta.",
+    )
+    bullet(doc, "Título: **Este contacto ya tiene una respuesta**.")
+    bullet(
+        doc,
+        "Le dice qué registró antes y qué va a guardar ahora. La anterior **queda en el historial**; no se borra.",
+    )
+    bullet(doc, "Puede **Cancelar** o pulsar **Sí, guardar nueva respuesta**.")
+    bullet(
+        doc,
+        "Opcional: **No volver a preguntar en este contacto** (solo esta sesión, por ese contacto).",
+    )
+    p(
+        doc,
+        "No aparece en el primer guardado, ni si solo cambia notas, ni si solo mueve la agenda, ni si la respuesta es la misma.",
+    )
+
+    # 8
+    add_heading_styled(doc, "8. Respuestas y porcentajes", 1)
     p(
         doc,
         "Cada respuesta tiene un porcentaje. Eso no es una nota del agente: es el avance de la empresa en el embudo.",
@@ -404,8 +426,8 @@ def build():
         "**Volver a llamar** exige fecha y hora de agenda. **No interesado** y **Venta cerrada** no se agendan. El resto puede llevar agenda si supervisión lo pide.",
     )
 
-    # 8
-    add_heading_styled(doc, "8. Dónde va cada respuesta", 1)
+    # 9
+    add_heading_styled(doc, "9. Dónde va cada respuesta", 1)
     p(
         doc,
         "Esto es lo que el agente debe memorizar. **Detalle** es la cola de trabajo (1 de N). **Lista** puede mostrar más con filtros. **Otros** es el archivo de respuestas 0% que no son No contesta.",
@@ -427,16 +449,16 @@ def build():
                 "Debe cargar fecha y hora. Cumpla la cita.",
             ],
             [
-                "No contesta (1 intento)",
+                "No contesta (1 en la empresa)",
                 "Sí",
                 "Lista · cola No contesta",
-                "Puede volver a marcar. Un intento no saca la ficha.",
+                "Cuenta solo No contesta, no cualquier llamada. Un No contesta no saca la ficha.",
             ],
             [
-                "No contesta (2 o más)",
+                "No contesta (2 o más en la empresa)",
                 "No",
                 "Lista · No contesta — depurado",
-                "Sale de Detalle. Nunca va a Otros. No la busque en la cola 1/N.",
+                "Dos No contesta del agente en esa empresa. Sale de Detalle. Nunca va a Otros.",
             ],
             [
                 "Sin llegada al decisor",
@@ -473,11 +495,15 @@ def build():
     )
     p(
         doc,
-        "Resumen en una frase: **Sin llegada** se queda en **Detalle**. **No interesado**, **cliente actual** y **RUC suspendido** salen de **Detalle** y viven en **Otros**. **No contesta** dos veces va a **depurado**, no a Otros.",
+        "Resumen en una frase: **Sin llegada** se queda en **Detalle**. **No interesado**, **cliente actual** y **RUC suspendido** salen de **Detalle** y viven en **Otros**. **Dos No contesta** en la **empresa** (no dos llamadas cualesquiera) van a **depurado**, no a Otros.",
+    )
+    p(
+        doc,
+        "Ejemplo: **Sin llegada** y después **No contesta** (Guardar actualización crea una fila nueva) = **un** No contesta. Sigue en **Detalle** y en la cola **No contesta**. No entra a depurado.",
     )
 
-    # 9
-    add_heading_styled(doc, "9. Lista, Detalle y Tarjetas", 1)
+    # 10
+    add_heading_styled(doc, "10. Lista, Detalle y Tarjetas", 1)
     p(doc, "Tres vistas, el mismo trabajo:")
     bullet(doc, "**Detalle:** ficha completa, historial, agenda y botones de guardar. Es donde se trabaja.")
     bullet(doc, "**Tarjetas:** grilla con búsqueda. Útil para ubicar rápido.")
@@ -497,29 +523,29 @@ def build():
         "Al hacer clic en esa fila, el sistema abre **esa misma empresa** (ese RUC). El encabezado puede decir **Fuera de la cola**. Use **Volver a la lista** para regresar. No debe aparecer otra empresa (por ejemplo Agrotours) en lugar de la que usted eligió.",
     )
 
-    # 10
-    add_heading_styled(doc, "10. Tras guardar: Resultado guardado vs Actualizando cola", 1)
+    # 11
+    add_heading_styled(doc, "11. Tras guardar: Resultado guardado vs Actualizando cola", 1)
     p(
         doc,
-        "Cuando pulsa **Guardar**, el resultado se graba enseguida. Verá **Resultado guardado** (o el aviso de No contesta — depurado si era el segundo intento). El botón se libera: usted **puede seguir trabajando**.",
+        "Cuando pulsa **Guardar**, el resultado se graba enseguida. Verá **Resultado guardado** (o el aviso de No contesta — depurado si era el segundo **No contesta** de esa empresa). El botón se libera: usted **puede seguir trabajando**.",
     )
     p(
         doc,
         "Al mismo tiempo puede aparecer **Actualizando cola…**. Eso es el sistema reordenando la lista en segundo plano. No es un error y no tiene que esperar a que desaparezca para seguir. No machaque el botón Guardar.",
     )
 
-    # 11
-    add_heading_styled(doc, "11. Qué no hacer", 1)
+    # 12
+    add_heading_styled(doc, "12. Qué no hacer", 1)
     bullet(doc, "**No martille Guardar.** Un clic basta. Si el botón dice Guardando…, espere el Resultado guardado.")
     bullet(doc, "**No resetee la campaña** ni pida borrar lotes para “empezar de nuevo” sin autorización de supervisión.")
     bullet(doc, "**No mezcle operadores.** No trabaje Entel y Movistar a la vez ni importe un archivo con los dos nombres.")
     bullet(doc, "**No confunda siguiente empresa con siguiente contacto.** Siguiente empresa = otro RUC. El contacto se cambia a mano en las pestañas.")
     bullet(doc, "**No busque No interesado ni RUC suspendido en Detalle.** Están en **Lista → Otros**.")
-    bullet(doc, "**No busque No contesta (2 veces) en Otros.** Está en **No contesta — depurado**.")
+    bullet(doc, "**No busque No contesta (2 veces en la empresa) en Otros.** Está en **No contesta — depurado**.")
     bullet(doc, "**No salte de lote** si el actual todavía tiene pendientes, salvo indicación de supervisión.")
 
-    # 12
-    add_heading_styled(doc, "12. Preguntas frecuentes", 1)
+    # 13
+    add_heading_styled(doc, "13. Preguntas frecuentes", 1)
 
     add_heading_styled(doc, "Hice clic en Lista y se abrió otra empresa (Agrotours u otra). ¿Es normal?", 2)
     p(
@@ -536,7 +562,19 @@ def build():
     add_heading_styled(doc, "¿Por qué No contesta a veces está en la cola y a veces no?", 2)
     p(
         doc,
-        "Un intento: sigue en **Detalle** y en la cola **No contesta**. Dos o más intentos: sale de Detalle y va a **No contesta — depurado**. Nunca a Otros.",
+        "Depurado cuenta **solo No contesta** de esa **empresa** (sus registros, no dos llamadas cualesquiera). Un No contesta: sigue en **Detalle** y en la cola **No contesta**. Dos o más No contesta: sale de Detalle y va a **No contesta — depurado**. Nunca a Otros.",
+    )
+
+    add_heading_styled(doc, "Guardé Sin llegada y luego No contesta. ¿Se fue a depurado?", 2)
+    p(
+        doc,
+        "No. Eso es **un** No contesta. Aunque Guardar actualización cree una fila nueva, la anterior no era No contesta. La ficha sigue en **Detalle** hasta que haya **dos No contesta** en la empresa.",
+    )
+
+    add_heading_styled(doc, "Cambié la respuesta del mismo contacto y salió un aviso. ¿Borré la anterior?", 2)
+    p(
+        doc,
+        "No. La respuesta anterior queda en el historial. El aviso solo confirma que va a guardar una **nueva**. Si solo cambió notas o la agenda, ese aviso no aparece.",
     )
 
     add_heading_styled(doc, "¿Puedo llamar de nuevo a un No interesado?", 2)
@@ -560,7 +598,7 @@ def build():
     add_heading_styled(doc, "Cierre para quien capacita", 2)
     p(
         doc,
-        "Pida al agente que, con el sistema abierto, marque una empresa pendiente, una Sin llegada, un No interesado (Otros) y un No contesta de dos intentos (depurado). Si distingue esas cuatro rutas, ya entiende la cola.",
+        "Pida al agente que, con el sistema abierto, marque una empresa pendiente, una Sin llegada, un No interesado (Otros) y un No contesta de dos No contesta en la empresa (depurado). Si distingue esas cuatro rutas, ya entiende la cola.",
     )
 
     note = doc.add_paragraph()
@@ -571,7 +609,14 @@ def build():
     )
     set_run_font(nr, size=9, color=MUTED)
 
-    doc.save(OUT)
+    try:
+        doc.save(OUT)
+    except PermissionError:
+        tmp = OUT.with_name(OUT.stem + ".tmp.docx")
+        doc.save(tmp)
+        print(f"LOCKED {OUT.resolve()}")
+        print(tmp.resolve())
+        raise SystemExit(1)
     print(OUT.resolve())
 
 

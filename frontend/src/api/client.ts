@@ -347,6 +347,8 @@ export type ClientListItem = {
   lastCallAgent?: { id?: string; name: string } | null
   /** Scoped call-log count (matches lastCalledAt / disposition agent filter). */
   callLogCount?: number
+  /** Agent-scoped NO_CONTESTA / NO_ANSWER logs on this company. */
+  noContestaCount?: number
   /** Calls to this company within the active registeredFrom/registeredTo filter. */
   periodCallCount?: number
   contacts: {

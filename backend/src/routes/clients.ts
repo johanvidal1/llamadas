@@ -206,6 +206,7 @@ async function enrichWithLastDisposition(
     lastCallContactId: string | null
     lastCallAgent?: { id: string; name: string } | null
     callLogCount: number
+    noContestaCount: number
     periodCallCount?: number
   })[]
 > {
@@ -240,6 +241,7 @@ async function enrichWithLastDisposition(
       lastCallContactId: last?.lastCallContactId ?? null,
       lastCallAgent: last?.lastCallAgent ?? null,
       callLogCount: last?.callLogCount ?? 0,
+      noContestaCount: last?.noContestaCount ?? 0,
       ...(periodCounts ? { periodCallCount: periodCounts.get(c.id) ?? 0 } : {}),
     }
   })
@@ -454,9 +456,9 @@ function filterAgentQueueVisibleIds(
   return orderedIds.filter((id) => {
     const last = lastByCompany.get(id)
     const disposition = last?.disposition ?? null
-    const callLogCount = last?.callLogCount ?? 0
+    const noContestaCount = last?.noContestaCount ?? 0
     if (isHiddenFromAgentQueue(disposition)) return false
-    if (isDepuradoNoContesta(disposition, callLogCount)) return false
+    if (isDepuradoNoContesta(disposition, noContestaCount)) return false
     return true
   })
 }
@@ -591,7 +593,7 @@ async function getFilteredDispositionClientsPage(
   for (const row of lightweight) {
     const last = lastByCompany.get(row.id)
     const disposition = last?.disposition ?? null
-    const callLogCount = last?.callLogCount ?? 0
+    const noContestaCount = last?.noContestaCount ?? 0
     if (ctx.agentScopedOtros) {
       if (
         pipelineBucketForDisposition(disposition) === 'OTROS' &&
@@ -602,11 +604,11 @@ async function getFilteredDispositionClientsPage(
       continue
     }
     if (ctx.agentScopedNoContesta) {
-      if (isActiveNoContesta(disposition, callLogCount)) filteredIds.push(row.id)
+      if (isActiveNoContesta(disposition, noContestaCount)) filteredIds.push(row.id)
       continue
     }
     if (ctx.agentScopedNoContestaDepurado) {
-      if (isDepuradoNoContesta(disposition, callLogCount)) filteredIds.push(row.id)
+      if (isDepuradoNoContesta(disposition, noContestaCount)) filteredIds.push(row.id)
       continue
     }
     if (ctx.agentScopedFunnel) {
@@ -705,6 +707,7 @@ async function buildPipelineScopeData(
             lastCallAgentId: null,
             lastCallAgent: null,
             callLogCount: 0,
+            noContestaCount: 0,
           },
         ])
       )
