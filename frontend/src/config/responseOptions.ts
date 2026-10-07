@@ -135,13 +135,13 @@ export function isDefinitiveClosureDisposition(code: string): boolean {
   return definitiveClosureSet.has(code)
 }
 
-/** Last dispositions hidden from the agent default work queue (Cola Todos / nav / grid Todos). */
+/** Last dispositions archived from the agent default work queue (Detalle / Cola Todos / nav).
+ * Closures only — SIN_LLEGADA_DECISOR stays in the working queue (saved registration). */
 export const AGENT_QUEUE_HIDDEN_DISPOSITIONS = [
   'NO_INTERESADO',
   'NOT_INTERESTED',
   'CLIENTE_ACTUAL',
   'RUC_SUSPENDIDO',
-  'SIN_LLEGADA_DECISOR',
 ] as const
 
 const agentQueueHiddenSet = new Set<string>(AGENT_QUEUE_HIDDEN_DISPOSITIONS)
@@ -171,7 +171,8 @@ export function isActiveNoContesta(
   return isNoContestaDisposition(lastDisposition) && callLogCount < MAX_NO_ANSWER_ATTEMPTS
 }
 
-/** Agent detail nav + Cola Todos: archived dispositions and depurado no-contesta. */
+/** Agent detail nav + Cola Todos: archived closures and depurado no-contesta.
+ * Sin llegada stays visible. */
 export function isHiddenFromAgentNav(
   lastDisposition?: string | null,
   callLogCount?: number

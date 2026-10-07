@@ -446,6 +446,7 @@ async function buildClientsFilterContext(
   }
 }
 
+/** Default agent nav: drop archived closures + depurado no-contesta. Sin llegada stays. */
 function filterAgentQueueVisibleIds(
   orderedIds: string[],
   lastByCompany: LastDispositionMap

@@ -633,7 +633,7 @@ function listCompanyIsRegistered(c: ClientSummary): boolean {
 }
 
 const COLA_ALL_AGENT_TITLE =
-  'Cola activa: pendientes, no contesta (<2 intentos), volver a llamar, embudo y venta cerrada. Excluye no contesta depurado, no interesado, cliente actual, RUC suspendido y sin llegada al decisor.'
+  'Cola activa: pendientes, no contesta (<2 intentos), sin llegada al decisor, volver a llamar, embudo y venta cerrada. Excluye no contesta depurado, no interesado, cliente actual y RUC suspendido.'
 const COLA_ALL_ADMIN_TITLE = 'Todas las empresas asignadas.'
 
 const COLA_OPTION_TITLES: Record<
@@ -656,7 +656,7 @@ const COLA_OPTION_TITLES: Record<
   },
   OTROS: {
     agent:
-      'Resto de respuestas 0%: no interesado, sin llegada al decisor, RUC suspendido, cliente actual, etc. (excluye no contesta).',
+      'Resto de respuestas 0%: sin llegada al decisor (también en Detalle), no interesado, RUC suspendido, cliente actual, etc. (excluye no contesta).',
     admin: 'Resto de respuestas 0% excluyendo no contesta.',
   },
 }
@@ -960,6 +960,8 @@ export default function MyLeads() {
   }, [])
 
   const [currentIndex, setCurrentIndex] = useState(0)
+  /** Company opened from Lista that is outside the working cola (true closures / depurado). */
+  const [pinnedListCompany, setPinnedListCompany] = useState<ClientSummary | null>(null)
   const [activeContactIdx, setActiveContactIdx] = useState(0)
   const [editPlan, setEditPlan] = useState('')
   const [editRazonSocial, setEditRazonSocial] = useState('')
@@ -1112,15 +1114,25 @@ export default function MyLeads() {
 
   // Clients for detail view navigation — server-filtered by batch
   const rawNavClients: ClientSummary[] = clientsData?.clients ?? []
-  const clients: ClientSummary[] = useMemo(() => {
+  const visibleNavClients: ClientSummary[] = useMemo(() => {
     if (isAdmin) return rawNavClients
     return rawNavClients.filter(
       (c) => !isHiddenFromAgentNav(c.lastDisposition, c.callLogCount)
     )
   }, [rawNavClients, isAdmin])
-  const hiddenNavCount = isAdmin ? 0 : rawNavClients.length - clients.length
-  const total = clients.length
+  const clients: ClientSummary[] = useMemo(() => {
+    if (!pinnedListCompany) return visibleNavClients
+    if (visibleNavClients.some((c) => c.id === pinnedListCompany.id)) return visibleNavClients
+    return [...visibleNavClients, pinnedListCompany]
+  }, [visibleNavClients, pinnedListCompany])
+  const hiddenNavCount = isAdmin ? 0 : rawNavClients.length - visibleNavClients.length
+  const total = visibleNavClients.length
   const currentClient = clients[currentIndex]
+  const viewingOutsideQueue = Boolean(
+    pinnedListCompany &&
+      currentClient?.id === pinnedListCompany.id &&
+      !visibleNavClients.some((c) => c.id === pinnedListCompany.id)
+  )
 
   const headerBatchPending = useMemo(
     () => getBatchPendingCounts(allClients, selectedBatchId),
@@ -1780,6 +1792,7 @@ export default function MyLeads() {
   const navigateToCompany = useCallback(
     async (clientIdx: number) => {
       await saveActiveContactIfDirty()
+      setPinnedListCompany(null)
       savedCompanyPinRef.current = null
       stayAfterSaveRef.current = false
       stayAfterSaveContactIdRef.current = null
@@ -1801,21 +1814,33 @@ export default function MyLeads() {
 
   const goTo = useCallback(
     async (idx: number) => {
-      if (idx >= 0 && idx < clients.length) {
+      if (idx >= 0 && idx < visibleNavClients.length) {
         await navigateToCompany(idx)
       }
     },
-    [clients.length, navigateToCompany]
+    [visibleNavClients.length, navigateToCompany]
   )
 
   const openDetailFromList = useCallback(
-    (realIdx: number) => {
+    (companyId: string) => {
       autoJumpToPendingRef.current = false
-      if (realIdx >= 0) void goTo(realIdx)
+      const navIdx = visibleNavClients.findIndex((c) => c.id === companyId)
+      if (navIdx >= 0) {
+        setPinnedListCompany(null)
+        void goTo(navIdx)
+      } else {
+        const fromList =
+          (listData?.clients ?? []).find((c) => c.id === companyId) ??
+          allClients.find((c) => c.id === companyId)
+        if (fromList) {
+          setPinnedListCompany(fromList)
+          setCurrentIndex(visibleNavClients.length)
+        }
+      }
       setReturnToView('list')
       switchView('detail', { persist: false })
     },
-    [goTo]
+    [visibleNavClients, goTo, listData, allClients]
   )
 
   const scrollToListCompany = useCallback((companyId: string) => {
@@ -1831,6 +1856,7 @@ export default function MyLeads() {
   }, [])
 
   const returnToList = useCallback(() => {
+    setPinnedListCompany(null)
     setReturnToView(null)
     switchView('list')
   }, [])
@@ -1944,6 +1970,7 @@ export default function MyLeads() {
   const switchBatch = (batchId: string) => {
     if (!batchId) explicitTodosRef.current = true
     else explicitTodosRef.current = false
+    setPinnedListCompany(null)
     setSelectedBatchId(batchId)
     setCurrentIndex(0)
     autoJumpToPendingRef.current = true
@@ -1969,6 +1996,7 @@ export default function MyLeads() {
 
   const applyQueueBatch = useCallback(
     (batchId: string) => {
+      setPinnedListCompany(null)
       setSelectedBatchId(batchId)
       setCurrentIndex(0)
       autoJumpToPendingRef.current = true
@@ -2664,8 +2692,12 @@ export default function MyLeads() {
           } else if (stayOnRecord && savedCompanyId) {
             const pinnedIdx = companyIndexById(freshVisible, savedCompanyId)
             if (pinnedIdx >= 0) {
+              setPinnedListCompany(null)
               savedCompanyPinRef.current = savedCompanyId
               if (pinnedIdx !== currentIndex) setCurrentIndex(pinnedIdx)
+            } else if (pinnedListCompany?.id === savedCompanyId) {
+              savedCompanyPinRef.current = savedCompanyId
+              setCurrentIndex(freshVisible.length)
             } else {
               const from = Math.min(currentIndex, Math.max(freshVisible.length - 1, 0))
               let nextPending = freshVisible.findIndex(
@@ -2678,14 +2710,17 @@ export default function MyLeads() {
                 toast('Empresa fuera de la cola visible; pasando a la siguiente pendiente', {
                   icon: 'ℹ️',
                 })
+                setPinnedListCompany(null)
                 savedCompanyPinRef.current = freshVisible[nextPending]!.id
                 setCurrentIndex(nextPending)
               } else if (freshVisible.length > 0) {
                 toast('Empresa fuera de la cola visible', { icon: 'ℹ️' })
+                setPinnedListCompany(null)
                 savedCompanyPinRef.current = null
                 setCurrentIndex(Math.min(currentIndex, freshVisible.length - 1))
               } else {
                 toast('Empresa fuera de la cola visible; no quedan empresas', { icon: 'ℹ️' })
+                setPinnedListCompany(null)
                 savedCompanyPinRef.current = null
                 setCurrentIndex(0)
               }
@@ -2742,6 +2777,21 @@ export default function MyLeads() {
     const idx = companyIndexById(clients, pinId)
     if (idx >= 0 && idx !== currentIndex) setCurrentIndex(idx)
   }, [clients, currentIndex])
+
+  useEffect(() => {
+    if (!pinnedListCompany) return
+    const idx = visibleNavClients.findIndex((c) => c.id === pinnedListCompany.id)
+    if (idx >= 0) {
+      setPinnedListCompany(null)
+      if (idx !== currentIndex) setCurrentIndex(idx)
+    }
+  }, [visibleNavClients, pinnedListCompany, currentIndex])
+
+  useEffect(() => {
+    if (pinnedListCompany) return
+    if (clients.length === 0) return
+    if (currentIndex >= clients.length) setCurrentIndex(clients.length - 1)
+  }, [pinnedListCompany, clients.length, currentIndex])
 
   const requestSave = useCallback(
     (autoNext: SaveAutoNext) => {
@@ -2921,8 +2971,9 @@ export default function MyLeads() {
   // Detail view loading / empty guards are now rendered INSIDE the layout
   // (so the top bar with batch selector remains visible at all times)
 
-  const isFirst = clients.length === 0 || currentIndex === 0
+  const isFirst = viewingOutsideQueue || clients.length === 0 || currentIndex === 0
   const isLast =
+    viewingOutsideQueue ||
     clients.length === 0 ||
     nextCompanyIndexAfter(clients, clients[currentIndex]?.id ?? '') < 0
 
@@ -3136,15 +3187,27 @@ export default function MyLeads() {
               <div className="flex items-center justify-end gap-2.5 shrink-0">
                 <span
                   className="inline-flex items-baseline gap-1 px-2.5 py-1 rounded-md bg-blue-50 border border-blue-200 text-blue-900 text-sm font-semibold tabular-nums whitespace-nowrap shadow-sm"
-                  title={isAdmin ? COLA_ALL_ADMIN_TITLE : COLA_ALL_AGENT_TITLE}
+                  title={
+                    viewingOutsideQueue
+                      ? 'Esta ficha no está en la cola de trabajo. Use Volver a la lista.'
+                      : isAdmin
+                        ? COLA_ALL_ADMIN_TITLE
+                        : COLA_ALL_AGENT_TITLE
+                  }
                 >
-                  {currentIndex + 1}
-                  <span className="text-blue-400 font-medium">/</span>
-                  {total}
-                  {hiddenNavCount > 0 && (
-                    <span className="text-blue-500/80 text-xs font-medium ml-0.5" title="Empresas archivadas ocultas de la cola">
-                      ({hiddenNavCount} ocultas)
-                    </span>
+                  {viewingOutsideQueue ? (
+                    <span className="text-xs font-semibold">Fuera de la cola</span>
+                  ) : (
+                    <>
+                      {currentIndex + 1}
+                      <span className="text-blue-400 font-medium">/</span>
+                      {total}
+                      {hiddenNavCount > 0 && (
+                        <span className="text-blue-500/80 text-xs font-medium ml-0.5" title="Empresas archivadas ocultas de la cola">
+                          ({hiddenNavCount} ocultas)
+                        </span>
+                      )}
+                    </>
                   )}
                 </span>
                 <BatchPendingThermometer
@@ -3162,6 +3225,7 @@ export default function MyLeads() {
             <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5 shrink-0 border border-gray-200">
               <button
                 onClick={() => {
+                  setPinnedListCompany(null)
                   setReturnToView(null)
                   if (viewMode !== 'detail') autoJumpToPendingRef.current = true
                   switchView('detail')
@@ -4375,7 +4439,7 @@ export default function MyLeads() {
                                 ? 'bg-amber-50 ring-2 ring-inset ring-amber-400'
                                 : ''
                             }`}
-                            onClick={() => openDetailFromList(realIdx)}
+                            onClick={() => openDetailFromList(c.id)}
                           >
                             <td className={`px-4 py-2.5 text-xs ${isPendingRow ? 'text-gray-400' : 'text-gray-900'}`}>{realIdx >= 0 ? realIdx + 1 : '—'}</td>
                             <td className={`px-4 py-2.5 font-mono text-xs ${isPendingRow ? 'text-gray-400' : 'text-gray-600'}`}>{c.ruc}</td>
