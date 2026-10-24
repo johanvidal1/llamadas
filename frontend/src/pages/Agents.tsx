@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, Fragment, type MutableRefObject } from 'react'
+import { useState, useEffect, useMemo, useRef, Fragment, type MutableRefObject } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -35,6 +35,7 @@ import {
   Trash2,
   AlertTriangle,
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   RotateCcw,
   ArrowLeft,
@@ -48,6 +49,14 @@ import BatchQueueModeCards, {
   batchQueueModeChipClass,
 } from '../components/BatchQueueModeCards'
 import type { BatchQueueMode } from '../lib/batchQueuePolicy'
+import {
+  DEFAULT_AGENT_TABLE_SORT,
+  defaultAgentTableSortDir,
+  nextAgentTableSort,
+  presenceForSort,
+  sortAgents,
+  type AgentTableSortKey,
+} from '../lib/agentTableSort'
 
 interface FormState {
   name: string
@@ -173,6 +182,34 @@ function UserTable({
     userId: string
     anchor: HTMLElement
   } | null>(null)
+  const [sortBy, setSortBy] = useState<AgentTableSortKey>(DEFAULT_AGENT_TABLE_SORT)
+  const [sortDir, setSortDir] = useState(defaultAgentTableSortDir(DEFAULT_AGENT_TABLE_SORT))
+
+  const sortedUsers = useMemo(
+    () =>
+      sortAgents(users, sortBy, sortDir, (user) => presenceForSort(presenceByUserId?.[user.id])),
+    [users, sortBy, sortDir, presenceByUserId],
+  )
+
+  const toggleSort = (key: AgentTableSortKey) => {
+    const next = nextAgentTableSort(sortBy, sortDir, key)
+    setSortBy(next.key)
+    setSortDir(next.dir)
+  }
+
+  const sortAria = (key: AgentTableSortKey): 'ascending' | 'descending' | 'none' => {
+    if (sortBy !== key) return 'none'
+    return sortDir === 'asc' ? 'ascending' : 'descending'
+  }
+
+  const SortMark = ({ column }: { column: AgentTableSortKey }) =>
+    sortBy === column ? (
+      sortDir === 'asc' ? (
+        <ChevronUp size={13} className="text-blue-600" />
+      ) : (
+        <ChevronDown size={13} className="text-blue-600" />
+      )
+    ) : null
 
   if (users.length === 0) {
     return <div className="p-8 text-center text-gray-400 text-sm">No hay usuarios en esta sección</div>
@@ -192,14 +229,50 @@ function UserTable({
     <table className="w-full min-w-[800px] text-sm">
       <thead className={`border-b border-gray-200 ${muted ? 'bg-gray-50/80' : 'bg-gray-50'}`}>
         <tr>
-          <th className="text-left px-4 py-3 font-medium text-gray-600">Usuario</th>
+          <th
+            className="text-left px-4 py-3 font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none"
+            aria-sort={sortAria('name')}
+            onClick={() => toggleSort('name')}
+          >
+            <div className="flex items-center gap-1">
+              <span>Usuario</span>
+              <SortMark column="name" />
+            </div>
+          </th>
           <th className="text-left px-4 py-3 font-medium text-gray-600">Rol</th>
           <th className="text-left px-4 py-3 font-medium text-gray-600">Cola</th>
-          <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
-          <th className="text-center px-4 py-3 font-medium text-gray-600" title="Empresas con contactos asignados">Empresas</th>
-          <th className="text-center px-4 py-3 font-medium text-gray-600">
+          <th
+            className="text-left px-4 py-3 font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none"
+            aria-sort={sortAria('status')}
+            onClick={() => toggleSort('status')}
+          >
+            <div className="flex items-center gap-1">
+              <span>Estado</span>
+              <SortMark column="status" />
+            </div>
+          </th>
+          <th
+            className="text-center px-4 py-3 font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none"
+            title="Empresas con contactos asignados"
+            aria-sort={sortAria('assignedCompanies')}
+            onClick={() => toggleSort('assignedCompanies')}
+          >
             <div className="inline-flex items-center justify-center gap-1">
-              <span title="Llamadas registradas hoy (zona horaria del sistema)">Llamadas (hoy)</span>
+              <span>Empresas</span>
+              <SortMark column="assignedCompanies" />
+            </div>
+          </th>
+          <th className="text-center px-4 py-3 font-medium text-gray-600" aria-sort={sortAria('callsToday')}>
+            <div className="inline-flex items-center justify-center gap-1">
+              <button
+                type="button"
+                onClick={() => toggleSort('callsToday')}
+                title="Llamadas registradas hoy (zona horaria del sistema)"
+                className="inline-flex items-center gap-1 rounded px-1 py-0.5 cursor-pointer hover:bg-gray-100 select-none"
+              >
+                <span>Llamadas (hoy)</span>
+                <SortMark column="callsToday" />
+              </button>
               <button
                 type="button"
                 onClick={onToggleShowTotalCallsColumn}
@@ -216,11 +289,17 @@ function UserTable({
               </button>
             </div>
           </th>
-          <th className="text-center px-4 py-3 font-medium text-gray-600">
+          <th className="text-center px-4 py-3 font-medium text-gray-600" aria-sort={sortAria('callbacksToday')}>
             <div className="inline-flex items-center justify-center gap-1">
-              <span title="Callbacks pendientes agendados para hoy (zona horaria del sistema)">
-                Callbacks (hoy)
-              </span>
+              <button
+                type="button"
+                onClick={() => toggleSort('callbacksToday')}
+                title="Callbacks pendientes agendados para hoy (zona horaria del sistema)"
+                className="inline-flex items-center gap-1 rounded px-1 py-0.5 cursor-pointer hover:bg-gray-100 select-none"
+              >
+                <span>Callbacks (hoy)</span>
+                <SortMark column="callbacksToday" />
+              </button>
               <button
                 type="button"
                 onClick={onToggleShowTotalCallbacksColumn}
@@ -242,7 +321,7 @@ function UserTable({
         </tr>
       </thead>
       <tbody className="divide-y divide-gray-100">
-        {users.map((u) => {
+        {sortedUsers.map((u) => {
           const adminTarget = isAdminUser(u)
           const presence = presenceByUserId?.[u.id]
           const isAgentRole = u.role === 'AGENT'
