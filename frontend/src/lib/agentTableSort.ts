@@ -4,6 +4,7 @@ export type AgentPresenceStatus = 'online' | 'recent' | 'offline'
 
 export type AgentTableSortKey =
   | 'name'
+  | 'role'
   | 'status'
   | 'assignedCompanies'
   | 'callsToday'
@@ -14,6 +15,9 @@ export type AgentTableSortDir = 'asc' | 'desc'
 export type SortableAgent = {
   id: string
   name: string
+  role?: 'ADMIN' | 'AGENT'
+  isSuperAdmin?: boolean
+  isSystemOwner?: boolean
   assignedCompanies?: number
   callsToday?: number
   callbacksToday?: number
@@ -73,9 +77,9 @@ export function presenceForSort(
   }
 }
 
-/** First click: Estado online-first, Usuario A–Z, metrics more-first. */
+/** First click: Estado online-first, Rol Admin-then-Agent, Usuario A–Z, metrics more-first. */
 export function defaultAgentTableSortDir(key: AgentTableSortKey): AgentTableSortDir {
-  if (key === 'name' || key === 'status') return 'asc'
+  if (key === 'name' || key === 'status' || key === 'role') return 'asc'
   return 'desc'
 }
 
@@ -94,6 +98,25 @@ function compareName(a: SortableAgent, b: SortableAgent): number {
   const byName = a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })
   if (byName !== 0) return byName
   return a.id.localeCompare(b.id)
+}
+
+/**
+ * Admin group (ADMIN / Superadmin) vs Agent. Owner is pinned separately
+ * and is not part of this rank.
+ */
+export function agentRoleGroupRank(user: SortableAgent): number {
+  if (user.isSuperAdmin || user.role === 'ADMIN') return 0
+  return 1
+}
+
+function compareRole(a: SortableAgent, b: SortableAgent, dir: AgentTableSortDir): number {
+  const aOwner = a.isSystemOwner === true
+  const bOwner = b.isSystemOwner === true
+  if (aOwner !== bOwner) return aOwner ? -1 : 1
+
+  const rankDiff = agentRoleGroupRank(a) - agentRoleGroupRank(b)
+  if (rankDiff !== 0) return dir === 'asc' ? rankDiff : -rankDiff
+  return compareName(a, b)
 }
 
 function compareStatus(
@@ -123,6 +146,8 @@ export function compareAgentsForSort(
   dir: AgentTableSortDir,
   presenceOf: (user: SortableAgent) => AgentSortPresence | undefined = () => undefined,
 ): number {
+  if (key === 'role') return compareRole(a, b, dir)
+
   let cmp = 0
   if (key === 'name') cmp = compareName(a, b)
   else if (key === 'status') cmp = compareStatus(a, b, presenceOf)

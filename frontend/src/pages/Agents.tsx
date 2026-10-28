@@ -115,6 +115,27 @@ function isAdminUser(u: AppUser) {
   return u.role === 'ADMIN' || u.isSuperAdmin === true || u.isSystemOwner === true
 }
 
+function isBulkSelectableAgent(u: AppUser, currentUserId?: string) {
+  return u.role === 'AGENT' && !isAdminUser(u) && u.id !== currentUserId
+}
+
+function canPermanentlyDeleteUser(
+  u: AppUser,
+  currentUserId: string | undefined,
+  isSuperAdminOrOwner: boolean,
+  currentUserIsSystemOwner: boolean,
+) {
+  const adminTarget = isAdminUser(u)
+  const canManageAdmin = !adminTarget || isSuperAdminOrOwner
+  return (
+    canManageAdmin &&
+    !u.isSystemOwner &&
+    !(u.isSuperAdmin && !currentUserIsSystemOwner) &&
+    !hasHistory(u) &&
+    u.id !== currentUserId
+  )
+}
+
 function presenceLabel(status: AgentPresenceStatus): string {
   if (status === 'online') return '🟢 En línea'
   if (status === 'recent') return '🟡 Reciente'
@@ -156,6 +177,8 @@ function UserTable({
   highlightedUserId = null,
   rowRefs,
   onQueueModeChange,
+  enableBulkSelect = false,
+  onDeleteMany,
 }: {
   users: AppUser[]
   onEdit: (u: AppUser) => void
@@ -176,6 +199,8 @@ function UserTable({
   highlightedUserId?: string | null
   rowRefs?: MutableRefObject<Map<string, HTMLTableRowElement>>
   onQueueModeChange?: (u: AppUser, mode: BatchQueueMode) => void
+  enableBulkSelect?: boolean
+  onDeleteMany?: (users: AppUser[]) => Promise<void>
 }) {
   const [expandedPresenceId, setExpandedPresenceId] = useState<string | null>(null)
   const [queueEditorId, setQueueEditorId] = useState<string | null>(null)
@@ -185,6 +210,11 @@ function UserTable({
   } | null>(null)
   const [sortBy, setSortBy] = useState<AgentTableSortKey>(DEFAULT_AGENT_TABLE_SORT)
   const [sortDir, setSortDir] = useState(defaultAgentTableSortDir(DEFAULT_AGENT_TABLE_SORT))
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [showBulkDelete, setShowBulkDelete] = useState(false)
+  const [bulkDeleteConfirmText, setBulkDeleteConfirmText] = useState('')
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const headerCheckboxRef = useRef<HTMLInputElement>(null)
 
   const sortedUsers = useMemo(
     () =>
@@ -192,10 +222,75 @@ function UserTable({
     [users, sortBy, sortDir, presenceByUserId],
   )
 
+  const selectableUsers = useMemo(
+    () => (enableBulkSelect ? sortedUsers.filter((u) => isBulkSelectableAgent(u, currentUserId)) : []),
+    [enableBulkSelect, sortedUsers, currentUserId],
+  )
+
+  useEffect(() => {
+    const listed = new Set(users.map((u) => u.id))
+    setSelectedIds((prev) => {
+      let changed = false
+      const next = new Set<string>()
+      for (const id of prev) {
+        if (listed.has(id)) next.add(id)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [users])
+
+  const allSelectableSelected =
+    selectableUsers.length > 0 && selectableUsers.every((u) => selectedIds.has(u.id))
+  const someSelectableSelected = selectableUsers.some((u) => selectedIds.has(u.id))
+
+  useEffect(() => {
+    const el = headerCheckboxRef.current
+    if (!el) return
+    el.indeterminate = someSelectableSelected && !allSelectableSelected
+  }, [someSelectableSelected, allSelectableSelected])
+
   const toggleSort = (key: AgentTableSortKey) => {
     const next = nextAgentTableSort(sortBy, sortDir, key)
     setSortBy(next.key)
     setSortDir(next.dir)
+  }
+
+  const toggleSelectAll = () => {
+    const ids = selectableUsers.map((u) => u.id)
+    const allOn = ids.length > 0 && ids.every((id) => selectedIds.has(id))
+    setSelectedIds(allOn ? new Set() : new Set(ids))
+  }
+
+  const toggleRowSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const selectedUsers = sortedUsers.filter((u) => selectedIds.has(u.id))
+  const selectedCount = selectedUsers.length
+
+  const closeBulkDeleteModal = () => {
+    if (bulkDeleting) return
+    setShowBulkDelete(false)
+    setBulkDeleteConfirmText('')
+  }
+
+  const confirmBulkDelete = async () => {
+    if (!onDeleteMany || selectedUsers.length === 0) return
+    setBulkDeleting(true)
+    try {
+      await onDeleteMany(selectedUsers)
+      setSelectedIds(new Set())
+      setShowBulkDelete(false)
+      setBulkDeleteConfirmText('')
+    } finally {
+      setBulkDeleting(false)
+    }
   }
 
   const sortAria = (key: AgentTableSortKey): 'ascending' | 'descending' | 'none' => {
@@ -223,13 +318,44 @@ function UserTable({
     ? presenceByUserId?.[presencePopover.userId]
     : undefined
 
-  const columnCount = 9
+  const columnCount = 9 + (enableBulkSelect ? 1 : 0)
 
   return (
     <>
+    {enableBulkSelect && selectedCount > 0 && (
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-red-50 border-b border-red-100">
+        <p className="text-sm font-medium text-gray-800">
+          {selectedCount} seleccionado{selectedCount === 1 ? '' : 's'}
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            setBulkDeleteConfirmText('')
+            setShowBulkDelete(true)
+          }}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors"
+        >
+          <Trash2 size={14} />
+          Eliminar
+        </button>
+      </div>
+    )}
     <table className="w-full min-w-[800px] text-sm">
       <thead className={`border-b border-gray-200 ${muted ? 'bg-gray-50/80' : 'bg-gray-50'}`}>
         <tr>
+          {enableBulkSelect && (
+            <th className="w-10 px-3 py-3">
+              <input
+                ref={headerCheckboxRef}
+                type="checkbox"
+                checked={allSelectableSelected}
+                disabled={selectableUsers.length === 0}
+                onChange={toggleSelectAll}
+                aria-label="Seleccionar todos los agentes"
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-40"
+              />
+            </th>
+          )}
           <th
             className="text-left px-4 py-3 font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none"
             aria-sort={sortAria('name')}
@@ -240,7 +366,16 @@ function UserTable({
               <SortMark column="name" />
             </div>
           </th>
-          <th className="text-left px-4 py-3 font-medium text-gray-600">Rol</th>
+          <th
+            className="text-left px-4 py-3 font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none"
+            aria-sort={sortAria('role')}
+            onClick={() => toggleSort('role')}
+          >
+            <div className="flex items-center gap-1">
+              <span>Rol</span>
+              <SortMark column="role" />
+            </div>
+          </th>
           <th className="text-left px-4 py-3 font-medium text-gray-600">Cola</th>
           <th
             className="text-left px-4 py-3 font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none"
@@ -326,17 +461,18 @@ function UserTable({
           const adminTarget = isAdminUser(u)
           const presence = presenceByUserId?.[u.id]
           const isAgentRole = u.role === 'AGENT'
+          const rowSelectable = enableBulkSelect && isBulkSelectableAgent(u, currentUserId)
           // System owner sees admin presence; everyone with presence data sees agents.
           const showPresence =
             !!presenceByUserId &&
             (isAgentRole || (adminTarget && currentUserIsSystemOwner))
           const canManageAdmin = !adminTarget || isSuperAdminOrOwner
-          const canDelete =
-            canManageAdmin &&
-            !u.isSystemOwner &&
-            !(u.isSuperAdmin && !currentUserIsSystemOwner) &&
-            !hasHistory(u) &&
-            u.id !== currentUserId
+          const canDelete = canPermanentlyDeleteUser(
+            u,
+            currentUserId,
+            isSuperAdminOrOwner,
+            currentUserIsSystemOwner,
+          )
           const deleteTooltip = u.isSystemOwner
             ? 'No se puede eliminar al propietario del sistema'
             : u.isSuperAdmin && !currentUserIsSystemOwner
@@ -365,9 +501,28 @@ function UserTable({
                 }}
                 data-user-id={u.id}
                 className={`hover:bg-gray-50 transition-colors ${muted ? 'text-gray-500' : ''} ${
-                  isHighlighted ? 'bg-amber-50 ring-2 ring-inset ring-amber-400' : ''
+                  isHighlighted
+                    ? 'bg-amber-50 ring-2 ring-inset ring-amber-400'
+                    : selectedIds.has(u.id)
+                      ? 'bg-blue-50'
+                      : ''
                 }`}
               >
+                {enableBulkSelect && (
+                  <td className="px-3 py-3">
+                    {rowSelectable ? (
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(u.id)}
+                        onChange={() => toggleRowSelected(u.id)}
+                        aria-label={`Seleccionar ${u.name}`}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                    ) : (
+                      <span className="inline-block w-4" aria-hidden />
+                    )}
+                  </td>
+                )}
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
                     <div
@@ -635,6 +790,64 @@ function UserTable({
           : undefined
       }
     />
+    {showBulkDelete && (
+      <>
+        <div className="fixed inset-0 bg-black/40 z-40" onClick={closeBulkDeleteModal} />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-5">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center shrink-0">
+                <AlertTriangle size={20} className="text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900">
+                  ¿Eliminar {selectedCount} agente{selectedCount === 1 ? '' : 's'}?
+                </h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  Esta acción es <strong>irreversible</strong>. Se eliminarán {selectedCount}{' '}
+                  usuario{selectedCount === 1 ? '' : 's'} seleccionado
+                  {selectedCount === 1 ? '' : 's'}. Quien tenga historial (asignaciones,
+                  llamadas, callbacks o importaciones) se omitirá.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-gray-700">
+                Escribe <span className="font-mono font-bold text-red-600">ELIMINAR</span> para
+                confirmar:
+              </label>
+              <input
+                type="text"
+                className="input font-mono"
+                placeholder="ELIMINAR"
+                value={bulkDeleteConfirmText}
+                onChange={(e) => setBulkDeleteConfirmText(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={closeBulkDeleteModal}
+                className="flex-1 btn-secondary"
+                disabled={bulkDeleting}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmBulkDelete()}
+                disabled={bulkDeleteConfirmText !== 'ELIMINAR' || bulkDeleting}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                <Trash2 size={15} />
+                {bulkDeleting ? 'Eliminando...' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </>
+    )}
     </>
   )
 }
@@ -1108,6 +1321,62 @@ export default function Agents() {
     }
   }
 
+  const handleDeleteMany = async (targets: AppUser[]) => {
+    const omitted: string[] = []
+    const toDelete: AppUser[] = []
+    for (const u of targets) {
+      if (u.role !== 'AGENT' || isAdminUser(u) || u.id === user?.id) continue
+      if (hasHistory(u)) {
+        omitted.push(u.name)
+        continue
+      }
+      if (
+        !canPermanentlyDeleteUser(u, user?.id, isSuperAdminOrOwner, isSystemOwner)
+      ) {
+        continue
+      }
+      toDelete.push(u)
+    }
+
+    let deleted = 0
+    const failed: string[] = []
+    for (const u of toDelete) {
+      try {
+        await deleteUser(u.id)
+        deleted += 1
+      } catch {
+        failed.push(u.name)
+      }
+    }
+
+    if (deleted > 0) {
+      toast.success(
+        deleted === 1
+          ? '1 agente eliminado permanentemente'
+          : `${deleted} agentes eliminados permanentemente`,
+      )
+      qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['user-seats'] })
+    }
+    if (omitted.length > 0) {
+      toast.error(
+        omitted.length === 1
+          ? `Se omitió a ${omitted[0]}: tiene historial. Desactívalo en su lugar.`
+          : `Se omitió a ${omitted.join(', ')}: tienen historial. Desactívalos en su lugar.`,
+      )
+    }
+    if (failed.length > 0) {
+      toast.error(
+        failed.length === 1
+          ? `No se pudo eliminar a ${failed[0]}`
+          : `No se pudo eliminar a ${failed.join(', ')}`,
+      )
+    }
+    if (deleted === 0 && omitted.length === 0 && failed.length === 0) {
+      toast.error('No hay agentes que se puedan eliminar')
+    }
+  }
+
   return (
     <div className="p-4 sm:p-8 space-y-8">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1286,6 +1555,8 @@ export default function Agents() {
             highlightedUserId={highlightedUserId}
             rowRefs={rowRefs}
             onQueueModeChange={handleQueueModeChange}
+            enableBulkSelect
+            onDeleteMany={handleDeleteMany}
           />
         )}
       </div>

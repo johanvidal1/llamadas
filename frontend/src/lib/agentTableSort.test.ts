@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+  agentRoleGroupRank,
   compareAgentsForSort,
   defaultAgentTableSortDir,
   lastSeenMs,
@@ -93,5 +94,43 @@ section('toggle keeps column and flips direction; new column uses default')
 assert.deepEqual(nextAgentTableSort('status', 'asc', 'status'), { key: 'status', dir: 'desc' })
 assert.deepEqual(nextAgentTableSort('status', 'asc', 'callsToday'), { key: 'callsToday', dir: 'desc' })
 assert.deepEqual(nextAgentTableSort('callsToday', 'desc', 'name'), { key: 'name', dir: 'asc' })
+assert.deepEqual(nextAgentTableSort('status', 'asc', 'role'), { key: 'role', dir: 'asc' })
+assert.deepEqual(nextAgentTableSort('role', 'asc', 'role'), { key: 'role', dir: 'desc' })
+
+section('Rol: Admin group rank 0, Agent rank 1; Superadmin without owner is Admin')
+assert.equal(agentRoleGroupRank({ id: 'a', name: 'A', role: 'ADMIN' }), 0)
+assert.equal(agentRoleGroupRank({ id: 's', name: 'S', role: 'AGENT', isSuperAdmin: true }), 0)
+assert.equal(agentRoleGroupRank({ id: 'g', name: 'G', role: 'AGENT' }), 1)
+assert.equal(defaultAgentTableSortDir('role'), 'asc')
+
+const owner: SortableAgent = { id: 'own', name: 'Zeta Owner', role: 'ADMIN', isSystemOwner: true }
+const adminAna: SortableAgent = { id: 'admA', name: 'Ana Adm', role: 'ADMIN' }
+const adminBruno: SortableAgent = { id: 'admB', name: 'Bruno', role: 'ADMIN' }
+const superSergio: SortableAgent = {
+  id: 'super',
+  name: 'Sergio',
+  role: 'ADMIN',
+  isSuperAdmin: true,
+}
+const agentAda: SortableAgent = { id: 'agA', name: 'Ada', role: 'AGENT' }
+const agentZara: SortableAgent = { id: 'agZ', name: 'Zara', role: 'AGENT' }
+const roleUsers = [agentZara, owner, adminBruno, agentAda, superSergio, adminAna]
+
+section('Rol first click: owner pinned, then Admin A–Z, then Agent A–Z')
+assert.deepEqual(
+  sortAgents(roleUsers, 'role', 'asc').map((u) => u.id),
+  ['own', 'admA', 'admB', 'super', 'agA', 'agZ'],
+)
+
+section('Rol second click: owner still first; Agent group then Admin; names A–Z inside groups')
+assert.deepEqual(
+  sortAgents(roleUsers, 'role', 'desc').map((u) => u.id),
+  ['own', 'agA', 'agZ', 'admA', 'admB', 'super'],
+)
+
+section('Rol: owner is not flipped relative to groups')
+assert.ok(compareAgentsForSort(owner, adminAna, 'role', 'desc') < 0, 'owner before admin even in desc')
+assert.ok(compareAgentsForSort(owner, agentAda, 'role', 'desc') < 0, 'owner before agent even in desc')
+assert.ok(compareAgentsForSort(agentAda, adminAna, 'role', 'desc') < 0, 'agents before admins in desc')
 
 console.log('\nagentTableSort tests passed')
