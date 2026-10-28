@@ -1146,7 +1146,27 @@ export const getMyBatches = (operator?: ImportOperator) =>
   api.get('/dashboard/my-batches', { params: operator ? { operator } : {} }).then((r) => r.data)
 
 // ─── Admin ─────────────────────────────────────────────────────────────────────
-export const getResetPreview = () => api.get('/admin/reset-campaign/preview').then((r) => r.data)
+export type CampaignResetPreview = {
+  companies: number
+  clients: number
+  importBatches: number
+  assignments: number
+  assignmentRuns: number
+  assignmentReleases: number
+  callLogs: number
+  callbacks: number
+  dailyAgentMetrics: number
+  userSessions: number
+  agentResetLogs: number
+  supportTickets: number
+  supportTicketAttachments: number
+  mobileLines: number
+  contacts: number
+  users: number
+}
+
+export const getResetPreview = () =>
+  api.get('/admin/reset-campaign/preview').then((r) => r.data as CampaignResetPreview)
 export const resetCampaign = () => api.post('/admin/reset-campaign', { confirm: 'RESETEAR' }).then((r) => r.data)
 
 export type AgentResetPreview = {

@@ -13,7 +13,8 @@
     "test:my-leads-prefill": "npx tsx src/lib/myLeadsContactPrefill.test.ts",
     "test:response-options": "npx tsx src/config/responseOptions.test.ts",
     "test:list-last-call": "npx tsx src/lib/listLastCallRange.test.ts",
-    "test:agent-table-sort": "npx tsx src/lib/agentTableSort.test.ts"
+    "test:agent-table-sort": "npx tsx src/lib/agentTableSort.test.ts",
+    "test:clients-day-groups": "npx tsx src/lib/clientsDayGroups.test.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.45.0",

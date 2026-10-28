@@ -1,12 +1,12 @@
 import { Router, Response } from 'express'
 import { z } from 'zod'
-import { prisma } from '../lib/prisma'
 import { requireAdmin, AuthRequest } from '../middleware/auth'
 import {
   AgentResetBlockedError,
   buildAgentResetPreview,
   executeAgentReset,
 } from '../lib/agentReset'
+import { buildCampaignResetPreview, executeCampaignReset } from '../lib/campaignReset'
 import { clearDashboardStatsCache, clearReportsCache } from './dashboard'
 
 const router = Router()
@@ -18,8 +18,9 @@ const resetAgentSchema = z.object({
 })
 
 // POST /api/admin/reset-campaign
-// Deletes ALL campaign data (clients, imports, calls, callbacks, assignments)
-// but keeps User accounts intact.
+// Deletes ALL campaign traces (clients, imports, calls, callbacks, assignment
+// history, metrics, sessions, tickets, lote pins) but keeps User accounts,
+// isSystemOwner, roles, passwords, Tenant (plan) and ReleaseNote.
 // Requires body: { confirm: "RESETEAR" }
 router.post('/reset-campaign', requireAdmin, async (req: AuthRequest, res: Response) => {
   const { confirm } = req.body as { confirm?: string }
@@ -31,40 +32,17 @@ router.post('/reset-campaign', requireAdmin, async (req: AuthRequest, res: Respo
     return
   }
 
-  // Delete in FK-safe order
-  const [callbacks, callLogs, assignments, , companies, batches] = await prisma.$transaction([
-    prisma.callback.deleteMany(),
-    prisma.callLog.deleteMany(),
-    prisma.assignment.deleteMany(),
-    prisma.contact.deleteMany(),
-    prisma.company.deleteMany(),
-    prisma.importBatch.deleteMany(),
-  ])
-
-  res.json({
-    message: 'Base de datos de campaña reseteada. Los usuarios se mantienen intactos.',
-    deleted: {
-      callbacks: callbacks.count,
-      callLogs: callLogs.count,
-      assignments: assignments.count,
-      companies: companies.count,
-      importBatches: batches.count,
-    },
-  })
+  const tenantId = req.tenant!.id
+  const result = await executeCampaignReset(tenantId)
+  clearReportsCache()
+  clearDashboardStatsCache()
+  res.json(result)
 })
 
 // GET /api/admin/reset-campaign/preview — returns counts before reset
-router.get('/reset-campaign/preview', requireAdmin, async (_req: AuthRequest, res: Response) => {
-  const [callbacks, callLogs, assignments, clients, batches, users] = await Promise.all([
-    prisma.callback.count(),
-    prisma.callLog.count(),
-    prisma.assignment.count(),
-    prisma.company.count(),
-    prisma.importBatch.count(),
-    prisma.user.count(),
-  ])
-
-  res.json({ callbacks, callLogs, assignments, companies: clients, importBatches: batches, users })
+router.get('/reset-campaign/preview', requireAdmin, async (req: AuthRequest, res: Response) => {
+  const preview = await buildCampaignResetPreview(req.tenant!.id)
+  res.json(preview)
 })
 
 // GET /api/admin/agents/:id/reset-preview

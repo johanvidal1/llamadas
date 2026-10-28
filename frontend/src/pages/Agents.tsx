@@ -10,6 +10,7 @@ import {
   deleteUser,
   getResetPreview,
   resetCampaign,
+  type CampaignResetPreview,
   getAgentResetPreview,
   resetAgent,
   getAgentPresence,
@@ -798,7 +799,7 @@ export default function Agents() {
     })
   }
 
-  const { data: resetPreview } = useQuery({
+  const { data: resetPreview } = useQuery<CampaignResetPreview>({
     queryKey: ['reset-preview'],
     queryFn: getResetPreview,
     enabled: showReset,
@@ -843,7 +844,8 @@ export default function Agents() {
   const resetMutation = useMutation({
     mutationFn: resetCampaign,
     onSuccess: (data: { deleted: Record<string, number> }) => {
-      toast.success(`✅ Reset completado. ${data.deleted.clients} clientes eliminados.`)
+      const n = data.deleted.companies ?? data.deleted.clients ?? 0
+      toast.success(`✅ Reset completado. ${n} clientes eliminados. Usuarios conservados.`)
       setShowReset(false)
       setResetConfirmText('')
       qc.invalidateQueries()
@@ -1497,8 +1499,9 @@ export default function Agents() {
                   <div>
                     <p className="text-sm font-medium text-red-700">Resetear campaña</p>
                     <p className="text-xs text-red-500 mt-0.5">
-                      Elimina todos los clientes, importaciones, asignaciones, llamadas y callbacks.<br />
-                      Los usuarios (agentes y admin) <strong>no se borran</strong>.
+                      Elimina clientes, importaciones, llamadas, callbacks, historial de asignaciones,
+                      métricas, sesiones y pines de lote.<br />
+                      Los usuarios (agentes, admin y owner) y el plan <strong>no se borran</strong>.
                     </p>
                   </div>
                   <button
@@ -1524,22 +1527,28 @@ export default function Agents() {
                     </div>
                     <div>
                       <h3 className="font-bold text-gray-900">¿Resetear toda la campaña?</h3>
-                      <p className="text-sm text-gray-500 mt-1">Esta acción es <strong>irreversible</strong>. Se eliminarán permanentemente:</p>
+                      <p className="text-sm text-gray-500 mt-1">Esta acción es <strong>irreversible</strong>. Se eliminarán todos los rastros de la campaña, incluido el historial de asignaciones:</p>
                     </div>
                   </div>
 
                   {resetPreview && (
-                    <div className="bg-gray-50 rounded-lg p-4 grid grid-cols-2 gap-2 text-sm">
+                    <div className="bg-gray-50 rounded-lg p-4 grid grid-cols-2 gap-2 text-sm max-h-56 overflow-y-auto">
                       {[
-                        ['Clientes', resetPreview.clients],
+                        ['Clientes', resetPreview.companies ?? resetPreview.clients],
                         ['Importaciones', resetPreview.importBatches],
                         ['Asignaciones', resetPreview.assignments],
+                        ['Historial de asignaciones', resetPreview.assignmentRuns],
+                        ['Liberaciones', resetPreview.assignmentReleases],
                         ['Llamadas', resetPreview.callLogs],
                         ['Callbacks', resetPreview.callbacks],
+                        ['Métricas diarias', resetPreview.dailyAgentMetrics],
+                        ['Sesiones', resetPreview.userSessions],
+                        ['Logs de reset', resetPreview.agentResetLogs],
+                        ['Tickets de soporte', resetPreview.supportTickets],
                       ].map(([label, count]) => (
-                        <div key={label as string} className="flex justify-between">
+                        <div key={label as string} className="flex justify-between gap-2">
                           <span className="text-gray-500">{label as string}</span>
-                          <span className="font-semibold text-red-700">{count as number}</span>
+                          <span className="font-semibold text-red-700">{(count as number) ?? 0}</span>
                         </div>
                       ))}
                       <div className="col-span-2 border-t border-gray-200 pt-2 flex justify-between">

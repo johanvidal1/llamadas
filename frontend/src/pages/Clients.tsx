@@ -24,7 +24,8 @@ import { FilterDropdown } from '../components/FilterDropdown'
 import { getResponseOption } from '../config/responseOptions'
 import ClientRecordModal from '../components/ClientRecordModal'
 import { Search, Phone, User, CalendarClock, ArrowLeft, Eye, Calendar, X, ChevronDown, ChevronRight, SlidersHorizontal, Loader2, LayoutList } from 'lucide-react'
-import { format, isPast, isToday, isYesterday, startOfMonth, startOfWeek, endOfWeek, addDays, startOfDay } from 'date-fns'
+import { format, isPast, isToday, isYesterday, startOfMonth, startOfWeek, endOfWeek, startOfDay } from 'date-fns'
+import { filterNonEmptyDayGroups, filterNonEmptyDaySummaries } from '../lib/clientsDayGroups'
 import { es } from 'date-fns/locale'
 function hasRecord(c: { lastDisposition?: string | null; _count: { callLogs: number } }): boolean {
   return !!(c.lastDisposition || c._count.callLogs > 0)
@@ -422,20 +423,6 @@ function dayBorderClass(dayKey: string): string {
   return 'border-blue-300'
 }
 
-function generateCalendarDays(from: string, to: string): string[] {
-  if (!from && !to) return []
-  const start = from || to
-  const end = to || from
-  const days: string[] = []
-  let current = new Date(start + 'T12:00:00')
-  const endDate = new Date(end + 'T12:00:00')
-  while (current <= endDate) {
-    days.push(format(current, 'yyyy-MM-dd'))
-    current = addDays(current, 1)
-  }
-  return days.sort((a, b) => b.localeCompare(a))
-}
-
 function bucketClientsByDay(clients: ClientListItem[]): Map<string, ClientListItem[]> {
   const byDay = new Map<string, ClientListItem[]>()
   for (const client of clients) {
@@ -449,23 +436,17 @@ function bucketClientsByDay(clients: ClientListItem[]): Map<string, ClientListIt
   return byDay
 }
 
-function buildDayDisplayGroups(
-  clients: ClientListItem[],
-  registeredFrom: string,
-  registeredTo: string
-): DisplayGroup[] {
+function buildDayDisplayGroups(clients: ClientListItem[]): DisplayGroup[] {
   const bucketed = bucketClientsByDay(clients)
-  const dayKeys =
-    registeredFrom || registeredTo
-      ? generateCalendarDays(registeredFrom, registeredTo)
-      : [...bucketed.keys()].sort((a, b) => b.localeCompare(a))
-
-  return dayKeys.map((key) => ({
-    key,
-    title: formatDayGroupLabel(key),
-    borderClass: dayBorderClass(key),
-    clients: sortClientsForAdminQueue(bucketed.get(key) ?? []),
-  }))
+  const dayKeys = [...bucketed.keys()].sort((a, b) => b.localeCompare(a))
+  return filterNonEmptyDayGroups(
+    dayKeys.map((key) => ({
+      key,
+      title: formatDayGroupLabel(key),
+      borderClass: dayBorderClass(key),
+      clients: sortClientsForAdminQueue(bucketed.get(key) ?? []),
+    }))
+  )
 }
 
 function viewModeButtonLabel(mode: GroupMode): string {
@@ -1540,7 +1521,7 @@ export default function Clients() {
     placeholderData: keepPreviousData,
   })
 
-  const useDaySummary = groupMode === 'day' && !registeredFrom && !registeredTo
+  const useDaySummary = groupMode === 'day'
   const { data: daySummaryData } = useQuery({
     queryKey: ['clients', 'day-summary', clientsFilterParams],
     queryFn: () => getClientsDaySummary(clientsFilterParams),
@@ -1567,19 +1548,19 @@ export default function Clients() {
     if (groupMode === 'status') return groupClientsByStatus(clients)
     if (groupMode === 'day') {
       if (useDaySummary && daySummaryData?.days) {
-        return daySummaryData.days.map((day) => ({
+        return filterNonEmptyDaySummaries(daySummaryData.days).map((day) => ({
           key: day.dayKey,
           title: formatDayGroupLabel(day.dayKey),
           borderClass: dayBorderClass(day.dayKey),
           clients: bucketClientsByDay(clients).get(day.dayKey) ?? [],
         }))
       }
-      return buildDayDisplayGroups(clients, registeredFrom, registeredTo)
+      return buildDayDisplayGroups(clients)
     }
     if (groupMode === 'week') return groupClientsByWeek(clients)
     if (groupMode === 'month') return groupClientsByMonth(clients)
     return []
-  }, [groupMode, clients, agents, registeredFrom, registeredTo, useDaySummary, daySummaryData?.days])
+  }, [groupMode, clients, agents, useDaySummary, daySummaryData?.days])
 
   const daySummaryByKey = useMemo(() => {
     const map = new Map<string, { count: number; registered: number; pending: number }>()
