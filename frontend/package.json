@@ -14,6 +14,7 @@
     "test:response-options": "npx tsx src/config/responseOptions.test.ts",
     "test:list-last-call": "npx tsx src/lib/listLastCallRange.test.ts",
     "test:agent-table-sort": "npx tsx src/lib/agentTableSort.test.ts",
+    "test:client-admin-guard": "npx tsx src/lib/clientAdminGuard.test.ts",
     "test:clients-day-groups": "npx tsx src/lib/clientsDayGroups.test.ts"
   },
   "dependencies": {

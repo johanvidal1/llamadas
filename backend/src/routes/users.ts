@@ -19,6 +19,15 @@ import {
   occupiesClientSeat,
   validateMaxUsers,
 } from '../lib/userPermissions'
+import {
+  LAST_CLIENT_ADMIN_DEACTIVATE_ERROR,
+  LAST_CLIENT_ADMIN_DELETE_ERROR,
+  adminDeleteRequiresStepUp,
+  countOtherClientAdmins,
+  evaluateAdminDeleteStepUp,
+  invalidAdminDeletePassword,
+  isCountedClientAdmin,
+} from '../lib/lastClientAdmin'
 import { excludeArchivedAgentWhere } from '../lib/archivedAgent'
 import { countCallLogsAfterResetByAgentIds } from '../lib/agentReset'
 import { todayYmdInAppTz, localDayStartUtc, localDayEndUtc } from '../lib/appTimezone'
@@ -92,6 +101,10 @@ const updateUserSchema = z.object({
 
 const patchSeatsSchema = z.object({
   maxUsers: z.number({ required_error: 'maxUsers es obligatorio' }).int(),
+})
+
+const deleteUserBodySchema = z.object({
+  password: z.string().optional(),
 })
 
 // GET /api/users — list all users
@@ -287,6 +300,14 @@ router.put('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
     return
   }
 
+  if (data.active === false && isCountedClientAdmin(target)) {
+    const others = await countOtherClientAdmins(target.id)
+    if (others <= 0) {
+      res.status(409).json({ error: LAST_CLIENT_ADMIN_DEACTIVATE_ERROR })
+      return
+    }
+  }
+
   const targetIsAdmin = isAdminUser(target)
 
   if (targetIsAdmin && !isSuperAdminOrOwner(actor)) {
@@ -414,6 +435,38 @@ router.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
   if (!canManageUser(actor, target)) {
     res.status(403).json({ error: 'No tienes permiso para eliminar este usuario' })
     return
+  }
+
+  if (isCountedClientAdmin(target)) {
+    const others = await countOtherClientAdmins(target.id)
+    if (others <= 0) {
+      res.status(409).json({ error: LAST_CLIENT_ADMIN_DELETE_ERROR })
+      return
+    }
+  }
+
+  if (adminDeleteRequiresStepUp(target)) {
+    const parsed = deleteUserBodySchema.safeParse(req.body ?? {})
+    const password = parsed.success ? parsed.data.password : undefined
+    const step = evaluateAdminDeleteStepUp(password)
+    if (!step.ok) {
+      res.status(step.status).json({ error: step.error, code: step.code })
+      return
+    }
+    const actorRow = await prisma.user.findUnique({
+      where: { id: actor.id },
+      select: { password: true },
+    })
+    if (!actorRow) {
+      res.status(401).json({ error: 'Sesión inválida. Inicia sesión nuevamente.' })
+      return
+    }
+    const valid = await bcrypt.compare(step.password, actorRow.password)
+    if (!valid) {
+      const invalid = invalidAdminDeletePassword()
+      res.status(invalid.status).json({ error: invalid.error, code: invalid.code })
+      return
+    }
   }
 
   const { assignments, callLogs, callbacks, imports } = target._count

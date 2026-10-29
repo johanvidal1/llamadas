@@ -34,6 +34,7 @@ import {
   Shield,
   Phone,
   Trash2,
+  Lock,
   AlertTriangle,
   ChevronDown,
   ChevronUp,
@@ -50,6 +51,12 @@ import BatchQueueModeCards, {
   batchQueueModeChipClass,
 } from '../components/BatchQueueModeCards'
 import type { BatchQueueMode } from '../lib/batchQueuePolicy'
+import {
+  LAST_CLIENT_ADMIN_DEACTIVATE_TOOLTIP,
+  LAST_CLIENT_ADMIN_DELETE_TOOLTIP,
+  adminDeleteRequiresStepUp,
+  isLastCountedClientAdmin,
+} from '../lib/clientAdminGuard'
 import {
   DEFAULT_AGENT_TABLE_SORT,
   defaultAgentTableSortDir,
@@ -124,6 +131,7 @@ function canPermanentlyDeleteUser(
   currentUserId: string | undefined,
   isSuperAdminOrOwner: boolean,
   currentUserIsSystemOwner: boolean,
+  users: AppUser[] = [],
 ) {
   const adminTarget = isAdminUser(u)
   const canManageAdmin = !adminTarget || isSuperAdminOrOwner
@@ -132,7 +140,8 @@ function canPermanentlyDeleteUser(
     !u.isSystemOwner &&
     !(u.isSuperAdmin && !currentUserIsSystemOwner) &&
     !hasHistory(u) &&
-    u.id !== currentUserId
+    u.id !== currentUserId &&
+    !isLastCountedClientAdmin(u, users)
   )
 }
 
@@ -200,7 +209,7 @@ function UserTable({
   rowRefs?: MutableRefObject<Map<string, HTMLTableRowElement>>
   onQueueModeChange?: (u: AppUser, mode: BatchQueueMode) => void
   enableBulkSelect?: boolean
-  onDeleteMany?: (users: AppUser[]) => Promise<void>
+  onDeleteMany?: (users: AppUser[], password?: string) => Promise<void>
 }) {
   const [expandedPresenceId, setExpandedPresenceId] = useState<string | null>(null)
   const [queueEditorId, setQueueEditorId] = useState<string | null>(null)
@@ -214,6 +223,7 @@ function UserTable({
   const [showBulkDelete, setShowBulkDelete] = useState(false)
   const [pendingDeleteUsers, setPendingDeleteUsers] = useState<AppUser[]>([])
   const [bulkDeleteConfirmText, setBulkDeleteConfirmText] = useState('')
+  const [deleteStepUpPassword, setDeleteStepUpPassword] = useState('')
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const headerCheckboxRef = useRef<HTMLInputElement>(null)
 
@@ -280,6 +290,7 @@ function UserTable({
     if (targets.length === 0) return
     setPendingDeleteUsers(targets)
     setBulkDeleteConfirmText('')
+    setDeleteStepUpPassword('')
     setShowBulkDelete(true)
   }
 
@@ -291,15 +302,24 @@ function UserTable({
     if (bulkDeleting) return
     setShowBulkDelete(false)
     setBulkDeleteConfirmText('')
+    setDeleteStepUpPassword('')
     setPendingDeleteUsers([])
   }
 
+  const pendingNeedsStepUp = pendingDeleteUsers.some((u) => adminDeleteRequiresStepUp(u))
+  const deleteConfirmReady =
+    bulkDeleteConfirmText === 'ELIMINAR' &&
+    (!pendingNeedsStepUp || deleteStepUpPassword.length > 0)
+
   const confirmBulkDelete = async () => {
-    if (pendingDeleteUsers.length === 0 || bulkDeleteConfirmText !== 'ELIMINAR') return
+    if (pendingDeleteUsers.length === 0 || !deleteConfirmReady) return
     setBulkDeleting(true)
     try {
       if (onDeleteMany) {
-        await onDeleteMany(pendingDeleteUsers)
+        await onDeleteMany(
+          pendingDeleteUsers,
+          pendingNeedsStepUp ? deleteStepUpPassword : undefined,
+        )
       } else if (onDelete) {
         for (const target of pendingDeleteUsers) onDelete(target)
       }
@@ -314,7 +334,10 @@ function UserTable({
       })
       setShowBulkDelete(false)
       setBulkDeleteConfirmText('')
+      setDeleteStepUpPassword('')
       setPendingDeleteUsers([])
+    } catch {
+      // Keep the modal open so the user can retry (wrong password, last admin, etc.).
     } finally {
       setBulkDeleting(false)
     }
@@ -491,11 +514,13 @@ function UserTable({
             !!presenceByUserId &&
             (isAgentRole || (adminTarget && currentUserIsSystemOwner))
           const canManageAdmin = !adminTarget || isSuperAdminOrOwner
+          const lastClientAdmin = isLastCountedClientAdmin(u, users)
           const canDelete = canPermanentlyDeleteUser(
             u,
             currentUserId,
             isSuperAdminOrOwner,
             currentUserIsSystemOwner,
+            users,
           )
           const deleteTooltip = u.isSystemOwner
             ? 'No se puede eliminar al propietario del sistema'
@@ -505,14 +530,20 @@ function UserTable({
                 ? 'Solo el super admin puede eliminar administradores'
                 : u.id === currentUserId
                   ? 'No puedes eliminar tu propia cuenta'
-                  : hasHistory(u)
-                    ? deleteDisabledReason(u)
-                    : 'Eliminar permanentemente'
+                  : lastClientAdmin
+                    ? LAST_CLIENT_ADMIN_DELETE_TOOLTIP
+                    : hasHistory(u)
+                      ? deleteDisabledReason(u)
+                      : 'Eliminar permanentemente'
           const deactivateTooltip = !canManageAdmin
             ? 'Solo el super admin puede desactivar administradores'
             : u.id === currentUserId
               ? 'No puedes desactivar tu propia cuenta'
-              : 'Desactivar usuario'
+              : lastClientAdmin
+                ? LAST_CLIENT_ADMIN_DEACTIVATE_TOOLTIP
+                : 'Desactivar usuario'
+          const canDeactivate =
+            !!onDeactivate && canManageAdmin && u.id !== currentUserId && !lastClientAdmin
           const isHighlighted = highlightedUserId === u.id
 
           return (
@@ -663,7 +694,7 @@ function UserTable({
                   >
                     <Edit2 size={15} />
                   </button>
-                  {onDeactivate && canManageAdmin && u.id !== currentUserId && (
+                  {onDeactivate && canDeactivate && (
                     <button
                       onClick={() => onDeactivate(u)}
                       className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-amber-600"
@@ -672,7 +703,7 @@ function UserTable({
                       <UserX size={15} />
                     </button>
                   )}
-                  {onDeactivate && !canManageAdmin && (
+                  {onDeactivate && !canDeactivate && (u.id !== currentUserId || !canManageAdmin) && (
                     <button
                       disabled
                       className="p-1.5 rounded-lg text-gray-300 cursor-not-allowed"
@@ -866,6 +897,31 @@ function UserTable({
                 autoFocus
               />
             </div>
+            {pendingNeedsStepUp && (
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                  <Lock size={14} className="text-amber-700" />
+                  Tu contraseña
+                </label>
+                <p className="text-xs text-gray-500">
+                  Para quitar un administrador, confirma con la contraseña de tu sesión.
+                </p>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  className="input"
+                  placeholder="Contraseña"
+                  value={deleteStepUpPassword}
+                  onChange={(e) => setDeleteStepUpPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      void confirmBulkDelete()
+                    }
+                  }}
+                />
+              </div>
+            )}
             <div className="flex gap-3">
               <button
                 type="button"
@@ -878,7 +934,7 @@ function UserTable({
               <button
                 type="button"
                 onClick={() => void confirmBulkDelete()}
-                disabled={bulkDeleteConfirmText !== 'ELIMINAR' || bulkDeleting}
+                disabled={!deleteConfirmReady || bulkDeleting}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
               >
                 <Trash2 size={15} />
@@ -1344,17 +1400,26 @@ export default function Agents() {
     setDeletePendingCallbacks(true)
   }
 
-  const handleDeleteMany = async (targets: AppUser[]) => {
+  const handleDeleteMany = async (targets: AppUser[], password?: string) => {
     const omitted: string[] = []
     const toDelete: AppUser[] = []
+    const allListedUsers = visibleUsers
+    const bulkOnlyAgents = targets.length > 1
     for (const u of targets) {
-      if (u.role !== 'AGENT' || isAdminUser(u) || u.id === user?.id) continue
+      if (u.id === user?.id) continue
+      if (bulkOnlyAgents && (u.role !== 'AGENT' || isAdminUser(u))) continue
       if (hasHistory(u)) {
         omitted.push(u.name)
         continue
       }
       if (
-        !canPermanentlyDeleteUser(u, user?.id, isSuperAdminOrOwner, isSystemOwner)
+        !canPermanentlyDeleteUser(
+          u,
+          user?.id,
+          isSuperAdminOrOwner,
+          isSystemOwner,
+          allListedUsers,
+        )
       ) {
         continue
       }
@@ -1363,20 +1428,28 @@ export default function Agents() {
 
     let deleted = 0
     const failed: string[] = []
+    let lastError: string | undefined
     for (const u of toDelete) {
       try {
-        await deleteUser(u.id)
+        await deleteUser(u.id, adminDeleteRequiresStepUp(u) ? password : undefined)
         deleted += 1
-      } catch {
+      } catch (err: unknown) {
         failed.push(u.name)
+        lastError =
+          (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+          lastError
       }
     }
 
     if (deleted > 0) {
+      const onlyAdmin =
+        deleted === 1 && toDelete.length === 1 && adminDeleteRequiresStepUp(toDelete[0])
       toast.success(
-        deleted === 1
-          ? '1 agente eliminado permanentemente'
-          : `${deleted} agentes eliminados permanentemente`,
+        onlyAdmin
+          ? `${toDelete[0].name} eliminado permanentemente`
+          : deleted === 1
+            ? '1 agente eliminado permanentemente'
+            : `${deleted} agentes eliminados permanentemente`,
       )
       qc.invalidateQueries({ queryKey: ['users'] })
       qc.invalidateQueries({ queryKey: ['user-seats'] })
@@ -1390,13 +1463,17 @@ export default function Agents() {
     }
     if (failed.length > 0) {
       toast.error(
-        failed.length === 1
-          ? `No se pudo eliminar a ${failed[0]}`
-          : `No se pudo eliminar a ${failed.join(', ')}`,
+        lastError ??
+          (failed.length === 1
+            ? `No se pudo eliminar a ${failed[0]}`
+            : `No se pudo eliminar a ${failed.join(', ')}`),
       )
     }
     if (deleted === 0 && omitted.length === 0 && failed.length === 0) {
-      toast.error('No hay agentes que se puedan eliminar')
+      toast.error('No hay usuarios que se puedan eliminar')
+    }
+    if (deleted === 0 && failed.length > 0) {
+      throw new Error(lastError ?? 'No se pudo eliminar')
     }
   }
 

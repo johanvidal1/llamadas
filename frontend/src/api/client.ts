@@ -46,7 +46,7 @@ api.interceptors.response.use(
       if (code === 'SESSION_REVOKED') {
         sessionStorage.setItem('sessionRevoked', '1')
       }
-      if (code === 'ADMIN_ELEVATION_INVALID') {
+      if (code === 'ADMIN_ELEVATION_INVALID' || code === 'ADMIN_DELETE_PASSWORD_INVALID') {
         return Promise.reject(err)
       }
       localStorage.removeItem('token')
@@ -213,7 +213,8 @@ export const updateUser = (id: string, data: object) =>
   api.put(`/users/${id}`, data).then((r) => r.data)
 export const deactivateUser = (id: string) => updateUser(id, { active: false })
 export const reactivateUser = (id: string) => updateUser(id, { active: true })
-export const deleteUser = (id: string) => api.delete(`/users/${id}`).then((r) => r.data)
+export const deleteUser = (id: string, password?: string) =>
+  api.delete(`/users/${id}`, password ? { data: { password } } : undefined).then((r) => r.data)
 
 export type UserSeats = {
   used: number
