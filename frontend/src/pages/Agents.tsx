@@ -184,7 +184,7 @@ function UserTable({
   onEdit: (u: AppUser) => void
   onDeactivate?: (u: AppUser) => void
   onReactivate?: (u: AppUser) => void
-  onDelete: (u: AppUser) => void
+  onDelete?: (u: AppUser) => void
   currentUserId?: string
   isSuperAdminOrOwner?: boolean
   currentUserIsSystemOwner?: boolean
@@ -212,6 +212,7 @@ function UserTable({
   const [sortDir, setSortDir] = useState(defaultAgentTableSortDir(DEFAULT_AGENT_TABLE_SORT))
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [showBulkDelete, setShowBulkDelete] = useState(false)
+  const [pendingDeleteUsers, setPendingDeleteUsers] = useState<AppUser[]>([])
   const [bulkDeleteConfirmText, setBulkDeleteConfirmText] = useState('')
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const headerCheckboxRef = useRef<HTMLInputElement>(null)
@@ -273,21 +274,47 @@ function UserTable({
 
   const selectedUsers = sortedUsers.filter((u) => selectedIds.has(u.id))
   const selectedCount = selectedUsers.length
+  const pendingDeleteCount = pendingDeleteUsers.length
+
+  const openDeleteModal = (targets: AppUser[]) => {
+    if (targets.length === 0) return
+    setPendingDeleteUsers(targets)
+    setBulkDeleteConfirmText('')
+    setShowBulkDelete(true)
+  }
+
+  const handleDelete = (u: AppUser) => {
+    openDeleteModal([u])
+  }
 
   const closeBulkDeleteModal = () => {
     if (bulkDeleting) return
     setShowBulkDelete(false)
     setBulkDeleteConfirmText('')
+    setPendingDeleteUsers([])
   }
 
   const confirmBulkDelete = async () => {
-    if (!onDeleteMany || selectedUsers.length === 0) return
+    if (pendingDeleteUsers.length === 0 || bulkDeleteConfirmText !== 'ELIMINAR') return
     setBulkDeleting(true)
     try {
-      await onDeleteMany(selectedUsers)
-      setSelectedIds(new Set())
+      if (onDeleteMany) {
+        await onDeleteMany(pendingDeleteUsers)
+      } else if (onDelete) {
+        for (const target of pendingDeleteUsers) onDelete(target)
+      }
+      const deletedIds = new Set(pendingDeleteUsers.map((u) => u.id))
+      setSelectedIds((prev) => {
+        let changed = false
+        const next = new Set(prev)
+        for (const id of deletedIds) {
+          if (next.delete(id)) changed = true
+        }
+        return changed ? next : prev
+      })
       setShowBulkDelete(false)
       setBulkDeleteConfirmText('')
+      setPendingDeleteUsers([])
     } finally {
       setBulkDeleting(false)
     }
@@ -329,10 +356,7 @@ function UserTable({
         </p>
         <button
           type="button"
-          onClick={() => {
-            setBulkDeleteConfirmText('')
-            setShowBulkDelete(true)
-          }}
+          onClick={() => openDeleteModal(selectedUsers)}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors"
         >
           <Trash2 size={14} />
@@ -689,7 +713,7 @@ function UserTable({
                     </button>
                   )}
                   <button
-                    onClick={() => canDelete && onDelete(u)}
+                    onClick={() => canDelete && handleDelete(u)}
                     disabled={!canDelete}
                     className={`p-1.5 rounded-lg ${
                       canDelete
@@ -790,7 +814,7 @@ function UserTable({
           : undefined
       }
     />
-    {showBulkDelete && (
+    {showBulkDelete && pendingDeleteCount > 0 && (
       <>
         <div className="fixed inset-0 bg-black/40 z-40" onClick={closeBulkDeleteModal} />
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -801,16 +825,27 @@ function UserTable({
               </div>
               <div>
                 <h3 className="font-bold text-gray-900">
-                  ¿Eliminar {selectedCount} agente{selectedCount === 1 ? '' : 's'}?
+                  {pendingDeleteCount === 1
+                    ? `¿Eliminar a ${pendingDeleteUsers[0].name}?`
+                    : `¿Eliminar ${pendingDeleteCount} agentes?`}
                 </h3>
                 <p className="text-sm text-gray-500 mt-1">
-                  Esta acción es <strong>irreversible</strong>. Se eliminarán {selectedCount}{' '}
-                  usuario{selectedCount === 1 ? '' : 's'} seleccionado
-                  {selectedCount === 1 ? '' : 's'}. Quien tenga historial (asignaciones,
-                  llamadas, callbacks o importaciones) se omitirá.
+                  Esta acción es <strong>irreversible</strong>.{' '}
+                  {pendingDeleteCount === 1
+                    ? 'Se eliminará al usuario de forma permanente.'
+                    : `Se eliminarán ${pendingDeleteCount} usuarios.`}{' '}
+                  Quien tenga historial (asignaciones, llamadas, callbacks o importaciones) se
+                  omitirá.
                 </p>
               </div>
             </div>
+            {pendingDeleteCount > 1 && (
+              <ul className="max-h-28 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 space-y-0.5">
+                {pendingDeleteUsers.map((target) => (
+                  <li key={target.id}>{target.name}</li>
+                ))}
+              </ul>
+            )}
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-gray-700">
                 Escribe <span className="font-mono font-bold text-red-600">ELIMINAR</span> para
@@ -822,6 +857,12 @@ function UserTable({
                 placeholder="ELIMINAR"
                 value={bulkDeleteConfirmText}
                 onChange={(e) => setBulkDeleteConfirmText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void confirmBulkDelete()
+                  }
+                }}
                 autoFocus
               />
             </div>
@@ -1204,18 +1245,6 @@ export default function Agents() {
     },
   })
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteUser(id),
-    onSuccess: () => {
-      toast.success('Usuario eliminado permanentemente')
-      qc.invalidateQueries({ queryKey: ['users'] })
-      qc.invalidateQueries({ queryKey: ['user-seats'] })
-    },
-    onError: (err: { response?: { data?: { error?: string } } }) => {
-      toast.error(err?.response?.data?.error ?? 'Error al eliminar el usuario')
-    },
-  })
-
   const patchSeatsMutation = useMutation({
     mutationFn: (maxUsers: number) => patchUserSeats(maxUsers),
     onSuccess: (data) => {
@@ -1313,12 +1342,6 @@ export default function Agents() {
     setAgentResetConfirmText('')
     setAgentResetReason('')
     setDeletePendingCallbacks(true)
-  }
-
-  const handleDelete = (u: AppUser) => {
-    if (confirm(`¿Eliminar permanentemente a ${u.name}? Esta acción no se puede deshacer.`)) {
-      deleteMutation.mutate(u.id)
-    }
   }
 
   const handleDeleteMany = async (targets: AppUser[]) => {
@@ -1541,7 +1564,6 @@ export default function Agents() {
             users={clientActiveUsers}
             onEdit={handleEdit}
             onDeactivate={handleDeactivate}
-            onDelete={handleDelete}
             currentUserId={user?.id}
             isSuperAdminOrOwner={isSuperAdminOrOwner}
             currentUserIsSystemOwner={isSystemOwner}
@@ -1571,12 +1593,12 @@ export default function Agents() {
             users={ownerUsers}
             onEdit={handleEdit}
             onDeactivate={handleDeactivate}
-            onDelete={handleDelete}
             currentUserId={user?.id}
             isSuperAdminOrOwner={isSuperAdminOrOwner}
             currentUserIsSystemOwner={isSystemOwner}
             presenceByUserId={presenceByUserId}
             onRevokeSessions={handleRevokeSessions}
+            onDeleteMany={handleDeleteMany}
             muted
             showTotalCallsColumn={showTotalCallsColumn}
             onToggleShowTotalCallsColumn={toggleShowTotalCallsColumn}
@@ -1613,7 +1635,7 @@ export default function Agents() {
                 users={inactiveUsers}
                 onEdit={handleEdit}
                 onReactivate={handleReactivate}
-                onDelete={handleDelete}
+                onDeleteMany={handleDeleteMany}
                 currentUserId={user?.id}
                 isSuperAdminOrOwner={isSuperAdminOrOwner}
                 currentUserIsSystemOwner={isSystemOwner}
