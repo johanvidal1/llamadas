@@ -6,7 +6,11 @@ import {
   buildAgentResetPreview,
   executeAgentReset,
 } from '../lib/agentReset'
-import { buildCampaignResetPreview, executeCampaignReset } from '../lib/campaignReset'
+import {
+  buildCampaignResetPreview,
+  CampaignResetPartialError,
+  executeCampaignReset,
+} from '../lib/campaignReset'
 import { clearDashboardStatsCache, clearReportsCache } from './dashboard'
 
 const router = Router()
@@ -33,10 +37,26 @@ router.post('/reset-campaign', requireAdmin, async (req: AuthRequest, res: Respo
   }
 
   const tenantId = req.tenant!.id
-  const result = await executeCampaignReset(tenantId)
-  clearReportsCache()
-  clearDashboardStatsCache()
-  res.json(result)
+  try {
+    const result = await executeCampaignReset(tenantId, {
+      keepSessionUserId: req.user?.id,
+    })
+    clearReportsCache()
+    clearDashboardStatsCache()
+    res.json(result)
+  } catch (err) {
+    if (err instanceof CampaignResetPartialError) {
+      res.status(500).json({
+        error: err.message,
+        code: 'CAMPAIGN_RESET_PARTIAL',
+        failedStep: err.failedStep,
+        completedSteps: err.completedSteps,
+        deleted: err.deleted,
+      })
+      return
+    }
+    throw err
+  }
 })
 
 // GET /api/admin/reset-campaign/preview — returns counts before reset

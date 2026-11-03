@@ -1168,7 +1168,14 @@ export type CampaignResetPreview = {
 
 export const getResetPreview = () =>
   api.get('/admin/reset-campaign/preview').then((r) => r.data as CampaignResetPreview)
-export const resetCampaign = () => api.post('/admin/reset-campaign', { confirm: 'RESETEAR' }).then((r) => r.data)
+
+/** Longer than the global 30s axios timeout: prod wipe of tens of thousands of rows. */
+export const CAMPAIGN_RESET_TIMEOUT_MS = 180_000
+
+export const resetCampaign = () =>
+  api
+    .post('/admin/reset-campaign', { confirm: 'RESETEAR' }, { timeout: CAMPAIGN_RESET_TIMEOUT_MS })
+    .then((r) => r.data)
 
 export type AgentResetPreview = {
   agent: { id: string; name: string; email: string }

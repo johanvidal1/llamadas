@@ -56,3 +56,12 @@ export const CAMPAIGN_RESET_USER_FIELDS_CLEARED = [
   'workingBatchIdEntel',
   'workingBatchIdMovistar',
 ] as const
+
+/**
+ * Large tables deleted in id chunks (each chunk commits) so a 30k+ campaign
+ * does not sit in one deleteMany that can starve the Prisma pool.
+ */
+export const CAMPAIGN_RESET_CHUNKED_TABLES = ['CallLog', 'Contact', 'Company'] as const
+
+/** Interactive $transaction is not used — each deleteMany commits on its own. */
+export const CAMPAIGN_RESET_USES_INTERACTIVE_TRANSACTION = false

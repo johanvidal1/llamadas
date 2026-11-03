@@ -23,6 +23,7 @@ import {
   type UserSeats,
 } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
+import axios from 'axios'
 import toast from 'react-hot-toast'
 import {
   UserPlus,
@@ -1153,14 +1154,33 @@ export default function Agents() {
 
   const resetMutation = useMutation({
     mutationFn: resetCampaign,
+    onMutate: () => {
+      toast.loading('Esto puede tardar unos minutos…', { id: 'campaign-reset' })
+    },
     onSuccess: (data: { deleted: Record<string, number> }) => {
       const n = data.deleted.companies ?? data.deleted.clients ?? 0
-      toast.success(`✅ Reset completado. ${n} clientes eliminados. Usuarios conservados.`)
+      toast.success(`✅ Reset completado. ${n} clientes eliminados. Usuarios conservados.`, {
+        id: 'campaign-reset',
+      })
       setShowReset(false)
       setResetConfirmText('')
       qc.invalidateQueries()
     },
-    onError: () => toast.error('Error al resetear la campaña'),
+    onError: (err: unknown) => {
+      const timedOut =
+        axios.isAxiosError(err) &&
+        (err.code === 'ECONNABORTED' || /timeout/i.test(err.message ?? ''))
+      const apiError =
+        axios.isAxiosError(err) && typeof err.response?.data?.error === 'string'
+          ? err.response.data.error
+          : null
+      toast.error(
+        timedOut
+          ? 'El reset tardó más de lo esperado. Recarga Clientes antes de reintentar; puede que ya haya terminado.'
+          : apiError ?? 'Error al resetear la campaña',
+        { id: 'campaign-reset' }
+      )
+    },
   })
 
   const { data: users = [], isLoading } = useQuery({ queryKey: ['users'], queryFn: getUsers })
@@ -1888,7 +1908,11 @@ export default function Agents() {
           {/* ── Reset confirmation modal ── */}
           {showReset && (
             <>
-              <div className="fixed inset-0 bg-black/40 z-40" onClick={() => { setShowReset(false); setResetConfirmText('') }} />
+              <div className="fixed inset-0 bg-black/40 z-40" onClick={() => {
+                if (resetMutation.isPending) return
+                setShowReset(false)
+                setResetConfirmText('')
+              }} />
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                 <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-5">
                   <div className="flex items-start gap-3">
@@ -1945,6 +1969,7 @@ export default function Agents() {
                   <div className="flex gap-3">
                     <button
                       onClick={() => { setShowReset(false); setResetConfirmText('') }}
+                      disabled={resetMutation.isPending}
                       className="flex-1 btn-secondary"
                     >
                       Cancelar
@@ -1955,7 +1980,7 @@ export default function Agents() {
                       className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
                     >
                       <Trash2 size={15} />
-                      {resetMutation.isPending ? 'Reseteando...' : 'Confirmar reset'}
+                      {resetMutation.isPending ? 'Reseteando…' : 'Confirmar reset'}
                     </button>
                   </div>
                 </div>
