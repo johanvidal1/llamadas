@@ -4,6 +4,9 @@ import { Readable } from 'stream'
 import { dedupeParsedMobileLines, isValidMobileLineNumber, mobileDigits } from './mobileLine'
 import { type ImportOperator, isImportOperator } from './operator'
 import { parseMovistarExcel } from './parseMovistarWorkbook'
+import { asDistinctPeruMobile, normalizePhone } from './telefono2'
+
+export { normalizePhone } from './telefono2'
 
 export interface ParsedContact {
   nombre: string
@@ -11,6 +14,7 @@ export interface ParsedContact {
   dni?: string
   email?: string
   telefono?: string
+  telefono2?: string
 }
 
 export interface ParsedMobileLine {
@@ -46,10 +50,6 @@ export interface ParseResult {
   skippedVacioCount?: number
 }
 
-export function normalizePhone(raw: string): string {
-  return raw.replace(/\s+/g, '').replace(/^\+51/, '').trim()
-}
-
 function normalizeHeader(key: string): string {
   return key
     .trim()
@@ -79,6 +79,8 @@ const HEADER_ALIASES: Record<string, string> = {
   celular2: 'telefono2',
   movil2: 'telefono2',
   phone2: 'telefono2',
+  asset_asociado: 'telefono2',
+  asset: 'telefono2',
   email: 'email',
   correo: 'email',
   dni: 'dni',
@@ -188,19 +190,20 @@ function normalizeRow(row: Record<string, unknown>): Record<string, unknown> {
     }
   }
 
-  const telefono2Raw = String(normalized['telefono2'] ?? '').trim()
   const telefonoRaw = String(normalized['telefono'] ?? '').trim()
-  const telefono2 = telefono2Raw ? normalizePhone(telefono2Raw) : ''
   const telefono = telefonoRaw ? normalizePhone(telefonoRaw) : ''
+  const telefono2 = asDistinctPeruMobile(String(normalized['telefono2'] ?? ''), telefono)
 
-  delete normalized['telefono2']
-
-  // One Excel row → one contact: keep primary telefono, fall back to telefono2
-  const mergedPhone = telefono || telefono2
-  if (mergedPhone) {
-    normalized['telefono'] = mergedPhone
+  if (telefono) {
+    normalized['telefono'] = telefono
   } else {
     delete normalized['telefono']
+  }
+
+  if (telefono2) {
+    normalized['telefono2'] = telefono2
+  } else {
+    delete normalized['telefono2']
   }
 
   return normalized
@@ -221,6 +224,7 @@ function parseRows(rows: Record<string, unknown>[]): ParsedCompany[] {
     const email = String(row['email'] ?? '').trim() || undefined
     const telefonoRaw = String(row['telefono'] ?? '').trim()
     const telefono = telefonoRaw ? normalizePhone(telefonoRaw) : undefined
+    const telefono2 = asDistinctPeruMobile(String(row['telefono2'] ?? ''), telefono)
     const estado = String(row['estado'] ?? '').trim() || undefined
     const fechaConsulta = String(row['fecha_consulta'] ?? '').trim() || undefined
 
@@ -255,6 +259,7 @@ function parseRows(rows: Record<string, unknown>[]): ParsedCompany[] {
       dni,
       email,
       telefono,
+      telefono2,
     })
   }
 

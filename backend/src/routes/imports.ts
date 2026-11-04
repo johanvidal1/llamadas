@@ -57,6 +57,7 @@ function toContactCreate(contacts: ParsedCompany['contacts']) {
     dni: c.dni ?? null,
     email: c.email ?? null,
     telefono: c.telefono ?? null,
+    telefono2: c.telefono2 ?? null,
   }))
 }
 
@@ -659,7 +660,7 @@ router.post(
       const withoutContacts = parsed.filter((c) => c.contacts.length === 0).length
       const withoutUsers = parsed.filter((c) => c.hasUsuarios === false).length
       const withoutPhone = parsed.filter(
-        (c) => c.contacts.length === 0 || !c.contacts.some((ct) => ct.telefono)
+        (c) => c.contacts.length === 0 || !c.contacts.some((ct) => ct.telefono || ct.telefono2)
       ).length
 
       const batch = await prisma.$transaction(

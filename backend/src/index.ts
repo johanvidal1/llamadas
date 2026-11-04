@@ -4,6 +4,7 @@ import express from 'express'
 import cors from 'cors'
 
 import { ensureArchivedAgent } from './lib/archivedAgent'
+import { backfillEntelTelefono2FromOriginals } from './lib/backfillTelefono2'
 import { OPTICK_TENANT_ID } from './lib/tenant'
 import { runWithTenant } from './lib/tenantContext'
 import authRouter from './routes/auth'
@@ -129,6 +130,17 @@ app.listen(PORT, () => {
   void runWithTenant(OPTICK_TENANT_ID, () => ensureArchivedAgent()).catch((err) => {
     console.error('No se pudo asegurar el agente comodín:', err)
   })
+  void backfillEntelTelefono2FromOriginals()
+    .then((result) => {
+      if (result.updated > 0 || result.batches > 0) {
+        console.log(
+          `telefono2 backfill Entel: ${result.updated} contactos, ${result.skipped} omitidos, ${result.batches} lotes`
+        )
+      }
+    })
+    .catch((err) => {
+      console.error('telefono2 backfill Entel falló:', err)
+    })
 })
 
 export default app

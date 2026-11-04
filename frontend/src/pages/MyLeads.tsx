@@ -41,7 +41,7 @@ import {
   X,
   GripHorizontal,
 } from 'lucide-react'
-import { dedupeMobileLinesByNumber } from '../lib/mobileLine'
+import { dedupeMobileLinesByNumber, isDisplayableTelefono2 } from '../lib/mobileLine'
 import CallModal from '../components/CallModal'
 import CompleteCallbackModal, { type CompleteConfirm } from '../components/CompleteCallbackModal'
 import DispositionSelector from '../components/DispositionSelector'
@@ -139,6 +139,7 @@ interface ClientSummary {
     nombre: string
     tipoContacto?: string
     telefono?: string
+    telefono2?: string
     email?: string
     dni?: string
     createdAt?: string
@@ -184,6 +185,7 @@ interface ClientDetail {
     nombre: string
     tipoContacto?: string
     telefono?: string
+    telefono2?: string
     email?: string
     dni?: string
     createdAt?: string
@@ -585,9 +587,13 @@ function ReadField({
 function ContactPhoneField({
   telefono,
   onChange,
+  label = 'Teléfono',
+  readOnly = false,
 }: {
   telefono: string
-  onChange: (v: string) => void
+  onChange?: (v: string) => void
+  label?: string
+  readOnly?: boolean
 }) {
   const copyPhone = () => {
     if (!telefono) return
@@ -595,17 +601,23 @@ function ContactPhoneField({
   }
 
   return (
-    <div className="col-span-full">
-      <span className="text-xs text-gray-500 font-medium">Teléfono</span>
+    <div>
+      <span className="text-xs text-gray-500 font-medium">{label}</span>
       <div className="mt-0.5 flex items-center gap-3 rounded-lg border-2 border-blue-200 bg-blue-50 px-4 py-3">
         <Phone size={20} className="text-blue-600 shrink-0" />
-        <input
-          type="tel"
-          value={telefono}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Sin teléfono — ingresar manualmente"
-          className="flex-1 text-2xl font-mono font-semibold text-blue-900 tracking-wide bg-transparent border-none outline-none placeholder:text-blue-300 placeholder:text-base placeholder:font-sans min-w-0"
-        />
+        {readOnly ? (
+          <span className="flex-1 text-2xl font-mono font-semibold text-blue-900 tracking-wide min-w-0">
+            {telefono}
+          </span>
+        ) : (
+          <input
+            type="tel"
+            value={telefono}
+            onChange={(e) => onChange?.(e.target.value)}
+            placeholder="Sin teléfono — ingresar manualmente"
+            className="flex-1 text-2xl font-mono font-semibold text-blue-900 tracking-wide bg-transparent border-none outline-none placeholder:text-blue-300 placeholder:text-base placeholder:font-sans min-w-0"
+          />
+        )}
         {telefono && (
           <>
             <a
@@ -619,7 +631,7 @@ function ContactPhoneField({
               type="button"
               onClick={copyPhone}
               title="Copiar teléfono"
-              className="flex items-center gap-1 rounded-md border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors shrink-0"
+              className="flex items-center justify-center gap-1 rounded-md border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors shrink-0"
             >
               <Copy size={13} /> Copiar
             </button>
@@ -1371,6 +1383,7 @@ export default function MyLeads() {
               nombre: ct.nombre ?? '',
               tipoContacto: ct.tipoContacto,
               telefono: ct.telefono,
+              telefono2: ct.telefono2,
               email: ct.email,
               dni: ct.dni,
               createdAt: ct.createdAt,
@@ -2494,9 +2507,10 @@ export default function MyLeads() {
   }
 
   const canSaveCallResult = useMemo(() => {
-    const hasPhone = Boolean(editTelefono.trim())
+    const idx = Math.min(activeContactIdx, Math.max(0, displayContacts.length - 1))
+    const hasPhone = Boolean(editTelefono.trim() || displayContacts[idx]?.telefono2)
     return (disposition !== '' || schedDate !== '') && hasPhone
-  }, [disposition, schedDate, editTelefono])
+  }, [disposition, schedDate, editTelefono, displayContacts, activeContactIdx])
 
   useEffect(() => {
     setSaveNotice(null)
@@ -2646,7 +2660,7 @@ export default function MyLeads() {
         if (requiresCallbackDate(disposition) && !schedDate) {
           throw new Error('Selecciona la fecha para el callback')
         }
-        if (!editTelefono.trim()) {
+        if (!editTelefono.trim() && !displayContacts[Math.min(activeContactIdx, Math.max(0, displayContacts.length - 1))]?.telefono2) {
           throw new Error('Sin teléfono de usuario: no se puede guardar el resultado de la llamada.')
         }
 
@@ -3751,7 +3765,22 @@ export default function MyLeads() {
                           Contacto {safeContactIdx + 1} de {displayContacts.length}
                         </p>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                          <ContactPhoneField telefono={editTelefono} onChange={setEditTelefono} />
+                          <div
+                            className={`col-span-full grid gap-3 ${
+                              isDisplayableTelefono2(activeContact?.telefono2)
+                                ? 'grid-cols-1 sm:grid-cols-2'
+                                : 'grid-cols-1'
+                            }`}
+                          >
+                            <ContactPhoneField telefono={editTelefono} onChange={setEditTelefono} />
+                            {isDisplayableTelefono2(activeContact?.telefono2) && (
+                              <ContactPhoneField
+                                telefono={activeContact?.telefono2 ?? ''}
+                                label="Teléfono 2"
+                                readOnly
+                              />
+                            )}
+                          </div>
                           <EditField label="Email" value={editEmail} onChange={setEditEmail} placeholder="correo@ejemplo.com" />
                           <EditField label="DNI" value={editDni} onChange={setEditDni} placeholder="Documento" />
                         </div>
@@ -3919,7 +3948,7 @@ export default function MyLeads() {
                     Actualizando cola…
                   </span>
                 )}
-                {!editTelefono.trim() && (
+                {!editTelefono.trim() && !isDisplayableTelefono2(activeContact?.telefono2) && (
                   <p className="text-xs text-amber-700 sm:basis-full">
                     Sin teléfono de usuario: no se puede guardar el resultado de la llamada.
                   </p>
@@ -4549,7 +4578,7 @@ export default function MyLeads() {
         const queueIndexById = new Map(visibleNavClients.map((c, i) => [c.id, i]))
         const listFiltered = listClients.filter((c) => {
           const q = listSearch.toLowerCase()
-          const matchSearch = !q || c.ruc.toLowerCase().includes(q) || (c.razonSocial ?? '').toLowerCase().includes(q) || c.contacts.some((ct) => ct.nombre.toLowerCase().includes(q) || (ct.telefono ?? '').includes(q))
+          const matchSearch = !q || c.ruc.toLowerCase().includes(q) || (c.razonSocial ?? '').toLowerCase().includes(q) || c.contacts.some((ct) => ct.nombre.toLowerCase().includes(q) || (ct.telefono ?? '').includes(q) || (ct.telefono2 ?? '').includes(q))
           return matchSearch
         })
         // Last registered in this lista (createdAt order): jump target for «Última registrada».
@@ -4739,6 +4768,7 @@ export default function MyLeads() {
                       <th className="text-left px-4 py-3 font-medium text-gray-600">RUC</th>
                       <th className="text-left px-4 py-3 font-medium text-gray-600">Razón Social / Contacto</th>
                       <th className="text-left px-4 py-3 font-medium text-gray-600">Teléfono</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-600">Teléfono 2</th>
                       {!selectedBatchId && <th className="text-left px-4 py-3 font-medium text-gray-600">Lote</th>}
                       <th className="text-left px-4 py-3 font-medium text-gray-600">Respuesta</th>
                       <th className="text-left px-4 py-3 font-medium text-gray-600">Próximo agendado</th>
@@ -4802,6 +4832,13 @@ export default function MyLeads() {
                               {c.contacts?.[0]?.telefono ? (
                                 <a href={`tel:${c.contacts[0].telefono}`} className="hover:text-blue-600" onClick={(e) => e.stopPropagation()}>
                                   {c.contacts[0].telefono}
+                                </a>
+                              ) : '—'}
+                            </td>
+                            <td className="px-4 py-2.5 text-gray-600 font-mono text-xs">
+                              {isDisplayableTelefono2(c.contacts?.[0]?.telefono2) ? (
+                                <a href={`tel:${c.contacts[0].telefono2}`} className="hover:text-blue-600" onClick={(e) => e.stopPropagation()}>
+                                  {c.contacts[0].telefono2}
                                 </a>
                               ) : '—'}
                             </td>

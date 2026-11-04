@@ -45,6 +45,7 @@ import {
   type MovistarCajaCategory,
 } from './parseMovistarWorkbook'
 import { mobileDigits } from './mobileLine'
+import { formatAssetAsociadoFromTelefono2 } from './telefono2'
 import { buildZipBuffer } from './zipFiles'
 
 const SAMPLE_LIMIT = 8
@@ -187,6 +188,7 @@ type LoadedContact = {
   id: string
   nombre: string
   telefono: string | null
+  telefono2: string | null
   email: string | null
   dni: string | null
   tipoContacto: string | null
@@ -305,6 +307,25 @@ export function toImportContactosRows(companies: LoadedDepuradoCompany[]): Impor
   return rows
 }
 
+/** Prefer original sheet; if asset_asociado is still blank, emit telefono2 when it is a mobile. */
+export function fillBlankAssetAsociadoFromTelefono2(
+  contactos: ImportContactosRow[],
+  companies: LoadedDepuradoCompany[]
+): ImportContactosRow[] {
+  const telefono2ByIndex: Array<string | null> = []
+  for (const company of companies) {
+    for (const contact of company.contacts) {
+      telefono2ByIndex.push(contact.telefono2 ?? null)
+    }
+  }
+  return contactos.map((row, index) => {
+    if (String(row.asset_asociado ?? '').trim()) return row
+    const filled = formatAssetAsociadoFromTelefono2(telefono2ByIndex[index])
+    if (!filled) return row
+    return { ...row, asset_asociado: filled }
+  })
+}
+
 export function toImportMobileRows(companies: LoadedDepuradoCompany[]): ImportMobileRow[] {
   const rows: ImportMobileRow[] = []
   for (const company of companies) {
@@ -374,6 +395,7 @@ async function loadAssignedCompaniesForAgent(agentId: string): Promise<LoadedDep
           id: true,
           nombre: true,
           telefono: true,
+          telefono2: true,
           email: true,
           dni: true,
           tipoContacto: true,
@@ -712,7 +734,11 @@ export async function buildAgentWorkbook(companies: LoadedDepuradoCompany[]): Pr
     resolved,
     originals
   )
-  return writeImportWorkbookBuffer(enriched.contactos, enriched.mobiles, enriched.detalle)
+  return writeImportWorkbookBuffer(
+    fillBlankAssetAsociadoFromTelefono2(enriched.contactos, resolved),
+    enriched.mobiles,
+    enriched.detalle
+  )
 }
 
 export async function buildMovistarAgentWorkbook(companies: LoadedDepuradoCompany[]): Promise<Buffer> {

@@ -357,6 +357,7 @@ export type ClientListItem = {
     nombre: string
     tipoContacto?: string
     telefono?: string
+    telefono2?: string
     createdAt?: string
     assignment?: { agent?: { id?: string; name: string } }
   }[]
@@ -393,7 +394,7 @@ export const updateClient = (id: string, data: object) =>
 
 export const updateContact = (
   id: string,
-  data: { telefono?: string | null; email?: string | null; dni?: string | null }
+  data: { telefono?: string | null; telefono2?: string | null; email?: string | null; dni?: string | null }
 ) => api.put(`/contacts/${id}`, data).then((r) => r.data)
 
 export const downloadImportExport = async (id: string, agentId?: string) => {

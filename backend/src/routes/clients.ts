@@ -386,6 +386,7 @@ async function buildClientsFilterContext(
       { razonSocial: { contains: search, mode: 'insensitive' } },
       { contacts: { some: { nombre: { contains: search, mode: 'insensitive' } } } },
       { contacts: { some: { telefono: { contains: search, mode: 'insensitive' } } } },
+      { contacts: { some: { telefono2: { contains: search, mode: 'insensitive' } } } },
     ]
   }
 

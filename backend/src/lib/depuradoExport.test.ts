@@ -13,6 +13,7 @@ import {
   formatCompactTimestampInAppTz,
   isDepuradoCompany,
   toExportUnits,
+  fillBlankAssetAsociadoFromTelefono2,
   toImportContactosRows,
   toImportDetallePlanRows,
   toImportMobileRows,
@@ -174,6 +175,7 @@ const companies: LoadedDepuradoCompany[] = [
         id: 'ct1',
         nombre: 'Ana',
         telefono: '987654321',
+        telefono2: null,
         email: 'ana@demo.com',
         dni: '12345678',
         tipoContacto: 'Gerente',
@@ -183,6 +185,7 @@ const companies: LoadedDepuradoCompany[] = [
         id: 'ct2',
         nombre: 'Luis',
         telefono: '987654322',
+        telefono2: null,
         email: '',
         dni: null,
         tipoContacto: null,
@@ -285,10 +288,36 @@ const blankEnriched = enrichDepuradoRowsFromOriginal(
   noOriginal
 )
 assert.equal(blankEnriched.contactos[0].asset_asociado, '')
+assert.equal(
+  fillBlankAssetAsociadoFromTelefono2(blankEnriched.contactos, companies)[0].asset_asociado,
+  ''
+)
 assert.equal(blankEnriched.mobiles[0].iccid_sim, '')
 assert.equal(blankEnriched.mobiles[0].numero_cuenta, '')
 assert.equal(blankEnriched.detalle[0].imei, '')
 assert.equal(blankEnriched.detalle[0].cuenta_facturacion, '')
+
+section('depurado asset_asociado from telefono2 when original is blank')
+const withTelefono2: LoadedDepuradoCompany[] = [
+  {
+    ...companies[0],
+    contacts: [
+      { ...companies[0].contacts[0], telefono2: '51933399223' },
+      { ...companies[0].contacts[1], telefono2: 'Sin asset asociado' },
+    ],
+  },
+]
+const filledFromTelefono2 = fillBlankAssetAsociadoFromTelefono2(
+  toImportContactosRows(withTelefono2),
+  withTelefono2
+)
+assert.equal(filledFromTelefono2[0].asset_asociado, '51933399223')
+assert.equal(filledFromTelefono2[1].asset_asociado, '')
+const keepOriginalAsset = fillBlankAssetAsociadoFromTelefono2(
+  [{ ...filledFromTelefono2[0], asset_asociado: 'Sin asset asociado' }, filledFromTelefono2[1]],
+  withTelefono2
+)
+assert.equal(keepOriginalAsset[0].asset_asociado, 'Sin asset asociado')
 
 section('original workbook fills extras and missing razon_social')
 const missingRazon: LoadedDepuradoCompany[] = [

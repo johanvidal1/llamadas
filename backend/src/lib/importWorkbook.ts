@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx'
+import { peruMobileDigits } from './telefono2'
 
 /** Richard operational-base Contactos headers, in order. */
 export const CONTACTOS_IMPORT_COLUMNS = [
@@ -177,13 +178,6 @@ export function formatImportFechaConsulta(date: Date | null | undefined): string
     date.getUTCMilliseconds() === 0
   if (utcDateOnly) return date.toISOString().slice(0, 10)
   return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())} ${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}:${pad2(date.getUTCSeconds())}`
-}
-
-function peruMobileDigits(raw: string): string | null {
-  const digits = raw.replace(/\D/g, '')
-  if (/^9\d{8}$/.test(digits)) return digits
-  if (/^51[9]\d{8}$/.test(digits)) return digits.slice(2)
-  return null
 }
 
 /** Richard Contactos style: `+51 938737031`. */

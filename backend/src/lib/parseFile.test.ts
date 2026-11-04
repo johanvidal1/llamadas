@@ -8,6 +8,7 @@ import {
   filenameOperatorTokens,
 } from './operator'
 import { parseExcel } from './parseFile'
+import { asDistinctPeruMobile, peruMobileDigits } from './telefono2'
 import {
   classifyMovistarProductCaja,
   extractMsisdnFromCodigoProducto,
@@ -302,6 +303,73 @@ async function runAsyncChecks() {
     entelMissing = (err as { name?: string }).name === 'MissingContactosSheetError'
   }
   assert.equal(entelMissing, true)
+
+  section('Entel asset_asociado → telefono2; never merge into telefono')
+  const entelPhone2Buffer = workbookBuffer([
+    sheet('Contactos', [
+      {
+        ruc: '20111111111',
+        razon_social: 'ENTEL SAC',
+        nombre: 'ANA',
+        telefono: '+51 999111222',
+        asset_asociado: '51933399223',
+      },
+      {
+        ruc: '20111111111',
+        nombre: 'LUIS',
+        telefono: '999111333',
+        asset_asociado: 'Sin asset asociado',
+      },
+      {
+        ruc: '20111111111',
+        nombre: 'DUP',
+        telefono: '933399223',
+        asset_asociado: '+51 933399223',
+      },
+      {
+        ruc: '20111111111',
+        nombre: 'SOLO2',
+        telefono: '',
+        telefono2: '988777666',
+      },
+      {
+        ruc: '20111111111',
+        nombre: 'IMEI',
+        telefono: '999111444',
+        asset_asociado: '861234567890123',
+      },
+      {
+        ruc: '20111111111',
+        nombre: 'FIJO',
+        telefono: '999111555',
+        asset_asociado: '014445555',
+      },
+    ]),
+  ])
+  const entelPhone2 = await parseExcel(entelPhone2Buffer, 'ENTEL')
+  const byName = Object.fromEntries(
+    entelPhone2.companies[0].contacts.map((c) => [c.nombre, c])
+  )
+  assert.equal(byName.ANA.telefono, '999111222')
+  assert.equal(byName.ANA.telefono2, '51933399223')
+  assert.equal(byName.LUIS.telefono, '999111333')
+  assert.equal(byName.LUIS.telefono2, undefined)
+  assert.equal(byName.DUP.telefono, '933399223')
+  assert.equal(byName.DUP.telefono2, undefined)
+  assert.equal(byName.SOLO2.telefono, undefined)
+  assert.equal(byName.SOLO2.telefono2, '988777666')
+  assert.equal(byName.IMEI.telefono2, undefined)
+  assert.equal(byName.FIJO.telefono2, undefined)
+  assert.equal(entelPhone2.companies[0].contacts.length, 6)
+
+  section('telefono2 helper rejects junk and duplicates')
+  assert.equal(peruMobileDigits('51933399223'), '933399223')
+  assert.equal(peruMobileDigits('+51 933399223'), '933399223')
+  assert.equal(peruMobileDigits('933399223'), '933399223')
+  assert.equal(peruMobileDigits('Sin asset asociado'), null)
+  assert.equal(peruMobileDigits('861234567890123'), null)
+  assert.equal(asDistinctPeruMobile('51933399223', '933399223'), undefined)
+  assert.equal(asDistinctPeruMobile('988777666', '999111222'), '988777666')
 }
 
 runAsyncChecks()

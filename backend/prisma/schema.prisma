@@ -249,6 +249,8 @@ model Contact {
   dni          String?
   email        String?
   telefono     String?
+  /// Second Peru mobile (Entel Contactos asset_asociado). Never merged into telefono.
+  telefono2    String?
   status       String   @default("PENDING")
   createdAt    DateTime @default(now())
 
