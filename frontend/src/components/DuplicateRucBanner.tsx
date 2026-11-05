@@ -18,6 +18,8 @@ type DuplicateRucBannerProps = {
   currentCompanyId: string
   /** Navigate to a specific sibling company (and its batch), not just switch batch. */
   onGoToSibling: (companyId: string, batchId: string) => void
+  /** Compact chip for the pinned Empresa strip; keeps the sibling popover. */
+  compact?: boolean
 }
 
 function batchLabelShort(batch: { filename: string }) {
@@ -44,6 +46,7 @@ export function DuplicateRucBanner({
   siblings,
   currentCompanyId,
   onGoToSibling,
+  compact = false,
 }: DuplicateRucBannerProps) {
   const [open, setOpen] = useState(false)
   const [horizontalAlign, setHorizontalAlign] = useState<HorizontalAlign>('start')
@@ -107,7 +110,7 @@ export function DuplicateRucBanner({
   return (
     <div
       ref={rootRef}
-      className="relative mb-3 group/dup"
+      className={compact ? 'relative group/dup shrink-0' : 'relative mb-3 group/dup'}
       onMouseEnter={updateHorizontalAlign}
     >
       <div
@@ -123,15 +126,25 @@ export function DuplicateRucBanner({
         }}
         aria-expanded={open}
         aria-label={`RUC duplicado ${ruc}: ${siblings.length} registros en tus asignaciones`}
-        className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 cursor-default max-md:cursor-pointer"
+        className={
+          compact
+            ? 'inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 cursor-default max-md:cursor-pointer'
+            : 'flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 cursor-default max-md:cursor-pointer'
+        }
       >
-        <AlertCircle size={15} className="text-amber-600 shrink-0 mt-0.5" />
-        <p className="text-xs text-amber-800">
-          RUC duplicado:{' '}
-          <span className="font-mono font-medium tracking-wide">{ruc}</span>
-          {' — '}
-          apuntá para ver en qué lotes aparece
-        </p>
+        <AlertCircle size={compact ? 12 : 15} className={`text-amber-600 shrink-0 ${compact ? '' : 'mt-0.5'}`} />
+        {compact ? (
+          <span className="text-[10px] font-semibold text-amber-800 whitespace-nowrap">
+            Duplicado · {siblings.length}
+          </span>
+        ) : (
+          <p className="text-xs text-amber-800">
+            RUC duplicado:{' '}
+            <span className="font-mono font-medium tracking-wide">{ruc}</span>
+            {' — '}
+            apuntá para ver en qué lotes aparece
+          </p>
+        )}
       </div>
 
       <div

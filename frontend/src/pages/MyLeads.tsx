@@ -643,21 +643,22 @@ function ContactPhoneField({
 }
 
 function EditField({
-  label, value, onChange, placeholder, onBlur, className,
+  label, value, onChange, placeholder, onBlur, className, inputClassName,
 }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string
-  onBlur?: () => void; className?: string
+  onBlur?: () => void; className?: string; inputClassName?: string
 }) {
   return (
     <div className={['flex flex-col gap-0.5', className].filter(Boolean).join(' ')}>
       <span className="text-xs text-gray-500 font-medium">{label}</span>
       <input
         type="text"
-        className="border border-gray-300 rounded px-3 py-1.5 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+        className={['border border-gray-300 rounded px-3 py-1.5 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none', inputClassName].filter(Boolean).join(' ')}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onBlur={onBlur}
         placeholder={placeholder}
+        title={value || undefined}
       />
     </div>
   )
@@ -1471,12 +1472,17 @@ export default function MyLeads() {
 
   // Sync company fields when company changes (skip stale placeholder from previous record)
   useEffect(() => {
-    if (detail && currentClient && detail.id === currentClient.id) {
+    if (!currentClient) return
+    if (detail && detail.id === currentClient.id) {
       setEditPlan(detail.plan ?? '')
       const rs = detail.razonSocial ?? ''
       setEditRazonSocial(rs)
       persistedRazonSocialRef.current = rs
       setHistorialScope('contact')
+    } else {
+      const rs = currentClient.razonSocial ?? ''
+      setEditRazonSocial(rs)
+      persistedRazonSocialRef.current = rs
     }
   }, [detail?.id, currentClient?.id])
 
@@ -3257,12 +3263,13 @@ export default function MyLeads() {
     firstEmptyTarget != null && firstEmptyTarget.clientIdx === currentIndex
 
   const duplicateRucSiblings = useMemo(() => {
-    if (!detail?.ruc) return []
+    const ruc = currentClient?.ruc ?? detail?.ruc
+    if (!ruc) return []
     const pool = isAdmin
       ? allClients
       : allClients.filter((c) => !isHiddenFromAgentNav(c.lastDisposition, c.noContestaCount))
-    return pool.filter((c) => c.ruc === detail.ruc)
-  }, [detail?.ruc, allClients, isAdmin])
+    return pool.filter((c) => c.ruc === ruc)
+  }, [currentClient?.ruc, detail?.ruc, allClients, isAdmin])
   const safeContactIdx =
     displayContacts.length > 0
       ? Math.min(activeContactIdx, displayContacts.length - 1)
@@ -3573,8 +3580,72 @@ export default function MyLeads() {
       {/* ══════════════════════ DETAIL VIEW ══════════════════════════ */}
       {viewMode === 'detail' && (
         <div className="flex flex-col lg:flex-row flex-1 overflow-hidden min-h-0">
-          {/* ── Left: Form scroll + pinned action footer ── */}
+          {/* ── Left: pinned Empresa strip + form scroll + pinned Guardar footer ── */}
           <div className="flex flex-col flex-1 min-h-0 bg-gray-50">
+          {!loadingList && clients.length > 0 && !isInitialDetailLoad && displayDetail && (
+            <div className="shrink-0 z-20 px-3 lg:px-4 pt-3 lg:pt-4 bg-gray-50/95">
+              <div
+                className={`bg-white border border-gray-200 rounded-lg shadow-[0_4px_12px_-4px_rgba(15,23,42,0.12)] px-3 py-2 ${
+                  showingStale ? 'pointer-events-none' : ''
+                }`}
+              >
+                <div className="flex flex-nowrap items-end gap-2 sm:gap-3 min-w-0">
+                  <div className="hidden sm:flex shrink-0 self-stretch items-center border-r border-gray-100 pr-2.5 mr-0.5">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Empresa</p>
+                  </div>
+                  <ReadField
+                    label="RUC"
+                    value={currentClient?.ruc ?? displayDetail.ruc}
+                    className="w-36 sm:w-40 shrink-0"
+                    mono
+                  />
+                  <EditField
+                    label="Razón Social"
+                    value={editRazonSocial}
+                    onChange={setEditRazonSocial}
+                    onBlur={() => { void handleRazonSocialBlur() }}
+                    placeholder="Sin razón social — completar manualmente"
+                    className="flex-1 min-w-0"
+                    inputClassName="truncate"
+                  />
+                  <div className="flex items-center gap-1.5 shrink-0 self-end pb-[3px]">
+                    {!showingStale && displayDetail.otherOperatorPresence && (
+                      <OtherOperatorRucBanner
+                        compact
+                        operator={
+                          displayDetail.otherOperatorPresence.operator === 'MOVISTAR'
+                            ? 'MOVISTAR'
+                            : 'ENTEL'
+                        }
+                      />
+                    )}
+                    {currentClient && (
+                      <DuplicateRucBanner
+                        compact
+                        ruc={currentClient.ruc}
+                        siblings={duplicateRucSiblings}
+                        currentCompanyId={currentClient.id}
+                        onGoToSibling={goToDuplicateSibling}
+                      />
+                    )}
+                    {saveNotice && (
+                      <span
+                        title={saveNotice.message}
+                        className={`flex items-center gap-1 text-[11px] font-medium rounded-full px-2 py-1 shrink-0 max-w-[11rem] sm:max-w-[16rem] truncate ${
+                          saveNotice.variant === 'info'
+                            ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                            : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                        }`}
+                      >
+                        <CheckCircle2 size={12} className="shrink-0" />
+                        <span className="truncate">{saveNotice.message}</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           <div
             ref={detailFormScrollRef}
             className="flex-1 overflow-y-auto [scrollbar-gutter:stable] p-3 lg:p-4 min-h-0"
@@ -3656,53 +3727,6 @@ export default function MyLeads() {
                     }`}
                   >
                     <div className="space-y-3 h-full flex flex-col">
-
-                {/* ── Datos de la Empresa ── */}
-                <div className="bg-white border border-gray-200 rounded-lg p-4 shrink-0">
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Empresa</p>
-                    {saveNotice && (
-                      <span
-                        className={`flex items-center gap-1 text-xs font-medium rounded-full px-2.5 py-1 shrink-0 ${
-                          saveNotice.variant === 'info'
-                            ? 'bg-blue-50 text-blue-800 border border-blue-200'
-                            : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                        }`}
-                      >
-                        <CheckCircle2 size={12} />
-                        {saveNotice.message}
-                      </span>
-                    )}
-                  </div>
-                  {detail && displayDetail.otherOperatorPresence && (
-                    <OtherOperatorRucBanner
-                      operator={
-                        displayDetail.otherOperatorPresence.operator === 'MOVISTAR'
-                          ? 'MOVISTAR'
-                          : 'ENTEL'
-                      }
-                    />
-                  )}
-                  {detail && (
-                    <DuplicateRucBanner
-                      ruc={displayDetail.ruc}
-                      siblings={duplicateRucSiblings}
-                      currentCompanyId={detail.id}
-                      onGoToSibling={goToDuplicateSibling}
-                    />
-                  )}
-                  <div className="flex flex-col sm:flex-row gap-3 items-start">
-                    <ReadField label="RUC" value={displayDetail.ruc} className="sm:w-40 shrink-0" mono />
-                    <EditField
-                      label="Razón Social"
-                      value={editRazonSocial}
-                      onChange={setEditRazonSocial}
-                      onBlur={() => { void handleRazonSocialBlur() }}
-                      placeholder="Sin razón social — completar manualmente"
-                      className="flex-1 min-w-0 w-full"
-                    />
-                  </div>
-                </div>
 
                 {/* ── Contacto (tabs) ── */}
                 <div className="bg-white border border-gray-200 rounded-lg shrink-0">
