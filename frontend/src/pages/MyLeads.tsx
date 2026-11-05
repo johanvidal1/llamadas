@@ -3580,15 +3580,16 @@ export default function MyLeads() {
       {/* ══════════════════════ DETAIL VIEW ══════════════════════════ */}
       {viewMode === 'detail' && (
         <div className="flex flex-col lg:flex-row flex-1 overflow-hidden min-h-0">
-          {/* ── Left: pinned Empresa strip + form scroll + pinned Guardar footer ── */}
+          {/* ── Left: pinned Empresa + contact tabs + form scroll + pinned Guardar footer ── */}
           <div className="flex flex-col flex-1 min-h-0 bg-gray-50">
           {!loadingList && clients.length > 0 && !isInitialDetailLoad && displayDetail && (
             <div className="shrink-0 z-20 px-3 lg:px-4 pt-3 lg:pt-4 bg-gray-50/95">
               <div
-                className={`bg-white border border-gray-200 rounded-lg shadow-[0_4px_12px_-4px_rgba(15,23,42,0.12)] px-3 py-2 ${
+                className={`bg-white border border-gray-200 rounded-lg shadow-[0_4px_12px_-4px_rgba(15,23,42,0.12)] overflow-hidden ${
                   showingStale ? 'pointer-events-none' : ''
                 }`}
               >
+                <div className="px-3 py-2">
                 <div className="flex flex-nowrap items-end gap-2 sm:gap-3 min-w-0">
                   <div className="hidden sm:flex shrink-0 self-stretch items-center border-r border-gray-100 pr-2.5 mr-0.5">
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Empresa</p>
@@ -3643,6 +3644,65 @@ export default function MyLeads() {
                     )}
                   </div>
                 </div>
+                </div>
+                {displayContacts.length > 0 && (
+                    <div
+                      role="tablist"
+                      className="flex h-16 shrink-0 overflow-x-auto overflow-y-hidden flex-nowrap border-t border-gray-200 bg-gray-50 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                      {displayContacts.map((ct, idx) => {
+                        const fullName = (ct.nombre ?? '').trim() || 'Contacto'
+                        const { primerNombre, segundoNombre, tercerNombre } = contactNameParts(ct.nombre)
+                        const isRegistered = contactHasAgentLogByContactId(ct.id, currentIndex)
+                        const isActive = safeContactIdx === idx
+                        const hasTelefono2 = isDisplayableTelefono2(ct.telefono2)
+                        const tabClass = isRegistered
+                          ? isActive
+                            ? 'bg-emerald-100 text-emerald-900 border-emerald-500 border-b-4 border-b-emerald-600 hover:bg-emerald-200'
+                            : 'bg-emerald-100 text-emerald-900 border-emerald-500 border-b-2 hover:bg-emerald-200'
+                          : isActive
+                            ? 'text-blue-700 border-blue-600 bg-white border-b-2'
+                            : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-100 border-b-2'
+                        const tabTitle = [
+                          fullName,
+                          isRegistered ? 'Contacto registrado' : null,
+                          hasTelefono2 ? 'Tiene Teléfono 2' : null,
+                        ].filter(Boolean).join(' — ')
+                        return (
+                          <button
+                            key={ct.id ?? idx}
+                            ref={(el) => {
+                              contactTabRefs.current[idx] = el
+                            }}
+                            role="tab"
+                            aria-selected={isActive}
+                            title={tabTitle}
+                            onClick={navigateWithSave(async () => {
+                              await switchToContactTab(idx)
+                            })}
+                            className={`relative flex h-full min-w-[100px] max-w-[120px] shrink-0 flex-col items-center justify-center gap-0 px-3 py-0.5 text-xs font-medium leading-tight transition-colors ${tabClass}`}>
+                            {hasTelefono2 && (
+                              <span
+                                aria-hidden="true"
+                                className="absolute top-1 right-1 inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-slate-600/15 text-[9px] font-bold leading-none text-slate-600"
+                              >
+                                2
+                              </span>
+                            )}
+                            <span className="flex items-center gap-1 overflow-hidden max-w-full">
+                              {isRegistered && <CheckCircle2 size={12} className="shrink-0 text-emerald-700" />}
+                              <span className="overflow-hidden">{truncateGraphemes(primerNombre || 'Contacto', 14)}</span>
+                            </span>
+                            <span className="min-h-[12px] text-[10px] font-normal opacity-75 overflow-hidden max-w-[110px] text-center leading-tight">
+                              {truncateGraphemes([segundoNombre, tercerNombre].filter(Boolean).join(' '), 20) || '\u00A0'}
+                            </span>
+                            <span className="min-h-[12px] text-[10px] font-normal opacity-60 overflow-hidden max-w-[110px] text-center leading-tight">
+                              {truncateGraphemes(ct.tipoContacto ?? '', 22) || '\u00A0'}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                )}
               </div>
             </div>
           )}
@@ -3728,53 +3788,8 @@ export default function MyLeads() {
                   >
                     <div className="space-y-3 h-full flex flex-col">
 
-                {/* ── Contacto (tabs) ── */}
+                {/* ── Contacto (fields stay in scroller) ── */}
                 <div className="bg-white border border-gray-200 rounded-lg shrink-0">
-                  {displayContacts.length > 0 && (
-                    <div
-                      role="tablist"
-                      className="flex h-16 shrink-0 overflow-x-auto overflow-y-hidden flex-nowrap border-b border-gray-200 bg-gray-50 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-                      {displayContacts.map((ct, idx) => {
-                        const fullName = (ct.nombre ?? '').trim() || 'Contacto'
-                        const { primerNombre, segundoNombre, tercerNombre } = contactNameParts(ct.nombre)
-                        const isRegistered = contactHasAgentLogByContactId(ct.id, currentIndex)
-                        const isActive = safeContactIdx === idx
-                        const tabClass = isRegistered
-                          ? isActive
-                            ? 'bg-emerald-100 text-emerald-900 border-emerald-500 border-b-4 border-b-emerald-600 hover:bg-emerald-200'
-                            : 'bg-emerald-100 text-emerald-900 border-emerald-500 border-b-2 hover:bg-emerald-200'
-                          : isActive
-                            ? 'text-blue-700 border-blue-600 bg-white border-b-2'
-                            : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-100 border-b-2'
-                        const tabTitle = isRegistered ? `${fullName} — Contacto registrado` : fullName
-                        return (
-                          <button
-                            key={ct.id ?? idx}
-                            ref={(el) => {
-                              contactTabRefs.current[idx] = el
-                            }}
-                            role="tab"
-                            aria-selected={isActive}
-                            title={tabTitle}
-                            onClick={navigateWithSave(async () => {
-                              await switchToContactTab(idx)
-                            })}
-                            className={`flex h-full min-w-[100px] max-w-[120px] shrink-0 flex-col items-center justify-center gap-0 px-3 py-0.5 text-xs font-medium leading-tight transition-colors ${tabClass}`}>
-                            <span className="flex items-center gap-1 overflow-hidden max-w-full">
-                              {isRegistered && <CheckCircle2 size={12} className="shrink-0 text-emerald-700" />}
-                              <span className="overflow-hidden">{truncateGraphemes(primerNombre || 'Contacto', 14)}</span>
-                            </span>
-                            <span className="min-h-[12px] text-[10px] font-normal opacity-75 overflow-hidden max-w-[110px] text-center leading-tight">
-                              {truncateGraphemes([segundoNombre, tercerNombre].filter(Boolean).join(' '), 20) || '\u00A0'}
-                            </span>
-                            <span className="min-h-[12px] text-[10px] font-normal opacity-60 overflow-hidden max-w-[110px] text-center leading-tight">
-                              {truncateGraphemes(ct.tipoContacto ?? '', 22) || '\u00A0'}
-                            </span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
                   {displayContacts.length === 0 ? (
                     <div className="p-4">
                       <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Contacto</p>
