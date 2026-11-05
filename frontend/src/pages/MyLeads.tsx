@@ -3683,7 +3683,7 @@ export default function MyLeads() {
                             {hasTelefono2 && (
                               <span
                                 aria-hidden="true"
-                                className="absolute top-1 right-1 inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-slate-600/15 text-[9px] font-bold leading-none text-slate-600"
+                                className="absolute top-1 right-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 text-[11px] font-bold leading-none text-white"
                               >
                                 2
                               </span>
