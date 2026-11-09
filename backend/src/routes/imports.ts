@@ -14,6 +14,7 @@ import {
   FilenameOperatorError,
   parseImportOperator,
 } from '../lib/operator'
+import { decodeUploadFilename } from '../lib/decodeUploadFilename'
 import { requireAdmin, requireAuth, AuthRequest } from '../middleware/auth'
 import { getDispositionLabel } from '../lib/responseOptions'
 import { isSuperAdminOrOwner } from '../lib/userPermissions'
@@ -579,7 +580,7 @@ router.post(
       }
 
       const buffer = req.file.buffer
-      const filename = req.file.originalname
+      const filename = decodeUploadFilename(req.file.originalname)
       const fileSizeBytes = req.file.size || buffer.length
       const confirmDuplicate = parseConfirmDuplicate(req.body?.confirmDuplicate)
       const displayNameRaw = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : ''

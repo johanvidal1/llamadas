@@ -53,6 +53,11 @@ export const TENANT_SCOPED_TABLES = [
   'MobileLine',
   'SupportTicket',
   'SupportTicketAttachment',
+  'OfferPlan',
+  'OfferPlanTable',
+  'QuoteTemplate',
+  'QuoteTemplatePromo',
+  'CommercialQuote',
 ] as const
 
 export type TenantContext = {

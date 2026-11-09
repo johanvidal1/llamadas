@@ -18,6 +18,15 @@ export function isPeruCellphone(raw: string | null | undefined): boolean {
   return peruMobileDigits(raw) != null
 }
 
+/** Empty clears the phone. A value must be a Peru mobile; stored as 9 digits. */
+export function agentPhoneOrNull(raw: string): { phone: string | null } | { error: string } {
+  const trimmed = raw.trim()
+  if (!trimmed) return { phone: null }
+  const digits = peruMobileDigits(trimmed)
+  if (!digits) return { error: 'Ingresa un celular de Perú (9 dígitos).' }
+  return { phone: digits }
+}
+
 /** Same mobile after stripping country code / punctuation. */
 export function samePeruMobile(
   a: string | null | undefined,

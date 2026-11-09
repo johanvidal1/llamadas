@@ -23,6 +23,7 @@ import {
   type UserSeats,
 } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
+import { peruMobileDigits } from '../lib/mobileLine'
 import axios from 'axios'
 import toast from 'react-hot-toast'
 import {
@@ -70,12 +71,25 @@ import {
 interface FormState {
   name: string
   email: string
+  phone: string
   password: string
   role: 'ADMIN' | 'AGENT'
   batchQueueMode: BatchQueueMode
 }
 
-const emptyForm: FormState = { name: '', email: '', password: '', role: 'AGENT', batchQueueMode: 'FIFO' }
+const emptyForm: FormState = {
+  name: '',
+  email: '',
+  phone: '',
+  password: '',
+  role: 'AGENT',
+  batchQueueMode: 'FIFO',
+}
+
+function phoneIsInvalid(raw: string): boolean {
+  const trimmed = raw.trim()
+  return Boolean(trimmed) && !peruMobileDigits(trimmed)
+}
 
 function hasHistory(u: AppUser) {
   return (
@@ -1357,6 +1371,10 @@ export default function Agents() {
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault()
     if (atSeatCap) return
+    if (phoneIsInvalid(form.phone)) {
+      toast.error('Ingresa un celular de Perú (9 dígitos).')
+      return
+    }
     createMutation.mutate(form)
   }
 
@@ -1365,6 +1383,7 @@ export default function Agents() {
     setForm({
       name: u.name,
       email: u.email,
+      phone: u.phone ?? '',
       password: '',
       role: u.role,
       batchQueueMode:
@@ -1376,9 +1395,14 @@ export default function Agents() {
   const handleUpdate = (e: React.FormEvent) => {
     e.preventDefault()
     if (!editId) return
+    if (phoneIsInvalid(form.phone)) {
+      toast.error('Ingresa un celular de Perú (9 dígitos).')
+      return
+    }
     const payload: Partial<FormState> = {
       name: form.name,
       email: form.email,
+      phone: form.phone,
       role: form.role,
       batchQueueMode: form.batchQueueMode,
     }
@@ -1590,6 +1614,17 @@ export default function Agents() {
                 minLength={6}
                 placeholder="Mínimo 6 caracteres"
               />
+            </div>
+            <div>
+              <label className="label">Celular</label>
+              <input
+                className="input"
+                inputMode="numeric"
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                placeholder="999888777"
+              />
+              <p className="text-xs text-gray-500 mt-1">Celular de Perú, 9 dígitos. Vacío si no tiene.</p>
             </div>
             <div>
               <label className="label">Rol *</label>

@@ -3,8 +3,14 @@ export type CompanyNavItem = {
   id: string
   ruc?: string | null
   hasAgentLog?: boolean
+  /** Agent-scoped CallLog count (from lastDisposition / enrichWithLastDisposition). */
   callLogCount?: number
+  /**
+   * Prisma Company._count.callLogs: unscoped total (historial anterior + other agents).
+   * Ignored by companySummaryHasAgentLog — do not treat as this agent’s registro.
+   */
   _count?: { callLogs?: number }
+  /** Contact._count.callLogs is already agent-scoped (contactCallLogCountForUser). */
   contacts?: { _count?: { callLogs?: number } }[]
 }
 
@@ -12,11 +18,17 @@ function normalizeRuc(ruc: string | null | undefined): string {
   return (ruc ?? '').trim()
 }
 
-/** True when the list row already has an agent call log (company or any contact). */
+/**
+ * Pending = this agent has no own CallLog on the company in this campaign
+ * (same idea as “60 pend.” / “sin registro en este lote”).
+ *
+ * Order: explicit hasAgentLog if boolean; agent-scoped callLogCount; any
+ * contact._count.callLogs (already scoped). Company._count.callLogs is a
+ * Prisma unscoped total (historial anterior + other agents) and is ignored.
+ */
 export function companySummaryHasAgentLog(company: CompanyNavItem): boolean {
   if (typeof company.hasAgentLog === 'boolean') return company.hasAgentLog
   if ((company.callLogCount ?? 0) > 0) return true
-  if ((company._count?.callLogs ?? 0) > 0) return true
   return (company.contacts ?? []).some((ct) => (ct._count?.callLogs ?? 0) > 0)
 }
 

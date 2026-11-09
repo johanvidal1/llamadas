@@ -32,6 +32,7 @@ import { excludeArchivedAgentWhere } from '../lib/archivedAgent'
 import { countCallLogsAfterResetByAgentIds } from '../lib/agentReset'
 import { todayYmdInAppTz, localDayStartUtc, localDayEndUtc } from '../lib/appTimezone'
 import { OPTICK_TENANT_ID } from '../lib/tenant'
+import { agentPhoneOrNull } from '../lib/telefono2'
 
 const router = Router()
 
@@ -68,6 +69,7 @@ const userSelect = {
   id: true,
   name: true,
   email: true,
+  phone: true,
   role: true,
   isSuperAdmin: true,
   isSystemOwner: true,
@@ -85,6 +87,7 @@ const createUserSchema = z.object({
   password: z.string().min(6, 'Contraseña mínimo 6 caracteres'),
   role: z.enum(['ADMIN', 'AGENT']).default('AGENT'),
   batchQueueMode: z.enum(['FIFO', 'LIFO', 'ALL']).optional(),
+  phone: z.string().max(40).optional(),
 })
 
 const updateUserSchema = z.object({
@@ -97,6 +100,7 @@ const updateUserSchema = z.object({
   workingBatchId: z.union([z.string().min(1), z.null()]).optional(),
   workingBatchIdEntel: z.union([z.string().min(1), z.null()]).optional(),
   workingBatchIdMovistar: z.union([z.string().min(1), z.null()]).optional(),
+  phone: z.string().max(40).optional(),
 })
 
 const patchSeatsSchema = z.object({
@@ -245,6 +249,16 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     return
   }
 
+  let phone: string | null | undefined
+  if (data.phone !== undefined) {
+    const parsedPhone = agentPhoneOrNull(data.phone)
+    if ('error' in parsedPhone) {
+      res.status(400).json({ error: parsedPhone.error })
+      return
+    }
+    phone = parsedPhone.phone
+  }
+
   const hashed = await bcrypt.hash(data.password, 12)
   const user = await prisma.user.create({
     data: {
@@ -256,6 +270,7 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
       isSuperAdmin: false,
       isSystemOwner: false,
       ...(data.batchQueueMode ? { batchQueueMode: data.batchQueueMode } : {}),
+      ...(phone !== undefined ? { phone } : {}),
     },
     select: userSelect,
   })
@@ -347,6 +362,14 @@ router.put('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
   }
 
   const updateData: Record<string, unknown> = { ...data }
+  if (data.phone !== undefined) {
+    const parsedPhone = agentPhoneOrNull(data.phone)
+    if ('error' in parsedPhone) {
+      res.status(400).json({ error: parsedPhone.error })
+      return
+    }
+    updateData.phone = parsedPhone.phone
+  }
   if (data.password) {
     updateData.password = await bcrypt.hash(data.password, 12)
     updateData.tokenVersion = { increment: 1 }
@@ -362,6 +385,7 @@ router.put('/:id', requireAdmin, async (req: AuthRequest, res: Response) => {
       id: true,
       name: true,
       email: true,
+      phone: true,
       role: true,
       isSuperAdmin: true,
       isSystemOwner: true,

@@ -1,4 +1,5 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, type ReactNode } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -32,6 +33,7 @@ import {
   Search,
   PhoneCall,
   History,
+  PhoneOff,
   LayoutGrid,
   List,
   AlignJustify,
@@ -45,6 +47,8 @@ import { dedupeMobileLinesByNumber, isDisplayableTelefono2 } from '../lib/mobile
 import CallModal from '../components/CallModal'
 import CompleteCallbackModal, { type CompleteConfirm } from '../components/CompleteCallbackModal'
 import DispositionSelector from '../components/DispositionSelector'
+import ProposalPanel from '../components/ProposalPanel'
+import CompanyQuoteHistory from '../components/CompanyQuoteHistory'
 import { ColaFilterDropdown } from '../components/ColaFilterDropdown'
 import { ListLastCallFilter } from '../components/ListLastCallFilter'
 import {
@@ -104,6 +108,9 @@ import {
   type ImportOperator,
 } from '../lib/operator'
 import { format, isPast, isToday } from 'date-fns'
+import { Badge } from '../components/ui/badge'
+import { Button } from '../components/ui/button'
+import { useUiTheme } from '../lib/uiTheme'
 import { es } from 'date-fns/locale'
 import { StatusBadge, DISPOSITION_CONFIG, getDispositionBorderColor, DispositionBadge } from '../components/StatusBadge'
 import {
@@ -120,6 +127,7 @@ import {
   isNoContestaDisposition,
   MAX_NO_ANSWER_ATTEMPTS,
 } from '../config/responseOptions'
+import { shouldAdvanceToPropuestaPresentada } from '../lib/quoteDisposition'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -145,7 +153,7 @@ interface ClientSummary {
     createdAt?: string
     _count?: { callLogs: number }
   }[]
-  importBatch?: { id: string; filename: string; createdAt: string; operator?: string }
+  importBatch?: { id: string; filename: string; displayName?: string | null; createdAt: string; operator?: string }
   _count?: { callLogs: number }
 }
 
@@ -179,7 +187,7 @@ interface ClientDetail {
   plan?: string
   notes?: string
   status: string
-  importBatch?: { id: string; filename: string; createdAt: string; operator?: string }
+  importBatch?: { id: string; filename: string; displayName?: string | null; createdAt: string; operator?: string }
   contacts: {
     id: string
     nombre: string
@@ -394,6 +402,24 @@ function writeSkipSameContactDispositionConfirm(contactId: string) {
   }
 }
 
+function DetailShell({ nuevo, children }: { nuevo: boolean; children: ReactNode }) {
+  const reduceMotion = useReducedMotion()
+  const className = nuevo
+    ? 'detail-skin-new relative flex flex-col lg:flex-row flex-1 overflow-hidden min-h-0'
+    : 'relative flex flex-col lg:flex-row flex-1 overflow-hidden min-h-0'
+  if (!nuevo || reduceMotion) return <div className={className}>{children}</div>
+  return (
+    <motion.div
+      className={className}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, ease: 'easeOut' }}
+    >
+      {children}
+    </motion.div>
+  )
+}
+
 function DetailRecordNav({
   onFirstRegistered,
   onPrev,
@@ -405,6 +431,7 @@ function DetailRecordNav({
   atFirstEmpty,
   noRegistered,
   noEmpty,
+  nuevo = false,
 }: {
   onFirstRegistered: () => void
   onPrev: () => void
@@ -416,9 +443,11 @@ function DetailRecordNav({
   atFirstEmpty: boolean
   noRegistered: boolean
   noEmpty: boolean
+  nuevo?: boolean
 }) {
-  const btnBase =
-    'flex items-center justify-center p-2.5 min-h-[44px] min-w-[44px] border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
+  const btnBase = nuevo
+    ? 'flex items-center justify-center h-10 w-10 border border-input bg-background text-foreground shadow-sm hover:bg-accent rounded-md disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-200'
+    : 'flex items-center justify-center p-2.5 min-h-[44px] min-w-[44px] border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
   const iconSize = 15
 
   return (
@@ -558,19 +587,23 @@ function ReadField({
   className,
   valueClassName,
   mono = true,
+  nuevo = false,
 }: {
   label: string
   value?: string
   className?: string
   valueClassName?: string
   mono?: boolean
+  nuevo?: boolean
 }) {
   return (
     <div className={['flex flex-col gap-0.5', className].filter(Boolean).join(' ')}>
-      <span className="text-xs text-gray-500 font-medium">{label}</span>
+      <span className={nuevo ? 'text-[11px] font-medium text-muted-foreground' : 'text-xs text-gray-500 font-medium'}>{label}</span>
       <div
         className={[
-          'bg-gray-100 border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-700 min-h-[34px] select-all',
+          nuevo
+            ? 'bg-muted/70 border border-border/60 rounded-md px-3 py-1.5 text-sm text-foreground min-h-9 select-all'
+            : 'bg-gray-100 border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-700 min-h-[34px] select-all',
           mono ? 'font-mono' : '',
           valueClassName,
         ]
@@ -578,7 +611,7 @@ function ReadField({
           .join(' ')}
         title={value || undefined}
       >
-        {value || <span className="text-gray-400 italic font-sans">—</span>}
+        {value || <span className={nuevo ? 'text-muted-foreground italic font-sans' : 'text-gray-400 italic font-sans'}>—</span>}
       </div>
     </div>
   )
@@ -589,15 +622,60 @@ function ContactPhoneField({
   onChange,
   label = 'Teléfono',
   readOnly = false,
+  nuevo = false,
 }: {
   telefono: string
   onChange?: (v: string) => void
   label?: string
   readOnly?: boolean
+  nuevo?: boolean
 }) {
   const copyPhone = () => {
     if (!telefono) return
     navigator.clipboard.writeText(telefono).then(() => toast.success('Teléfono copiado'))
+  }
+
+  if (nuevo) {
+    return (
+      <div>
+        <span className="text-[11px] font-medium text-muted-foreground">{label}</span>
+        <div className="mt-1 flex items-center gap-2 rounded-lg border border-border/60 bg-muted/60 px-3 py-2.5">
+          <Phone size={16} className="text-muted-foreground shrink-0" />
+          {readOnly ? (
+            <span className="flex-1 text-base font-semibold tracking-wide text-foreground min-w-0">
+              {telefono}
+            </span>
+          ) : (
+            <input
+              type="tel"
+              value={telefono}
+              onChange={(e) => onChange?.(e.target.value)}
+              placeholder="Sin teléfono — ingresar manualmente"
+              className="flex-1 text-base font-semibold tracking-wide text-foreground bg-transparent border-none outline-none placeholder:text-muted-foreground/70 placeholder:text-sm placeholder:font-normal min-w-0"
+            />
+          )}
+          {telefono && (
+            <>
+              <a
+                href={`tel:${telefono}`}
+                title="Llamar"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-foreground shadow-sm hover:bg-accent transition-colors duration-200 shrink-0"
+              >
+                <PhoneCall size={15} />
+              </a>
+              <button
+                type="button"
+                onClick={copyPhone}
+                title="Copiar teléfono"
+                className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm hover:bg-accent transition-colors duration-200 shrink-0"
+              >
+                <Copy size={13} /> Copiar
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -643,17 +721,22 @@ function ContactPhoneField({
 }
 
 function EditField({
-  label, value, onChange, placeholder, onBlur, className, inputClassName,
+  label, value, onChange, placeholder, onBlur, className, inputClassName, nuevo = false,
 }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string
-  onBlur?: () => void; className?: string; inputClassName?: string
+  onBlur?: () => void; className?: string; inputClassName?: string; nuevo?: boolean
 }) {
   return (
     <div className={['flex flex-col gap-0.5', className].filter(Boolean).join(' ')}>
-      <span className="text-xs text-gray-500 font-medium">{label}</span>
+      <span className={nuevo ? 'text-[11px] font-medium text-muted-foreground' : 'text-xs text-gray-500 font-medium'}>{label}</span>
       <input
         type="text"
-        className={['border border-gray-300 rounded px-3 py-1.5 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none', inputClassName].filter(Boolean).join(' ')}
+        className={[
+          nuevo
+            ? 'h-9 border border-input rounded-md px-3 text-sm bg-background text-foreground shadow-sm focus:ring-1 focus:ring-ring outline-none transition-colors duration-200'
+            : 'border border-gray-300 rounded px-3 py-1.5 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none',
+          inputClassName,
+        ].filter(Boolean).join(' ')}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onBlur={onBlur}
@@ -661,6 +744,44 @@ function EditField({
         title={value || undefined}
       />
     </div>
+  )
+}
+
+function CallNotesField({
+  value,
+  onChange,
+  nuevo,
+}: {
+  value: string
+  onChange: (v: string) => void
+  nuevo: boolean
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (!nuevo) {
+      el.style.height = ''
+      return
+    }
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 220)}px`
+  }, [value, nuevo])
+
+  return (
+    <textarea
+      ref={ref}
+      rows={3}
+      className={
+        nuevo
+          ? 'w-full border border-input rounded-md px-3 py-2 text-sm bg-background text-foreground shadow-sm focus:ring-1 focus:ring-ring outline-none resize-none overflow-y-auto transition-colors duration-200'
+          : 'w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none resize-none'
+      }
+      placeholder="Comentarios adicionales de esta llamada..."
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
   )
 }
 
@@ -886,6 +1007,7 @@ export default function MyLeads() {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const { user, isAdmin, updateUser: patchAuthUser } = useAuth()
+  const [uiTheme] = useUiTheme()
   const isLg = useIsLg()
   const [searchParams, setSearchParams] = useSearchParams()
   const [selectedOperator, setSelectedOperator] = useState<ImportOperator | null>(() =>
@@ -914,6 +1036,7 @@ export default function MyLeads() {
   })
   const [returnToView, setReturnToView] = useState<'list' | 'grid' | null>(null)
   const [returnToDashboard, setReturnToDashboard] = useState(initialFromDashboard)
+  const [proposalOpen, setProposalOpen] = useState(false)
   const switchView = (mode: 'detail' | 'grid' | 'list', opts?: { persist?: boolean }) => {
     setViewMode(mode)
     if (opts?.persist !== false) {
@@ -1196,9 +1319,17 @@ export default function MyLeads() {
   // Agents: authoritative batch list from getMyBatches. Admins: derive from loaded clients.
   const batches = useMemo(() => {
     if (!isAdmin && myBatches && Array.isArray(myBatches)) {
-      return (myBatches as { id: string; filename: string; createdAt: string }[]).map((b) => ({
+      return (
+        myBatches as {
+          id: string
+          filename: string
+          displayName?: string | null
+          createdAt: string
+        }[]
+      ).map((b) => ({
         id: b.id,
         filename: b.filename,
+        displayName: b.displayName ?? null,
         createdAt: b.createdAt,
       }))
     }
@@ -1227,6 +1358,9 @@ export default function MyLeads() {
   const hiddenNavCount = isAdmin ? 0 : rawNavClients.length - visibleNavClients.length
   const total = visibleNavClients.length
   const currentClient = clients[currentIndex]
+  useEffect(() => {
+    setProposalOpen(false)
+  }, [viewMode, currentClient?.id])
   const viewingOutsideQueue = Boolean(
     pinnedListCompany &&
       currentClient?.id === pinnedListCompany.id &&
@@ -2544,10 +2678,11 @@ export default function MyLeads() {
 
   const saveMutation = useMutation({
     mutationFn: async (autoNext: SaveAutoNext) => {
-      const navSnapshot: CompanyNavItem[] = clients.map((c) => ({
+      const navSnapshot: CompanyNavItem[] = clients.map((c, idx) => ({
         id: c.id,
         ruc: c.ruc,
-        hasAgentLog: companySummaryHasAgentLog(c),
+        // Same agent-own-log predicate as nextPendingTarget / companyHasAgentLog.
+        hasAgentLog: companyHasAgentLog(idx),
       }))
       const emptyResult = {
         autoNext,
@@ -2709,10 +2844,8 @@ export default function MyLeads() {
       const nothingSaved =
         !callLogSaved && !contactSaved && !planChanged && !razonSocialChanged
 
-      if (autoNext && !callLogSaved) {
-        throw new Error('Selecciona una respuesta antes de avanzar a la siguiente empresa')
-      }
-
+      // Stay-on-record already saved this log and the form is unchanged: do not
+      // throw, do not insert a second CallLog. onSuccess still advances when autoNext.
       if (callLogUnchanged && nothingSaved) {
         return {
           autoNext,
@@ -2726,6 +2859,10 @@ export default function MyLeads() {
           savedCallLogId: null,
           navSnapshot,
         }
+      }
+
+      if (autoNext && !callLogSaved) {
+        throw new Error('Selecciona una respuesta antes de avanzar a la siguiente empresa')
       }
 
       if (nothingSaved) {
@@ -2782,7 +2919,7 @@ export default function MyLeads() {
         showSaveNotice('Plan actualizado')
       } else if (result.razonSocialChanged) {
         showSaveNotice('Razón social actualizada')
-      } else if (result.noOp) {
+      } else if (result.noOp && result.autoNext === false) {
         showSaveNotice('Sin cambios que guardar', 'info')
       }
       const stayOnRecord = result.autoNext === false
@@ -3382,31 +3519,56 @@ export default function MyLeads() {
 
   const toolbarHasExtras =
     viewMode === 'detail' || (viewMode === 'list' && returnToDashboard)
+  // Nuevo skin is detail-only. Classic (and Tarjetas/Lista) keep today's classes.
+  const nuevoDetail = uiTheme === 'new' && viewMode === 'detail'
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
 
       {/* ══════════════════════ PAGE TOOLBAR (3-zone: left | extras | toggle) ══════════════════════ */}
-      <div className="bg-white border-b border-gray-200 text-gray-800 px-3 lg:px-6 py-2 shrink-0">
+      <div className={nuevoDetail
+        ? 'bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/70 border-b border-border/60 text-foreground px-3 lg:px-5 py-1.5 shrink-0'
+        : 'bg-white border-b border-gray-200 text-gray-800 px-3 lg:px-6 py-2 shrink-0'}>
         <div className="grid grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 lg:gap-x-4 gap-y-2">
           {/* Left: title + lote picker — never includes view toggle or N clientes.
               No overflow here: it would clip the lote picker popover. Children shrink + truncate. */}
           <div className="col-start-1 row-start-1 flex items-center gap-2 lg:gap-4 min-w-0 text-sm">
-            <div className="min-w-0 max-w-[11rem] sm:max-w-[14rem]">
-              <span className="font-semibold truncate block text-gray-900">Migración de Operador</span>
+            <div className={nuevoDetail ? 'min-w-0 flex items-center gap-1.5' : 'min-w-0 max-w-[11rem] sm:max-w-[14rem]'}>
+              <span className={nuevoDetail
+                ? 'font-semibold truncate block text-foreground text-[13px] max-w-[11rem] sm:max-w-[14rem]'
+                : 'font-semibold truncate block text-gray-900'}>
+                Migración de Operador
+              </span>
+              {nuevoDetail && selectedOperator && (
+                <Badge variant="outline" className="h-5 shrink-0 px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
+                  {operatorLabelEs(selectedOperator)}
+                </Badge>
+              )}
             </div>
 
-            <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-gray-50 shrink-0" role="group" aria-label="Operador">
+            <div
+              className={nuevoDetail
+                ? 'flex items-center gap-0.5 rounded-md border border-border bg-muted/50 p-0.5 shrink-0'
+                : 'flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-gray-50 shrink-0'}
+              role="group"
+              aria-label="Operador"
+            >
               {(['ENTEL', 'MOVISTAR'] as const).map((op) => (
                 <button
                   key={op}
                   type="button"
                   onClick={() => chooseOperator(op)}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                    selectedOperator === op
-                      ? 'bg-white text-gray-900 shadow-sm'
-                      : 'text-gray-500 hover:text-gray-800'
-                  }`}
+                  className={nuevoDetail
+                    ? `px-2 py-0.5 rounded-[5px] text-[11px] font-medium transition-colors duration-200 ${
+                        selectedOperator === op
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`
+                    : `px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                        selectedOperator === op
+                          ? 'bg-white text-gray-900 shadow-sm'
+                          : 'text-gray-500 hover:text-gray-800'
+                      }`}
                 >
                   {operatorLabelEs(op)}
                 </button>
@@ -3423,6 +3585,7 @@ export default function MyLeads() {
                 id="detail-batch-filter"
                 className="self-center min-w-0 lg:min-w-[12rem] max-w-[16rem]"
                 workingBatchId={pickerWorkingBatchId}
+                menuPortal={nuevoDetail}
               />
             )}
           </div>
@@ -3452,7 +3615,9 @@ export default function MyLeads() {
               <button
                 type="button"
                 onClick={returnToList}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white hover:bg-blue-50 border border-blue-200 text-blue-800 text-xs font-medium whitespace-nowrap shrink-0"
+                className={nuevoDetail
+                  ? 'flex items-center gap-1.5 px-2 py-1 rounded-md bg-background hover:bg-accent border border-border text-foreground text-xs font-medium whitespace-nowrap shrink-0 transition-colors duration-200'
+                  : 'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white hover:bg-blue-50 border border-blue-200 text-blue-800 text-xs font-medium whitespace-nowrap shrink-0'}
               >
                 <ArrowLeft size={14} />
                 Volver a la lista
@@ -3464,9 +3629,11 @@ export default function MyLeads() {
               </button>
             )}
             {viewMode === 'detail' && (
-              <div className="flex items-center justify-end gap-2.5 shrink-0">
+              <div className={nuevoDetail ? 'flex items-center justify-end gap-1.5 shrink-0' : 'flex items-center justify-end gap-2.5 shrink-0'}>
                 <span
-                  className="inline-flex items-baseline gap-1 px-2.5 py-1 rounded-md bg-blue-50 border border-blue-200 text-blue-900 text-sm font-semibold tabular-nums whitespace-nowrap shadow-sm"
+                  className={nuevoDetail
+                    ? 'inline-flex items-baseline gap-0.5 px-1.5 py-0.5 rounded-md border border-border bg-muted/50 text-foreground text-xs font-medium tabular-nums whitespace-nowrap'
+                    : 'inline-flex items-baseline gap-1 px-2.5 py-1 rounded-md bg-blue-50 border border-blue-200 text-blue-900 text-sm font-semibold tabular-nums whitespace-nowrap shadow-sm'}
                   title={
                     viewingOutsideQueue
                       ? 'Esta ficha no está en la cola de trabajo. Use Volver a la lista.'
@@ -3480,10 +3647,10 @@ export default function MyLeads() {
                   ) : (
                     <>
                       {currentIndex + 1}
-                      <span className="text-blue-400 font-medium">/</span>
+                      <span className={nuevoDetail ? 'text-muted-foreground font-medium' : 'text-blue-400 font-medium'}>/</span>
                       {total}
                       {hiddenNavCount > 0 && (
-                        <span className="text-blue-500/80 text-xs font-medium ml-0.5" title="Empresas archivadas ocultas de la cola">
+                        <span className={nuevoDetail ? 'text-muted-foreground text-[10px] font-medium ml-0.5' : 'text-blue-500/80 text-xs font-medium ml-0.5'} title="Empresas archivadas ocultas de la cola">
                           ({hiddenNavCount} ocultas)
                         </span>
                       )}
@@ -3502,7 +3669,9 @@ export default function MyLeads() {
 
           {/* Rightmost: view toggle — reserved last column so siblings cannot shift it */}
           <div className="col-start-2 row-start-1 lg:col-start-3 justify-self-end shrink-0">
-            <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5 shrink-0 border border-gray-200">
+            <div className={nuevoDetail
+              ? 'flex bg-muted rounded-md p-0.5 gap-0.5 shrink-0 border border-border/70'
+              : 'flex bg-gray-100 rounded-lg p-0.5 gap-0.5 shrink-0 border border-gray-200'}>
               <button
                 onClick={() => {
                   navEpochRef.current += 1
@@ -3514,22 +3683,26 @@ export default function MyLeads() {
                   switchView('detail')
                 }}
                 title="Vista detalle — ficha individual con historial"
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
-                  viewMode === 'detail'
-                    ? 'bg-white text-blue-700 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-800'
-                }`}
+                className={nuevoDetail
+                  ? 'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors duration-200 bg-background text-foreground shadow-sm'
+                  : `flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
+                      viewMode === 'detail'
+                        ? 'bg-white text-blue-700 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-800'
+                    }`}
               >
                 <List size={13} /> Detalle
               </button>
               <button
                 onClick={() => { setReturnToView(null); switchView('grid') }}
                 title="Vista tarjetas — grilla con búsqueda y filtros"
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
-                  viewMode === 'grid'
-                    ? 'bg-white text-blue-700 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-800'
-                }`}
+                className={nuevoDetail
+                  ? 'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors duration-200 text-muted-foreground hover:text-foreground'
+                  : `flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
+                      viewMode === 'grid'
+                        ? 'bg-white text-blue-700 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-800'
+                    }`}
               >
                 <LayoutGrid size={13} /> Tarjetas
               </button>
@@ -3547,15 +3720,19 @@ export default function MyLeads() {
                     ? 'Volver a la lista filtrada'
                     : 'Vista lista — tabla completa de clientes'
                 }
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
-                  viewMode === 'list'
-                    ? 'bg-white text-blue-700 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-800'
-                } ${
-                  viewMode === 'detail' && returnToView === 'list'
-                    ? 'ring-1 ring-blue-300'
-                    : ''
-                }`}
+                className={nuevoDetail
+                  ? `flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors duration-200 text-muted-foreground hover:text-foreground ${
+                      returnToView === 'list' ? 'ring-1 ring-ring' : ''
+                    }`
+                  : `flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all ${
+                      viewMode === 'list'
+                        ? 'bg-white text-blue-700 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-800'
+                    } ${
+                      viewMode === 'detail' && returnToView === 'list'
+                        ? 'ring-1 ring-blue-300'
+                        : ''
+                    }`}
               >
                 <AlignJustify size={13} /> Lista
               </button>
@@ -3579,26 +3756,31 @@ export default function MyLeads() {
 
       {/* ══════════════════════ DETAIL VIEW ══════════════════════════ */}
       {viewMode === 'detail' && (
-        <div className="flex flex-col lg:flex-row flex-1 overflow-hidden min-h-0">
+        <DetailShell nuevo={nuevoDetail}>
           {/* ── Left: pinned Empresa + contact tabs + form scroll + pinned Guardar footer ── */}
-          <div className="flex flex-col flex-1 min-h-0 bg-gray-50">
+          <div className={nuevoDetail ? 'relative flex flex-col flex-1 min-h-0 bg-transparent' : 'relative flex flex-col flex-1 min-h-0 bg-gray-50'}>
           {!loadingList && clients.length > 0 && !isInitialDetailLoad && displayDetail && (
-            <div className="shrink-0 z-20 px-3 lg:px-4 pt-3 lg:pt-4 bg-gray-50/95">
+            <div className={nuevoDetail ? 'shrink-0 z-20 px-3 lg:px-4 pt-3' : 'shrink-0 z-20 px-3 lg:px-4 pt-3 lg:pt-4 bg-gray-50/95'}>
               <div
-                className={`bg-white border border-gray-200 rounded-lg shadow-[0_4px_12px_-4px_rgba(15,23,42,0.12)] overflow-hidden ${
-                  showingStale ? 'pointer-events-none' : ''
-                }`}
+                className={nuevoDetail
+                  ? `rounded-xl border border-border/60 bg-card text-card-foreground shadow-sm overflow-hidden ${showingStale ? 'pointer-events-none' : ''}`
+                  : `bg-white border border-gray-200 rounded-lg shadow-[0_4px_12px_-4px_rgba(15,23,42,0.12)] overflow-hidden ${showingStale ? 'pointer-events-none' : ''}`}
               >
                 <div className="px-3 py-2">
                 <div className="flex flex-nowrap items-end gap-2 sm:gap-3 min-w-0">
-                  <div className="hidden sm:flex shrink-0 self-stretch items-center border-r border-gray-100 pr-2.5 mr-0.5">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Empresa</p>
+                  <div className={nuevoDetail
+                    ? 'hidden sm:flex shrink-0 self-stretch items-center border-r border-border/60 pr-2.5 mr-0.5'
+                    : 'hidden sm:flex shrink-0 self-stretch items-center border-r border-gray-100 pr-2.5 mr-0.5'}>
+                    <p className={nuevoDetail
+                      ? 'text-[10px] font-semibold text-muted-foreground uppercase tracking-widest'
+                      : 'text-[10px] font-bold text-gray-400 uppercase tracking-widest'}>Empresa</p>
                   </div>
                   <ReadField
                     label="RUC"
                     value={currentClient?.ruc ?? displayDetail.ruc}
                     className="w-36 sm:w-40 shrink-0"
                     mono
+                    nuevo={nuevoDetail}
                   />
                   <EditField
                     label="Razón Social"
@@ -3608,6 +3790,7 @@ export default function MyLeads() {
                     placeholder="Sin razón social — completar manualmente"
                     className="flex-1 min-w-0"
                     inputClassName="truncate"
+                    nuevo={nuevoDetail}
                   />
                   <div className="flex items-center gap-1.5 shrink-0 self-end pb-[3px]">
                     {!showingStale && displayDetail.otherOperatorPresence && (
@@ -3648,20 +3831,30 @@ export default function MyLeads() {
                 {displayContacts.length > 0 && (
                     <div
                       role="tablist"
-                      className="flex h-16 shrink-0 overflow-x-auto overflow-y-hidden flex-nowrap border-t border-gray-200 bg-gray-50 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                      className={nuevoDetail
+                        ? 'flex h-14 shrink-0 overflow-x-auto overflow-y-hidden flex-nowrap border-t border-border/60 bg-muted/30 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden'
+                        : 'flex h-16 shrink-0 overflow-x-auto overflow-y-hidden flex-nowrap border-t border-gray-200 bg-gray-50 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden'}>
                       {displayContacts.map((ct, idx) => {
                         const fullName = (ct.nombre ?? '').trim() || 'Contacto'
                         const { primerNombre, segundoNombre, tercerNombre } = contactNameParts(ct.nombre)
                         const isRegistered = contactHasAgentLogByContactId(ct.id, currentIndex)
                         const isActive = safeContactIdx === idx
                         const hasTelefono2 = isDisplayableTelefono2(ct.telefono2)
-                        const tabClass = isRegistered
-                          ? isActive
-                            ? 'bg-emerald-100 text-emerald-900 border-emerald-500 border-b-4 border-b-emerald-600 hover:bg-emerald-200'
-                            : 'bg-emerald-100 text-emerald-900 border-emerald-500 border-b-2 hover:bg-emerald-200'
-                          : isActive
-                            ? 'text-blue-700 border-blue-600 bg-white border-b-2'
-                            : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-100 border-b-2'
+                        const tabClass = nuevoDetail
+                          ? isRegistered
+                            ? isActive
+                              ? 'bg-emerald-50 text-emerald-950 border-b-[3px] border-emerald-600'
+                              : 'bg-emerald-50/80 text-emerald-900 border-b-2 border-transparent hover:bg-emerald-100'
+                            : isActive
+                              ? 'text-foreground bg-background border-b-[3px] border-foreground'
+                              : 'text-muted-foreground border-b-2 border-transparent hover:text-foreground hover:bg-muted/70'
+                          : isRegistered
+                            ? isActive
+                              ? 'bg-emerald-100 text-emerald-900 border-emerald-500 border-b-4 border-b-emerald-600 hover:bg-emerald-200'
+                              : 'bg-emerald-100 text-emerald-900 border-emerald-500 border-b-2 hover:bg-emerald-200'
+                            : isActive
+                              ? 'text-blue-700 border-blue-600 bg-white border-b-2'
+                              : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-100 border-b-2'
                         const tabTitle = [
                           fullName,
                           isRegistered ? 'Contacto registrado' : null,
@@ -3679,7 +3872,9 @@ export default function MyLeads() {
                             onClick={navigateWithSave(async () => {
                               await switchToContactTab(idx)
                             })}
-                            className={`relative flex h-full min-w-[100px] max-w-[120px] shrink-0 flex-col items-center justify-center gap-0 px-3 py-0.5 text-xs font-medium leading-tight transition-colors ${tabClass}`}>
+                            className={nuevoDetail
+                              ? `relative flex h-full min-w-[92px] max-w-[112px] shrink-0 flex-col items-center justify-center gap-0 px-2 py-0.5 text-[11px] font-medium leading-tight transition-colors duration-200 ${tabClass}`
+                              : `relative flex h-full min-w-[100px] max-w-[120px] shrink-0 flex-col items-center justify-center gap-0 px-3 py-0.5 text-xs font-medium leading-tight transition-colors ${tabClass}`}>
                             {hasTelefono2 && (
                               <span
                                 aria-hidden="true"
@@ -3789,10 +3984,14 @@ export default function MyLeads() {
                     <div className="space-y-3 h-full flex flex-col">
 
                 {/* ── Contacto (fields stay in scroller) ── */}
-                <div className="bg-white border border-gray-200 rounded-lg shrink-0">
+                <div className={nuevoDetail
+                  ? 'rounded-xl border border-border/60 bg-card text-card-foreground shadow-sm shrink-0'
+                  : 'bg-white border border-gray-200 rounded-lg shrink-0'}>
                   {displayContacts.length === 0 ? (
                     <div className="p-4">
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Contacto</p>
+                      <p className={nuevoDetail
+                        ? 'text-[11px] font-medium text-muted-foreground mb-3'
+                        : 'text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3'}>Contacto</p>
                       <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
                         <AlertCircle size={16} className="text-amber-600 shrink-0" />
                         <span className="text-sm text-amber-800">Sin contactos importados — verificar archivo de importación</span>
@@ -3800,56 +3999,75 @@ export default function MyLeads() {
                     </div>
                   ) : (
                       <div className="p-4">
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
+                        <p className={nuevoDetail
+                          ? 'text-[11px] font-medium text-muted-foreground mb-3'
+                          : 'text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3'}>
                           Contacto {safeContactIdx + 1} de {displayContacts.length}
                         </p>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        <div className={nuevoDetail ? 'space-y-3' : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3'}>
                           <div
-                            className={`col-span-full grid gap-3 ${
+                            className={`${nuevoDetail ? '' : 'col-span-full '}grid gap-3 ${
                               isDisplayableTelefono2(activeContact?.telefono2)
                                 ? 'grid-cols-1 sm:grid-cols-2'
                                 : 'grid-cols-1'
                             }`}
                           >
-                            <ContactPhoneField telefono={editTelefono} onChange={setEditTelefono} />
+                            <ContactPhoneField telefono={editTelefono} onChange={setEditTelefono} nuevo={nuevoDetail} />
                             {isDisplayableTelefono2(activeContact?.telefono2) && (
                               <ContactPhoneField
                                 telefono={activeContact?.telefono2 ?? ''}
                                 label="Teléfono 2"
                                 readOnly
+                                nuevo={nuevoDetail}
                               />
                             )}
                           </div>
-                          <EditField label="Email" value={editEmail} onChange={setEditEmail} placeholder="correo@ejemplo.com" />
-                          <EditField label="DNI" value={editDni} onChange={setEditDni} placeholder="Documento" />
+                          {nuevoDetail ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <EditField label="Email" value={editEmail} onChange={setEditEmail} placeholder="correo@ejemplo.com" nuevo />
+                              <EditField label="DNI" value={editDni} onChange={setEditDni} placeholder="Documento" nuevo />
+                            </div>
+                          ) : (
+                            <>
+                              <EditField label="Email" value={editEmail} onChange={setEditEmail} placeholder="correo@ejemplo.com" />
+                              <EditField label="DNI" value={editDni} onChange={setEditDni} placeholder="Documento" />
+                            </>
+                          )}
                         </div>
                       </div>
                   )}
                 </div>
 
+                {isAdmin && (
+                  <CompanyQuoteHistory
+                    companyId={currentClient?.id ?? displayDetail.id}
+                    nuevo={nuevoDetail}
+                  />
+                )}
+
                 {/* ── Resultado + Agendar apilados ── */}
                 <div className="flex flex-col gap-3 flex-1">
 
                   {/* Resultado de esta llamada */}
-                  <div className={`border border-gray-200 rounded-lg p-4 space-y-3 border-l-4 ${latestLogSnapshot ? 'bg-slate-50 border-l-blue-500' : 'bg-white border-l-transparent'}`}>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Resultado de esta llamada</p>
+                  <div className={nuevoDetail
+                    ? `rounded-xl border border-border/50 bg-card text-card-foreground shadow-sm p-4 space-y-3 ${latestLogSnapshot ? 'ring-1 ring-primary/15' : ''}`
+                    : `border border-gray-200 rounded-lg p-4 space-y-3 border-l-4 ${latestLogSnapshot ? 'bg-slate-50 border-l-blue-500' : 'bg-white border-l-transparent'}`}>
+                    <p className={nuevoDetail
+                      ? 'text-[11px] font-medium text-muted-foreground'
+                      : 'text-[10px] font-bold text-gray-400 uppercase tracking-widest'}>Resultado de esta llamada</p>
                     <div className="flex flex-col gap-0.5">
-                      <label className="text-xs text-gray-500 font-medium">Respuesta</label>
+                      <label className={nuevoDetail ? 'text-[11px] font-medium text-muted-foreground' : 'text-xs text-gray-500 font-medium'}>Respuesta</label>
                       <DispositionSelector
                         disposition={disposition}
                         onChange={handleDispositionChange}
                         error={respuestaError}
+                        appearance={nuevoDetail ? 'new' : 'classic'}
+                        onOpenProposal={isAdmin ? () => setProposalOpen(true) : undefined}
                       />
                     </div>
                     <div className="flex flex-col gap-0.5">
-                      <label className="text-xs text-gray-500 font-medium">Notas de la llamada</label>
-                      <textarea
-                        rows={3}
-                        className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none resize-none"
-                        placeholder="Comentarios adicionales de esta llamada..."
-                        value={callNotes}
-                        onChange={(e) => setCallNotes(e.target.value)}
-                      />
+                      <label className={nuevoDetail ? 'text-[11px] font-medium text-muted-foreground' : 'text-xs text-gray-500 font-medium'}>Notas de la llamada</label>
+                      <CallNotesField value={callNotes} onChange={setCallNotes} nuevo={nuevoDetail} />
                     </div>
                   </div>
 
@@ -3857,7 +4075,9 @@ export default function MyLeads() {
                     {latestLogSnapshot && (
                       <div className="absolute inset-x-0 top-0 -translate-y-1/2 flex items-center gap-3 px-1 pointer-events-none" aria-hidden>
                         <div className="h-0.5 flex-1 rounded-full bg-gradient-to-r from-transparent via-blue-500/80 to-blue-500/40" />
-                        <span className="flex items-center gap-1.5 shrink-0 text-xs font-medium text-blue-600 bg-gray-50 px-1">
+                        <span className={nuevoDetail
+                          ? 'flex items-center gap-1.5 shrink-0 text-xs font-medium text-muted-foreground bg-background px-1'
+                          : 'flex items-center gap-1.5 shrink-0 text-xs font-medium text-blue-600 bg-gray-50 px-1'}>
                           <CheckCircle2 size={12} className="text-blue-500" />
                           Registro guardado
                         </span>
@@ -3867,8 +4087,12 @@ export default function MyLeads() {
                   </div>
 
                   {/* Agendar */}
-                  <div className={`border border-gray-200 rounded-lg overflow-hidden transition-opacity ${agendarDisabled ? 'opacity-40 pointer-events-none select-none' : ''} ${latestLogSnapshot ? 'bg-amber-50' : 'bg-white'}`}>
-                    <div className="bg-gray-100 border-b border-gray-200 px-4 py-2 flex items-center gap-2">
+                  <div className={nuevoDetail
+                    ? `rounded-xl border border-border/50 bg-card text-card-foreground shadow-sm overflow-hidden transition-opacity ${agendarDisabled ? 'opacity-40 pointer-events-none select-none' : ''} ${latestLogSnapshot ? 'bg-amber-50/70' : ''}`
+                    : `border border-gray-200 rounded-lg overflow-hidden transition-opacity ${agendarDisabled ? 'opacity-40 pointer-events-none select-none' : ''} ${latestLogSnapshot ? 'bg-amber-50' : 'bg-white'}`}>
+                    <div className={nuevoDetail
+                      ? 'bg-muted/60 border-b border-border/60 px-4 py-2 flex items-center gap-2'
+                      : 'bg-gray-100 border-b border-gray-200 px-4 py-2 flex items-center gap-2'}>
                       <CalendarClock size={14} className="text-gray-500" />
                       <span className="text-sm font-semibold text-gray-600">Agendar</span>
                       {effectiveDisposition === 'VOLVER_A_LLAMAR' || effectiveDisposition === 'CALLBACK'
@@ -3878,20 +4102,24 @@ export default function MyLeads() {
                     <div className="p-4 space-y-3">
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
                         <div className="flex flex-col gap-0.5">
-                          <label className="text-xs text-gray-500 font-medium">Fecha</label>
+                          <label className={nuevoDetail ? 'text-[11px] font-medium text-muted-foreground' : 'text-xs text-gray-500 font-medium'}>Fecha</label>
                           <input
                             type="date"
-                            className="border border-gray-300 rounded px-3 py-1.5 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-full"
+                            className={nuevoDetail
+                              ? 'h-9 border border-input rounded-md px-3 text-sm bg-background text-foreground shadow-sm focus:ring-1 focus:ring-ring outline-none w-full transition-colors duration-200'
+                              : 'border border-gray-300 rounded px-3 py-1.5 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-full'}
                             value={schedDate}
                             min={new Date().toISOString().split('T')[0]}
                             onChange={(e) => setSchedDate(e.target.value)}
                           />
                         </div>
                         <div className="flex flex-col gap-0.5">
-                          <label className="text-xs text-gray-500 font-medium">Hora</label>
+                          <label className={nuevoDetail ? 'text-[11px] font-medium text-muted-foreground' : 'text-xs text-gray-500 font-medium'}>Hora</label>
                           <input
                             type="time"
-                            className="border border-gray-300 rounded px-3 py-1.5 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-full"
+                            className={nuevoDetail
+                              ? 'h-9 border border-input rounded-md px-3 text-sm bg-background text-foreground shadow-sm focus:ring-1 focus:ring-ring outline-none w-full transition-colors duration-200'
+                              : 'border border-gray-300 rounded px-3 py-1.5 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-full'}
                             value={schedTime}
                             onChange={(e) => setSchedTime(e.target.value)}
                           />
@@ -3904,7 +4132,9 @@ export default function MyLeads() {
                             setSchedDate(d.toISOString().split('T')[0])
                             setSchedTime('09:00')
                           }}
-                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50 transition-colors h-[34px] bg-white"
+                          className={nuevoDetail
+                            ? 'flex items-center justify-center gap-1.5 px-3 h-9 border border-input rounded-md text-sm text-foreground bg-background shadow-sm hover:bg-accent transition-colors duration-200'
+                            : 'flex items-center justify-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50 transition-colors h-[34px] bg-white'}
                         >
                           <Clock size={13} /> Primer libre
                         </button>
@@ -3913,8 +4143,12 @@ export default function MyLeads() {
                   </div>
 
                   {/* Líneas móviles */}
-                  <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                    <div className="bg-gray-100 border-b border-gray-200 px-4 py-2">
+                  <div className={nuevoDetail
+                    ? 'rounded-xl border border-border/50 bg-card text-card-foreground shadow-sm overflow-hidden'
+                    : 'bg-white border border-gray-200 rounded-lg overflow-hidden'}>
+                    <div className={nuevoDetail
+                      ? 'bg-muted/60 border-b border-border/60 px-4 py-2'
+                      : 'bg-gray-100 border-b border-gray-200 px-4 py-2'}>
                       <span className="text-sm font-semibold text-gray-600">Líneas móviles</span>
                     </div>
                     <div className="p-4 overflow-x-auto">
@@ -3958,26 +4192,66 @@ export default function MyLeads() {
           </div>
 
           {!loadingList && clients.length > 0 && !isInitialDetailLoad && displayDetail && (
-            <div className="shrink-0 border-t border-gray-200 bg-white px-3 py-3 lg:px-4">
+            <div className={nuevoDetail
+              ? 'shrink-0 border-t border-border/60 bg-background/85 backdrop-blur px-3 py-2.5 lg:px-4'
+              : 'shrink-0 border-t border-gray-200 bg-white px-3 py-3 lg:px-4'}>
               <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
-                <button onClick={() => requestSave(false)} disabled={saveMutation.isPending || !canSaveCallResult}
-                  title="Guardar resultado (Ctrl+Enter)"
-                  className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
-                  <Save size={15} />
-                  {saveMutation.isPending ? 'Guardando…' : latestLogSnapshot ? 'Guardar actualización' : 'Guardar resultado'}
-                </button>
-                <button onClick={() => requestSave(true)} disabled={saveMutation.isPending || isLast || !canSaveCallResult}
-                  className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
-                  Guardar y siguiente empresa <ChevronRight size={15} />
-                </button>
-                <button
-                  onClick={() => requestSave('nextPending')}
-                  disabled={saveMutation.isPending || !canSaveCallResult || !nextPendingTarget}
-                  title="Guarda y salta a la próxima empresa sin registro en este lote (Ctrl+Shift+Enter)"
-                  className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] border-2 border-indigo-500 text-indigo-700 hover:bg-indigo-50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none"
-                >
-                  Guardar y siguiente pendiente <ChevronRight size={15} />
-                </button>
+                {nuevoDetail ? (
+                  <Button
+                    type="button"
+                    onClick={() => requestSave(false)}
+                    disabled={saveMutation.isPending || !canSaveCallResult}
+                    title="Guardar resultado (Ctrl+Enter)"
+                    className="w-full sm:w-auto"
+                  >
+                    <Save size={15} />
+                    {saveMutation.isPending ? 'Guardando…' : latestLogSnapshot ? 'Guardar actualización' : 'Guardar resultado'}
+                  </Button>
+                ) : (
+                  <button onClick={() => requestSave(false)} disabled={saveMutation.isPending || !canSaveCallResult}
+                    title="Guardar resultado (Ctrl+Enter)"
+                    className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
+                    <Save size={15} />
+                    {saveMutation.isPending ? 'Guardando…' : latestLogSnapshot ? 'Guardar actualización' : 'Guardar resultado'}
+                  </button>
+                )}
+                {nuevoDetail ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => requestSave(true)}
+                    disabled={saveMutation.isPending || isLast || !canSaveCallResult}
+                    className="w-full sm:w-auto"
+                  >
+                    Guardar y siguiente empresa <ChevronRight size={15} />
+                  </Button>
+                ) : (
+                  <button onClick={() => requestSave(true)} disabled={saveMutation.isPending || isLast || !canSaveCallResult}
+                    className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none">
+                    Guardar y siguiente empresa <ChevronRight size={15} />
+                  </button>
+                )}
+                {nuevoDetail ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => requestSave('nextPending')}
+                    disabled={saveMutation.isPending || !canSaveCallResult || !nextPendingTarget}
+                    title="Guarda y salta a la próxima empresa sin registro en este lote (Ctrl+Shift+Enter)"
+                    className="w-full sm:w-auto"
+                  >
+                    Guardar y siguiente pendiente <ChevronRight size={15} />
+                  </Button>
+                ) : (
+                  <button
+                    onClick={() => requestSave('nextPending')}
+                    disabled={saveMutation.isPending || !canSaveCallResult || !nextPendingTarget}
+                    title="Guarda y salta a la próxima empresa sin registro en este lote (Ctrl+Shift+Enter)"
+                    className="flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] border-2 border-indigo-500 text-indigo-700 hover:bg-indigo-50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none"
+                  >
+                    Guardar y siguiente pendiente <ChevronRight size={15} />
+                  </button>
+                )}
                 {queueRefreshing && (
                   <span
                     role="status"
@@ -4004,6 +4278,7 @@ export default function MyLeads() {
                     atFirstEmpty={atFirstEmpty}
                     noRegistered={!firstRegisteredTarget}
                     noEmpty={!firstEmptyTarget}
+                    nuevo={nuevoDetail}
                   />
                 </div>
               </div>
@@ -4014,7 +4289,9 @@ export default function MyLeads() {
           {/* ── Right panel: Agendados + Historial ── */}
           <div
             ref={rightPanelRef}
-            className="flex flex-col bg-white overflow-hidden min-h-0 border-t border-gray-200 flex-1 max-h-[45vh] lg:max-h-none lg:w-72 lg:shrink-0 lg:border-l lg:border-t-0 lg:flex-none"
+            className={nuevoDetail
+              ? 'flex flex-col bg-card overflow-hidden min-h-0 border-t border-border/60 flex-1 max-h-[45vh] lg:max-h-none lg:w-72 lg:shrink-0 lg:border-l lg:border-t-0 lg:flex-none'
+              : 'flex flex-col bg-white overflow-hidden min-h-0 border-t border-gray-200 flex-1 max-h-[45vh] lg:max-h-none lg:w-72 lg:shrink-0 lg:border-l lg:border-t-0 lg:flex-none'}
           >
             <div className="lg:hidden flex border-b border-gray-200 bg-gray-50 shrink-0">
               <button
@@ -4053,10 +4330,12 @@ export default function MyLeads() {
               } lg:flex lg:shrink-0 lg:flex-none`}
               style={isLg ? { height: `${agendadosSplitPct}%` } : undefined}
             >
-              <div className="bg-blue-600 text-white px-4 py-2.5 items-center justify-between shrink-0 hidden lg:flex">
+              <div className={nuevoDetail
+                ? 'bg-muted/70 text-foreground border-b border-border/60 px-3 py-2 items-center justify-between shrink-0 hidden lg:flex'
+                : 'bg-blue-600 text-white px-4 py-2.5 items-center justify-between shrink-0 hidden lg:flex'}>
                 <div className="flex items-center gap-2">
-                  <CalendarClock size={14} />
-                  <span className="font-semibold text-sm">Agendados</span>
+                  <CalendarClock size={14} className={nuevoDetail ? 'text-muted-foreground' : undefined} />
+                  <span className={nuevoDetail ? 'font-medium text-sm' : 'font-semibold text-sm'}>Agendados</span>
                 </div>
                 <div className="flex gap-1">
                   {overdueCount > 0 && <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{overdueCount}</span>}
@@ -4166,7 +4445,9 @@ export default function MyLeads() {
                   })
                 )}
               </div>
-              <div className="border-t border-gray-100 px-3 py-1.5 shrink-0 bg-gray-50 flex items-center gap-3">
+              <div className={nuevoDetail
+                ? 'border-t border-border/60 px-3 py-1.5 shrink-0 bg-muted/30 flex items-center gap-3'
+                : 'border-t border-gray-100 px-3 py-1.5 shrink-0 bg-gray-50 flex items-center gap-3'}>
                 <div className="flex items-center gap-1 text-[10px] text-red-500"><AlertCircle size={8} /> Vencido</div>
                 <div className="flex items-center gap-1 text-[10px] text-amber-600"><Clock size={8} /> Hoy</div>
                 <div className="flex items-center gap-1 text-[10px] text-blue-600"><CalendarClock size={8} /> Próximo</div>
@@ -4181,7 +4462,9 @@ export default function MyLeads() {
               aria-label="Redimensionar panel Agendados"
               title="Arrastrar para ajustar altura"
               onMouseDown={handleSplitMouseDown}
-              className="hidden lg:flex shrink-0 h-3 cursor-row-resize bg-gray-50 hover:bg-blue-50 border-y border-gray-200 items-center justify-center gap-1.5 group select-none"
+              className={nuevoDetail
+                ? 'hidden lg:flex shrink-0 h-3 cursor-row-resize bg-muted/40 hover:bg-accent border-y border-border items-center justify-center gap-1.5 group select-none'
+                : 'hidden lg:flex shrink-0 h-3 cursor-row-resize bg-gray-50 hover:bg-blue-50 border-y border-gray-200 items-center justify-center gap-1.5 group select-none'}
             >
               <GripHorizontal size={12} className="text-gray-300 group-hover:text-blue-400" />
               <span className="text-[9px] font-medium text-gray-300 group-hover:text-blue-400 uppercase tracking-wide">
@@ -4196,20 +4479,28 @@ export default function MyLeads() {
                 mobilePanelTab === 'historial' ? 'flex-1 flex' : 'hidden'
               } lg:flex-1 lg:flex`}
             >
-              <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200 shrink-0">
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1">
+              <div className={nuevoDetail
+                ? 'flex items-center justify-between px-3 py-2 bg-muted/40 border-b border-border/60 shrink-0'
+                : 'flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200 shrink-0'}>
+                <p className={nuevoDetail
+                  ? 'text-[11px] font-medium text-muted-foreground flex items-center gap-1'
+                  : 'text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1'}>
                   <History size={10} /> Historial de llamadas
                 </p>
                 <div className="flex items-center gap-2">
                   {displayContacts.length > 1 && (
-                    <div className="flex bg-gray-200 rounded p-0.5 gap-0.5">
+                    <div className={nuevoDetail ? 'flex bg-muted rounded p-0.5 gap-0.5' : 'flex bg-gray-200 rounded p-0.5 gap-0.5'}>
                       <button
                         onClick={() => setHistorialScope('contact')}
-                        className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${historialScope === 'contact' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        className={nuevoDetail
+                          ? `px-2 py-0.5 rounded text-[10px] font-semibold transition-colors duration-200 ${historialScope === 'contact' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`
+                          : `px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${historialScope === 'contact' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                       >Contacto</button>
                       <button
                         onClick={() => setHistorialScope('company')}
-                        className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${historialScope === 'company' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        className={nuevoDetail
+                          ? `px-2 py-0.5 rounded text-[10px] font-semibold transition-colors duration-200 ${historialScope === 'company' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`
+                          : `px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${historialScope === 'company' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                       >Empresa</button>
                     </div>
                   )}
@@ -4217,33 +4508,54 @@ export default function MyLeads() {
                 </div>
               </div>
               {!detail || !historialSplit.hasAnyLogs ? (
-                <div className="flex-1 flex items-center justify-center text-gray-400">
-                  <div className="text-center">
-                    <AlertCircle size={22} className="mx-auto mb-2 opacity-30" />
-                    <p className="text-xs">Sin llamadas registradas</p>
+                nuevoDetail ? (
+                  <div className="flex-1 flex items-center justify-center px-4 text-muted-foreground">
+                    <div className="text-center">
+                      <PhoneOff size={28} strokeWidth={1.5} className="mx-auto mb-2 text-muted-foreground/60" />
+                      <p className="text-sm">Sin llamadas registradas</p>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center text-gray-400">
+                    <div className="text-center">
+                      <AlertCircle size={22} className="mx-auto mb-2 opacity-30" />
+                      <p className="text-xs">Sin llamadas registradas</p>
+                    </div>
+                  </div>
+                )
               ) : (
                 <div
                   ref={historialScrollRef}
-                  className="flex-1 overflow-y-auto [scrollbar-gutter:stable] p-3 space-y-2 bg-gray-50"
+                  className={nuevoDetail
+                    ? 'flex-1 overflow-y-auto [scrollbar-gutter:stable] p-3 space-y-2 bg-muted/20'
+                    : 'flex-1 overflow-y-auto [scrollbar-gutter:stable] p-3 space-y-2 bg-gray-50'}
                 >
                   {historialSplit.primaryCount === 0 ? (
                     historialScope === 'contact' && displayContacts.length > 1 ? (
-                      <div className="flex items-center justify-center py-8 text-gray-400">
+                      <div className={nuevoDetail
+                        ? 'flex items-center justify-center py-8 text-muted-foreground'
+                        : 'flex items-center justify-center py-8 text-gray-400'}>
                         <div className="text-center">
-                          <AlertCircle size={20} className="mx-auto mb-2 opacity-30" />
-                          <p className="text-xs">
+                          {nuevoDetail
+                            ? <PhoneOff size={28} strokeWidth={1.5} className="mx-auto mb-2 text-muted-foreground/60" />
+                            : <AlertCircle size={20} className="mx-auto mb-2 opacity-30" />}
+                          <p className={nuevoDetail ? 'text-sm' : 'text-xs'}>
                             {isAdmin ? 'Sin llamadas para este contacto' : 'Sin llamadas propias para este contacto'}
                           </p>
-                          <button onClick={() => setHistorialScope('company')} className="mt-1.5 text-[11px] text-blue-500 hover:underline">Ver toda la empresa</button>
+                          <button onClick={() => setHistorialScope('company')} className={nuevoDetail
+                            ? 'mt-1.5 text-[11px] text-foreground/80 hover:underline'
+                            : 'mt-1.5 text-[11px] text-blue-500 hover:underline'}>Ver toda la empresa</button>
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center justify-center py-8 text-gray-400">
+                      <div className={nuevoDetail
+                        ? 'flex items-center justify-center py-8 text-muted-foreground'
+                        : 'flex items-center justify-center py-8 text-gray-400'}>
                         <div className="text-center">
-                          <AlertCircle size={20} className="mx-auto mb-2 opacity-30" />
-                          <p className="text-xs">
+                          {nuevoDetail
+                            ? <PhoneOff size={28} strokeWidth={1.5} className="mx-auto mb-2 text-muted-foreground/60" />
+                            : <AlertCircle size={20} className="mx-auto mb-2 opacity-30" />}
+                          <p className={nuevoDetail ? 'text-sm' : 'text-xs'}>
                             {isAdmin ? 'Sin llamadas registradas' : 'Sin llamadas propias registradas'}
                           </p>
                         </div>
@@ -4293,7 +4605,26 @@ export default function MyLeads() {
             </div>
 
           </div>
-        </div>
+          {proposalOpen && displayDetail && isAdmin && (
+            <ProposalPanel
+              nuevo={nuevoDetail}
+              isAdmin={isAdmin}
+              companyId={currentClient?.id ?? displayDetail.id}
+              ruc={currentClient?.ruc ?? displayDetail.ruc}
+              razonSocial={editRazonSocial}
+              contactName={activeContact?.nombre ?? ''}
+              phone={editTelefono}
+              email={editEmail}
+              mobileLines={visibleMobileLines}
+              onClose={() => setProposalOpen(false)}
+              onQuoteRegistered={() => {
+                if (!shouldAdvanceToPropuestaPresentada(disposition)) return
+                handleDispositionChange('PROPUESTA_PRESENTADA')
+                toast.success('Quedó en Propuesta presentada. Guarda el resultado para registrarlo.')
+              }}
+            />
+          )}
+        </DetailShell>
       )}
 
       {/* ══════════════════════ GRID / KANBAN VIEW ═══════════════════ */}

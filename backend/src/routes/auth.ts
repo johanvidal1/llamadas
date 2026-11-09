@@ -16,6 +16,7 @@ import {
   recordElevateAttempt,
 } from '../lib/elevateAdminRateLimit'
 import { prisma } from '../lib/prisma'
+import { agentPhoneOrNull } from '../lib/telefono2'
 import { runWithTenant } from '../lib/tenantContext'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
@@ -72,6 +73,7 @@ const authUserPublicSelect = {
   isSuperAdmin: true,
   isSystemOwner: true,
   avatarUrl: true,
+  phone: true,
   batchQueueMode: true,
   workingBatchId: true,
   workingBatchIdEntel: true,
@@ -86,6 +88,7 @@ function publicUserFields(user: {
   isSuperAdmin: boolean
   isSystemOwner: boolean
   avatarUrl?: string | null
+  phone?: string | null
   batchQueueMode?: string | null
   workingBatchId?: string | null
   workingBatchIdEntel?: string | null
@@ -100,6 +103,7 @@ function publicUserFields(user: {
     isSuperAdmin: user.isSuperAdmin,
     isSystemOwner: user.isSystemOwner,
     hasAvatar: Boolean(user.avatarUrl),
+    phone: user.phone ?? null,
     batchQueueMode: user.batchQueueMode === 'LIFO' || user.batchQueueMode === 'ALL' ? user.batchQueueMode : 'FIFO',
     workingBatchId: workingBatchIdEntel,
     workingBatchIdEntel,
@@ -117,6 +121,7 @@ const patchMeSchema = z.object({
   workingBatchIdEntel: z.union([z.string().min(1), z.null()]).optional(),
   workingBatchIdMovistar: z.union([z.string().min(1), z.null()]).optional(),
   operator: z.enum(['ENTEL', 'MOVISTAR']).optional(),
+  phone: z.string().max(40).optional(),
 })
 
 /** Password required; email optional (legacy path when provided). */
@@ -152,6 +157,7 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
       tenantId: true,
       tokenVersion: true,
       avatarUrl: true,
+      phone: true,
       batchQueueMode: true,
       workingBatchId: true,
       workingBatchIdEntel: true,
@@ -288,7 +294,8 @@ router.patch('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const hasAny =
     data.workingBatchId !== undefined ||
     data.workingBatchIdEntel !== undefined ||
-    data.workingBatchIdMovistar !== undefined
+    data.workingBatchIdMovistar !== undefined ||
+    data.phone !== undefined
   if (!hasAny) {
     res.status(400).json({ error: 'Nada que actualizar' })
     return
@@ -298,7 +305,17 @@ router.patch('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     workingBatchId?: string | null
     workingBatchIdEntel?: string | null
     workingBatchIdMovistar?: string | null
+    phone?: string | null
   } = {}
+
+  if (data.phone !== undefined) {
+    const parsedPhone = agentPhoneOrNull(data.phone)
+    if ('error' in parsedPhone) {
+      res.status(400).json({ error: parsedPhone.error })
+      return
+    }
+    updateData.phone = parsedPhone.phone
+  }
 
   if (data.workingBatchIdEntel !== undefined) {
     updateData.workingBatchIdEntel = data.workingBatchIdEntel
@@ -339,6 +356,7 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
       isSystemOwner: true,
       active: true,
       avatarUrl: true,
+      phone: true,
       batchQueueMode: true,
       workingBatchId: true,
       workingBatchIdEntel: true,

@@ -4,9 +4,14 @@ import { Camera, LogOut, Trash2 } from 'lucide-react'
 import {
   deleteAvatar,
   fetchMyAvatarBlob,
+  patchMe,
   uploadAvatar,
 } from '../api/client'
+import { peruMobileDigits } from '../lib/mobileLine'
 import { useAuth } from '../contexts/AuthContext'
+import { useUiTheme } from '../lib/uiTheme'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 
 type PresenceTone = 'online' | 'recent' | 'offline'
 
@@ -31,11 +36,39 @@ function presenceLabel(tone: PresenceTone): string {
   return 'Desconectado'
 }
 
+function ThemeChoice({
+  label,
+  selected,
+  onSelect,
+}: {
+  label: string
+  selected: boolean
+  onSelect: () => void
+}) {
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant={selected ? 'default' : 'outline'}
+      className="h-8 px-2 shadow-none"
+      role="menuitemradio"
+      aria-checked={selected}
+      onClick={onSelect}
+    >
+      {label}
+    </Button>
+  )
+}
+
 export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
   const { user, updateUser } = useAuth()
+  const [uiTheme, setUiTheme] = useUiTheme()
   const [open, setOpen] = useState(false)
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [phone, setPhone] = useState('')
+  const [phoneError, setPhoneError] = useState('')
+  const [savingPhone, setSavingPhone] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -71,6 +104,11 @@ export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
   }, [user?.hasAvatar, user?.id, user?.avatarVersion])
+
+  useEffect(() => {
+    setPhone(user?.phone ?? '')
+    setPhoneError('')
+  }, [user?.phone, user?.id])
 
   useEffect(() => {
     if (!open) return
@@ -116,6 +154,26 @@ export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
     } finally {
       setUploading(false)
       if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  const handleSavePhone = async () => {
+    const trimmed = phone.trim()
+    if (trimmed && !peruMobileDigits(trimmed)) {
+      setPhoneError('Ingresa un celular de Perú (9 dígitos).')
+      return
+    }
+    setPhoneError('')
+    setSavingPhone(true)
+    try {
+      const next = await patchMe({ phone: trimmed })
+      updateUser({ phone: next.phone ?? null })
+      toast.success(trimmed ? 'Celular guardado' : 'Celular quitado')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(msg ?? 'No se pudo guardar el celular')
+    } finally {
+      setSavingPhone(false)
     }
   }
 
@@ -178,7 +236,7 @@ export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 mt-2 w-56 rounded-xl border border-gray-200 bg-white shadow-xl z-[60] py-1 overflow-hidden"
+          className="absolute right-0 mt-2 w-64 max-w-[calc(100vw-0.75rem)] rounded-xl border border-gray-200 bg-white shadow-xl z-[60] py-1 overflow-hidden"
         >
           <div className="px-3 py-2.5 border-b border-gray-100">
             <p className="text-sm font-medium text-gray-900 truncate">{user?.name}</p>
@@ -220,6 +278,60 @@ export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
               Quitar foto
             </button>
           ) : null}
+
+          <div className="my-1 border-t border-gray-100" />
+
+          <div className="px-3 py-2" role="group" aria-label="Celular">
+            <label className="block text-[11px] font-semibold uppercase tracking-wide text-gray-500" htmlFor="avatar-menu-phone">
+              Celular
+            </label>
+            <input
+              id="avatar-menu-phone"
+              className="mt-1 h-8 w-full rounded-md border border-gray-200 px-2 text-sm text-gray-900 outline-none focus:border-blue-500"
+              inputMode="numeric"
+              placeholder="999888777"
+              value={phone}
+              onChange={(e) => {
+                setPhone(e.target.value)
+                setPhoneError('')
+              }}
+            />
+            <p className="mt-1 text-[11px] text-gray-400">9 dígitos. Vacío si no quieres mostrarlo.</p>
+            {phoneError ? <p className="mt-1 text-[11px] text-red-600">{phoneError}</p> : null}
+            <button
+              type="button"
+              disabled={savingPhone}
+              onClick={() => void handleSavePhone()}
+              className="mt-2 h-8 w-full rounded-md border border-blue-600 bg-white text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+            >
+              {savingPhone ? 'Guardando…' : 'Guardar celular'}
+            </button>
+          </div>
+
+          <div className="my-1 border-t border-gray-100" />
+
+          <div className="px-3 py-2" role="group" aria-label="Interfaz">
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                Interfaz
+              </span>
+              <Badge variant="secondary" className="h-5 px-1.5 text-[10px] font-medium shadow-none">
+                {uiTheme === 'new' ? 'Nuevo' : 'Clásico'}
+              </Badge>
+            </div>
+            <div className="grid grid-cols-2 gap-1">
+              <ThemeChoice
+                label="Clásico"
+                selected={uiTheme === 'classic'}
+                onSelect={() => setUiTheme('classic')}
+              />
+              <ThemeChoice
+                label="Nuevo"
+                selected={uiTheme === 'new'}
+                onSelect={() => setUiTheme('new')}
+              />
+            </div>
+          </div>
 
           <div className="my-1 border-t border-gray-100" />
 

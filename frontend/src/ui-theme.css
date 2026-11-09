@@ -1,0 +1,16 @@
+/* Nuevo is a skin on the existing shell. Classic does not use these rules. */
+
+html[data-ui='new'] .app-shell {
+  background-color: hsl(210 40% 96.1%);
+}
+
+html[data-ui='new'] .app-sidebar {
+  background-color: hsl(0 0% 100%);
+  border-color: hsl(214.3 31.8% 91.4%);
+}
+
+html[data-ui='new'] .app-main {
+  background-color: hsl(210 40% 98%);
+  background-image: radial-gradient(hsl(215.4 16.3% 46.9% / 0.2) 1px, transparent 1px);
+  background-size: 18px 18px;
+}

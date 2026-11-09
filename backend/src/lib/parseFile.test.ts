@@ -361,6 +361,133 @@ async function runAsyncChecks() {
   assert.equal(byName.IMEI.telefono2, undefined)
   assert.equal(byName.FIJO.telefono2, undefined)
   assert.equal(entelPhone2.companies[0].contacts.length, 6)
+  assert.equal(entelPhone2.mobileLines.length, 0)
+
+  section('Entel Contactos + DetallePlan only (no ProductosMovil) builds mobile lines')
+  const detalleOnlyBuffer = workbookBuffer([
+    sheet('Contactos', [
+      {
+        ruc: '20111111111',
+        razon_social: 'ENTEL SAC',
+        nombre: 'ANA',
+        telefono: '999111222',
+      },
+    ]),
+    sheet('DetallePlan', [
+      {
+        ruc: '20111111111',
+        numero_telefono: '999111222',
+        estado_linea: 'Activa',
+        plan_detalle: 'Plan Empresarial',
+        renta_basica: '69.90',
+        renta_basica_con_desc: '49.90',
+        imei: 'NO-IMPORTAR',
+        marca: 'NO-IMPORTAR',
+      },
+      {
+        ruc: '20111111111',
+        numero_telefono: '999111333',
+        estado_linea: 'Suspendida',
+        plan_detalle: 'Plan Control',
+        renta_basica: '39.90',
+        renta_basica_con_desc: '',
+      },
+    ]),
+  ])
+  const detalleOnly = await parseExcel(detalleOnlyBuffer, 'ENTEL')
+  assert.equal(detalleOnly.companies.length, 1)
+  assert.equal(detalleOnly.mobileLines.length, 2)
+  const detallePlanA = detalleOnly.mobileLines.find((l) => l.numeroTelefono === '999111222')
+  const detallePlanB = detalleOnly.mobileLines.find((l) => l.numeroTelefono === '999111333')
+  assert.ok(detallePlanA)
+  assert.equal(detallePlanA.plan, 'Plan Empresarial')
+  assert.equal(detallePlanA.estadoLinea, 'Activa')
+  assert.equal(detallePlanA.rentaBasica, '69.90')
+  assert.equal(detallePlanA.rentaBasicaConDesc, '49.90')
+  assert.equal('imei' in detallePlanA, false)
+  assert.equal('marca' in detallePlanA, false)
+  assert.ok(detallePlanB)
+  assert.equal(detallePlanB.plan, 'Plan Control')
+  assert.equal(detallePlanB.rentaBasica, '39.90')
+  assert.equal(detallePlanB.rentaBasicaConDesc, undefined)
+
+  section('Entel both sheets: DetallePlan wins on overlap; ProductosMovil-only extra is kept')
+  const bothSheetsBuffer = workbookBuffer([
+    sheet('Contactos', [
+      {
+        ruc: '20111111111',
+        razon_social: 'ENTEL SAC',
+        nombre: 'ANA',
+        telefono: '999111222',
+      },
+    ]),
+    sheet('ProductosMovil', [
+      {
+        ruc: '20111111111',
+        numero_telefono: '999111222',
+        estado_linea: 'WRONG',
+        plan: 'Plan Productos',
+      },
+      {
+        ruc: '20111111111',
+        numero_telefono: '999000111',
+        estado_linea: 'Suspendida',
+        plan: 'Solo Productos',
+      },
+    ]),
+    sheet('DetallePlan', [
+      {
+        ruc: '20111111111',
+        numero_telefono: '999111222',
+        estado_linea: 'Activa',
+        plan_detalle: 'Plan Empresarial',
+        renta_basica: '69.90',
+        renta_basica_con_desc: '49.90',
+      },
+    ]),
+  ])
+  const bothSheets = await parseExcel(bothSheetsBuffer, 'ENTEL')
+  assert.equal(bothSheets.mobileLines.length, 2)
+  const overlap = bothSheets.mobileLines.find((l) => l.numeroTelefono === '999111222')
+  const extra = bothSheets.mobileLines.find((l) => l.numeroTelefono === '999000111')
+  assert.ok(overlap)
+  assert.equal(overlap.plan, 'Plan Empresarial')
+  assert.equal(overlap.estadoLinea, 'Activa')
+  assert.equal(overlap.rentaBasica, '69.90')
+  assert.equal(overlap.rentaBasicaConDesc, '49.90')
+  assert.ok(extra)
+  assert.equal(extra.plan, 'Solo Productos')
+  assert.equal(extra.estadoLinea, 'Suspendida')
+  assert.equal(extra.rentaBasica, undefined)
+  assert.equal(extra.rentaBasicaConDesc, undefined)
+
+  section('Entel Contactos + ProductosMovil only unchanged')
+  const productosOnlyBuffer = workbookBuffer([
+    sheet('Contactos', [
+      {
+        ruc: '20111111111',
+        razon_social: 'ENTEL SAC',
+        nombre: 'ANA',
+        telefono: '999111222',
+      },
+    ]),
+    sheet('ProductosMovil', [
+      {
+        ruc: '20111111111',
+        numero_telefono: '999111222',
+        estado_linea: 'Activa',
+        plan: 'Plan Productos',
+      },
+    ]),
+  ])
+  const productosOnly = await parseExcel(productosOnlyBuffer, 'ENTEL')
+  assert.equal(productosOnly.companies.length, 1)
+  assert.equal(productosOnly.mobileLines.length, 1)
+  assert.equal(productosOnly.mobileLines[0].numeroTelefono, '999111222')
+  assert.equal(productosOnly.mobileLines[0].plan, 'Plan Productos')
+  assert.equal(productosOnly.mobileLines[0].estadoLinea, 'Activa')
+  assert.equal(productosOnly.mobileLines[0].rentaBasica, undefined)
+  assert.equal(productosOnly.mobileLines[0].rentaBasicaConDesc, undefined)
 
   section('telefono2 helper rejects junk and duplicates')
   assert.equal(peruMobileDigits('51933399223'), '933399223')

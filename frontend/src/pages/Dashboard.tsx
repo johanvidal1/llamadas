@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getDashboardStats, getMyBatches } from '../api/client'
@@ -31,6 +32,31 @@ import OperatorFilterGroup, { type OperatorFilterValue } from '../components/Ope
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { resolveImportOperator } from '../lib/operator'
+import { useUiTheme } from '../lib/uiTheme'
+
+function DashboardCardMotion({
+  children,
+  index = 0,
+  className = '',
+}: {
+  children: ReactNode
+  index?: number
+  className?: string
+}) {
+  const [theme] = useUiTheme()
+  const reduceMotion = useReducedMotion()
+  if (theme !== 'new' || reduceMotion) return <>{children}</>
+  return (
+    <motion.div
+      className={`h-full [&>*]:h-full ${className}`.trim()}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.32, delay: index * 0.045, ease: 'easeOut' }}
+    >
+      {children}
+    </motion.div>
+  )
+}
 
 function StatCard({
   label,
@@ -868,6 +894,7 @@ export default function Dashboard() {
           return (
             <>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <DashboardCardMotion index={0}>
               <StatCard
                 label="Empresas asignadas"
                 value={assignedCompanies}
@@ -876,6 +903,8 @@ export default function Dashboard() {
                 icon={Users}
                 color="bg-blue-600"
               />
+              </DashboardCardMotion>
+              <DashboardCardMotion index={1}>
               <StatCard
                 label="Tasa contacto empresas"
                 value={`${companyContactPct}%`}
@@ -884,6 +913,8 @@ export default function Dashboard() {
                 icon={Phone}
                 color="bg-emerald-600"
               />
+              </DashboardCardMotion>
+              <DashboardCardMotion index={2}>
               <StatCard
                 label="Agentes activos"
                 value={stats?.totalAgents ?? 0}
@@ -892,6 +923,8 @@ export default function Dashboard() {
                 icon={PhoneCall}
                 color="bg-indigo-600"
               />
+              </DashboardCardMotion>
+              <DashboardCardMotion index={3}>
               <StatCard
                 label="Callbacks pendientes"
                 value={stats?.pendingCallbacks ?? 0}
@@ -900,6 +933,7 @@ export default function Dashboard() {
                 icon={CalendarClock}
                 color="bg-amber-500"
               />
+              </DashboardCardMotion>
             </div>
             {contactRateModal ? (
               <CompanyContactRateModal
@@ -915,6 +949,7 @@ export default function Dashboard() {
       ) : (
         <>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <DashboardCardMotion index={0}>
           <StatCard
             label="Empresas asignadas"
             value={stats?.assignedCompanies ?? 0}
@@ -923,6 +958,8 @@ export default function Dashboard() {
             icon={Users}
             color="bg-blue-600"
           />
+          </DashboardCardMotion>
+          <DashboardCardMotion index={1}>
           <CallsTrendStatCard
             callsLastActiveDay={stats?.callsLastActiveDay ?? 0}
             callsPrevActiveDay={stats?.callsPrevActiveDay ?? null}
@@ -934,6 +971,8 @@ export default function Dashboard() {
             icon={Phone}
             color="bg-green-600"
           />
+          </DashboardCardMotion>
+          <DashboardCardMotion index={2}>
           <StatCard
             label="Callbacks hoy"
             value={stats?.todayCallbacks ?? 0}
@@ -942,6 +981,8 @@ export default function Dashboard() {
             icon={CalendarClock}
             color="bg-amber-500"
           />
+          </DashboardCardMotion>
+          <DashboardCardMotion index={3}>
           <StatCard
             label="Callbacks pendientes"
             value={stats?.pendingCallbacks ?? 0}
@@ -950,6 +991,7 @@ export default function Dashboard() {
             icon={Calendar}
             color="bg-purple-600"
           />
+          </DashboardCardMotion>
         </div>
         {callsComparisonModal ? (
           <CallsComparisonModal
@@ -978,6 +1020,7 @@ export default function Dashboard() {
           ]
 
           return (
+            <DashboardCardMotion index={4} className="lg:col-span-2">
             <div id="company-pipeline" className="card p-6 overflow-visible lg:col-span-2 scroll-mt-4">
               <h2 className="font-semibold text-gray-900 mb-1">Por empresa (RUC)</h2>
               <p className="text-xs text-gray-500 mb-5">
@@ -1071,12 +1114,14 @@ export default function Dashboard() {
                 <p className="text-sm text-gray-400 text-center py-4">Sin datos todavía</p>
               )}
             </div>
+            </DashboardCardMotion>
           )
         })()}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Recent calls */}
+        <DashboardCardMotion index={5} className="lg:col-span-2">
         <div className="card p-6 lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-gray-900">Últimas llamadas</h2>
@@ -1109,6 +1154,7 @@ export default function Dashboard() {
             )}
           </div>
         </div>
+        </DashboardCardMotion>
       </div>
 
       {isAdmin && <ReleaseNotesPanel isSystemOwner={user?.isSystemOwner === true} />}

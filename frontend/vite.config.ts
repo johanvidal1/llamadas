@@ -1,6 +1,10 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { buildProductionCsp, devCsp, getProductionApiOriginsFromEnv } from './csp.config'
+
+const frontendDir = path.dirname(fileURLToPath(import.meta.url))
 
 /** Injects CSP meta at build time from VITE_API_URL (custom domain support on Render). */
 function productionCspPlugin(): Plugin {
@@ -17,6 +21,11 @@ function productionCspPlugin(): Plugin {
 
 export default defineConfig(({ command }) => ({
   plugins: [react(), productionCspPlugin()],
+  resolve: {
+    alias: {
+      '@': path.resolve(frontendDir, 'src'),
+    },
+  },
   server: {
     port: 5173,
     // Vite HMR / React Fast Refresh uses eval in dev — allow it via CSP response header.

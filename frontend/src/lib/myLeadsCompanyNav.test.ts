@@ -109,6 +109,27 @@ assert.equal(
   }),
   true
 )
+assert.equal(
+  companySummaryHasAgentLog({ id: 'hist', ruc: '2', _count: { callLogs: 7 } }),
+  false
+)
+
+section('siguiente pendiente lands on historial-only neighbor, does not skip to later pending')
+const historialNeighbor: CompanyNavItem[] = [
+  { id: 'asiento9', ruc: '9', hasAgentLog: true },
+  { id: 'asiento10', ruc: '10', _count: { callLogs: 7 } },
+  { id: 'asiento11', ruc: '11', _count: { callLogs: 3 } },
+  { id: 'asiento16', ruc: '16', hasAgentLog: false },
+]
+assert.equal(companySummaryHasAgentLog(historialNeighbor[1]!), false)
+assert.equal(
+  nextPendingCompanyIdAfter(historialNeighbor, 'asiento9', (item) => !companySummaryHasAgentLog(item)),
+  'asiento10'
+)
+assert.equal(
+  nextPendingCompanyIndexAfter(historialNeighbor, 'asiento9', (item) => !companySummaryHasAgentLog(item)),
+  1
+)
 
 const frain: CompanyNavItem = { id: 'frain', ruc: '20609388499' }
 const daniel: CompanyNavItem = { id: 'daniel', ruc: '20614370425' }

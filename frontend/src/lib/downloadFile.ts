@@ -36,6 +36,8 @@ function mimeTypeForExtension(ext: string): string {
       return 'text/csv'
     case 'zip':
       return 'application/zip'
+    case 'pdf':
+      return 'application/pdf'
     default:
       return 'application/octet-stream'
   }

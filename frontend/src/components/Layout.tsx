@@ -261,7 +261,7 @@ export default function Layout() {
     'flex items-center gap-2 w-full px-3 py-2 rounded-lg text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors lg:justify-center lg:w-10 lg:h-10 lg:mx-auto lg:px-0 lg:py-0'
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
+    <div className="app-shell flex flex-col h-screen bg-gray-50">
       {/* Role-colored top bar — full width above sidebar + content */}
       <header className={`shrink-0 z-30 ${topBarBg} pt-[env(safe-area-inset-top)] transition-colors duration-200`}>
         <div
@@ -317,7 +317,7 @@ export default function Layout() {
         )}
 
         <aside
-          className={`fixed inset-y-0 left-0 z-50 w-44 flex flex-col bg-gray-50 border-r border-gray-200 shadow-xl transform transition-transform duration-200 ease-in-out lg:static lg:w-14 lg:translate-x-0 lg:z-auto lg:shadow-none ${
+          className={`app-sidebar fixed inset-y-0 left-0 z-50 w-44 flex flex-col bg-gray-50 border-r border-gray-200 shadow-xl transform transition-transform duration-200 ease-in-out lg:static lg:w-14 lg:translate-x-0 lg:z-auto lg:shadow-none ${
             menuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
           }`}
         >
@@ -397,7 +397,7 @@ export default function Layout() {
           {isAdmin && <BillingBanner />}
           <main
             ref={mainRef}
-            className="flex-1 overflow-auto min-h-0 pb-[env(safe-area-inset-bottom)]"
+            className="app-main flex-1 overflow-auto min-h-0 pb-[env(safe-area-inset-bottom)]"
           >
             <Outlet />
           </main>

@@ -177,7 +177,7 @@ async function fetchCompanies(
     where,
     include: {
       contacts: contactsInclude,
-      importBatch: { select: { id: true, filename: true, createdAt: true, operator: true } },
+      importBatch: { select: { id: true, filename: true, displayName: true, createdAt: true, operator: true } },
       _count: { select: { callLogs: true, callbacks: true } },
       callbacks: {
         where: { completed: false },
@@ -1047,7 +1047,7 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
       mobileLines: {
         orderBy: { createdAt: 'asc' },
       },
-      importBatch: { select: { id: true, filename: true, createdAt: true, operator: true } },
+      importBatch: { select: { id: true, filename: true, displayName: true, createdAt: true, operator: true } },
     },
   })
 

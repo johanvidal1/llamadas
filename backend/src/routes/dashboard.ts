@@ -1552,7 +1552,7 @@ router.get('/my-batches', requireAuth, async (req: AuthRequest, res: Response) =
       ...(operator ? { operator } : {}),
       companies: { some: { contacts: { some: { assignment: { agentId } } } } },
     },
-    select: { id: true, filename: true, createdAt: true, operator: true },
+    select: { id: true, filename: true, displayName: true, createdAt: true, operator: true },
     orderBy: { createdAt: 'desc' },
   })
 

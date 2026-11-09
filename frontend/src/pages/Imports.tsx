@@ -40,6 +40,8 @@ import {
   type ImportOperator,
 } from '../lib/operator'
 import OperatorChip from '../components/OperatorChip'
+import OfferPlanCatalogCard from '../components/OfferPlanCatalogCard'
+import QuoteTemplateCard from '../components/QuoteTemplateCard'
 
 const IMPORT_SHEET_TABS: {
   name: ImportSheetName
@@ -194,9 +196,10 @@ function ImportSheetHeadersHelp({ operator }: { operator: ImportOperator }) {
           </>
         ) : (
           <>
-            Plantilla <strong>Entel</strong>: hojas <strong>Contactos</strong> (obligatoria),{' '}
-            <strong>ProductosMovil</strong> y <strong>DetallePlan</strong> (opcionales). CSV: los
-            mismos encabezados en la fila 1, sin hojas.
+            Plantilla <strong>Entel</strong>: hoja <strong>Contactos</strong> (obligatoria). Las
+            líneas móviles salen de <strong>DetallePlan</strong> cuando está presente;{' '}
+            <strong>ProductosMovil</strong> es opcional (cubre líneas que no estén en DetallePlan).
+            CSV: los mismos encabezados en la fila 1, sin hojas.
           </>
         )}
       </p>
@@ -830,7 +833,7 @@ export default function Imports() {
         </p>
       </div>
 
-      <div className="card p-4">
+      <div className="card p-4 mt-4">
         <p className="text-sm font-medium text-gray-800 mb-2">Operador del archivo</p>
         <p className="text-xs text-gray-500 mb-3">
           Obligatorio. El nombre del archivo debe incluir <span className="font-mono">entel</span> o{' '}
@@ -906,7 +909,7 @@ export default function Imports() {
               {importOperator === 'MOVISTAR'
                 ? 'Excel Movistar (.xlsx) con hojas Resumen / Usuarios / Productos · Máximo 20 MB'
                 : importOperator === 'ENTEL'
-                  ? 'Excel Entel (.xlsx) con hoja Contactos (opcional ProductosMovil, DetallePlan) · CSV · Máximo 20 MB'
+                  ? 'Excel Entel (.xlsx) con Contactos (líneas desde DetallePlan; ProductosMovil opcional) · CSV · Máximo 20 MB'
                   : 'Elige Entel o Movistar arriba para habilitar la carga'}
             </p>
           </>
@@ -1170,6 +1173,11 @@ export default function Imports() {
             })}
           </div>
         )}
+      </div>
+
+      <div className="mt-8 space-y-4">
+        <OfferPlanCatalogCard />
+        <QuoteTemplateCard />
       </div>
 
     {/* ── Duplicate file warning modal ── */}

@@ -72,6 +72,8 @@ export type AuthUser = {
   isSuperAdmin?: boolean
   isSystemOwner?: boolean
   hasAvatar?: boolean
+  /** Peru mobile, 9 digits, or null when unset. */
+  phone?: string | null
   /** Client-only cache buster after avatar upload. */
   avatarVersion?: number
   batchQueueMode?: BatchQueueMode
@@ -89,6 +91,7 @@ export const patchMe = (data: {
   workingBatchIdEntel?: string | null
   workingBatchIdMovistar?: string | null
   operator?: 'ENTEL' | 'MOVISTAR'
+  phone?: string
 }) => api.patch<AuthUser>('/auth/me', data).then((r) => r.data)
 
 export const uploadAvatar = (file: File) => {
@@ -184,6 +187,7 @@ export type AppUser = {
   id: string
   name: string
   email: string
+  phone?: string | null
   role: 'ADMIN' | 'AGENT'
   isSuperAdmin?: boolean
   isSystemOwner?: boolean
@@ -289,6 +293,206 @@ export const uploadImport = (file: File, options: UploadImportOptions) => {
   return api.post('/imports', form).then((r) => r.data)
 }
 
+export type OfferPlanBenefit = { label: string; value: string }
+
+/** Excel fills stored beside each plan's benefits. */
+export type OfferPlanColors = {
+  title: string | null
+  header: string | null
+  headerText: string
+  priceHeader: string
+  row: string | null
+  cells: Record<string, string>
+}
+
+export type OfferPlan = {
+  id: string
+  tableId?: string
+  name: string
+  priceSoles: number
+  benefits: OfferPlanBenefit[]
+  colors?: OfferPlanColors | null
+  sortOrder: number
+  createdAt?: string
+}
+
+export type OfferPlanTable = {
+  id: string
+  name: string
+  isActive: boolean
+  isPrincipal: boolean
+  createdAt: string
+  planCount: number
+  plans: OfferPlan[]
+}
+
+export const getOfferPlans = () =>
+  api.get<OfferPlan[]>('/offer-plans').then((r) => r.data)
+
+export const getOfferPlanTables = (scope?: 'admin') =>
+  api
+    .get<OfferPlanTable[]>('/offer-plans/tables', { params: scope ? { scope } : undefined })
+    .then((r) => r.data)
+
+export const importOfferPlanTable = (file: File, name?: string) => {
+  const form = new FormData()
+  form.append('file', file)
+  if (name?.trim()) form.append('name', name.trim())
+  return api.post<OfferPlanTable>('/offer-plans/import', form).then((r) => r.data)
+}
+
+export const patchOfferPlanTable = (
+  id: string,
+  data: { isActive?: boolean; isPrincipal?: boolean }
+) => api.patch<OfferPlanTable>(`/offer-plans/tables/${id}`, data).then((r) => r.data)
+
+export type QuoteTemplatePromoRef = { id: string; sortOrder: number }
+
+export type QuoteTemplate = {
+  id: string
+  name: string
+  isDefault: boolean
+  greeting: string
+  farewell: string
+  hasLetterhead: boolean
+  hasSignature: boolean
+  promos: QuoteTemplatePromoRef[]
+  createdAt: string
+  updatedAt: string
+}
+
+export const getQuoteTemplates = () =>
+  api.get<QuoteTemplate[]>('/quote-templates').then((r) => r.data)
+
+export const createQuoteTemplate = (body: {
+  name: string
+  greeting: string
+  farewell: string
+  isDefault?: boolean
+}) => api.post<QuoteTemplate>('/quote-templates', body).then((r) => r.data)
+
+export const patchQuoteTemplate = (
+  id: string,
+  body: { name?: string; greeting?: string; farewell?: string; isDefault?: boolean }
+) => api.patch<QuoteTemplate>(`/quote-templates/${id}`, body).then((r) => r.data)
+
+export const deleteQuoteTemplate = (id: string) => api.delete(`/quote-templates/${id}`)
+
+export const uploadQuoteTemplateImage = (
+  id: string,
+  slot: 'letterhead' | 'signature' | 'promo',
+  file: File
+) => {
+  const form = new FormData()
+  form.append('file', file)
+  const path =
+    slot === 'promo' ? `/quote-templates/${id}/promos` : `/quote-templates/${id}/${slot}`
+  return api.post<QuoteTemplate>(path, form).then((r) => r.data)
+}
+
+export const deleteQuoteTemplateImage = (
+  id: string,
+  slot: 'letterhead' | 'signature' | 'promo',
+  promoId?: string
+) => {
+  const path =
+    slot === 'promo'
+      ? `/quote-templates/${id}/promos/${promoId}`
+      : `/quote-templates/${id}/${slot}`
+  return api.delete<QuoteTemplate>(path).then((r) => r.data)
+}
+
+export const getQuoteTemplateAsset = (
+  id: string,
+  slot: 'letterhead' | 'signature' | 'promo',
+  promoId?: string
+) =>
+  api
+    .get<Blob>(`/quote-templates/${id}/asset`, {
+      params: { slot, promoId },
+      responseType: 'blob',
+    })
+    .then((r) => r.data)
+
+export type QuoteSettings = { shareEnabled: boolean; greeting?: string; farewell?: string }
+
+export const getQuoteSettings = () =>
+  api.get<QuoteSettings>('/quotes/settings').then((r) => r.data)
+
+export const patchQuoteSettings = (shareEnabled: boolean) =>
+  api.patch<QuoteSettings>('/quotes/settings', { shareEnabled }).then((r) => r.data)
+
+export type CompanyQuoteHistoryItem = {
+  id: string
+  createdAt: string
+  planName: string
+  lines: number
+  totalSoles: number
+  status: string
+  statusLabel: string
+}
+
+export const getCompanyQuotes = (companyId: string) =>
+  api
+    .get<{ quotes: CompanyQuoteHistoryItem[] }>('/quotes', { params: { companyId } })
+    .then((r) => r.data.quotes)
+
+export type CommercialQuoteDraft = {
+  tableId: string
+  planId: string
+  comparePlanIds?: string[]
+  lines: number
+  companyId?: string
+  companyName: string
+  contactName: string
+  ruc: string
+  phone: string
+  email: string
+  currentPlans: { plan: string; rentaBasica: string; rentaConDesc: string; count: number }[]
+  greeting?: string
+  farewell?: string
+  senderName?: string
+}
+
+export type CommercialQuoteCreated = {
+  id: string
+  token: string
+  planName: string
+  lines: number
+  totalSoles: number
+}
+
+export function commercialQuotePublicUrl(token: string): string {
+  const configured = String(import.meta.env.VITE_API_URL ?? '').replace(/\/+$/, '')
+  const base = configured || window.location.origin
+  return `${base}/api/quotes/public/${token}`
+}
+
+export const createCommercialQuote = (body: CommercialQuoteDraft) =>
+  api.post<CommercialQuoteCreated>('/quotes', body).then((r) => r.data)
+
+export const markCommercialQuoteShared = (id: string, channel: 'whatsapp' | 'email') =>
+  api
+    .post<{ status: string; statusLabel: string }>(`/quotes/${id}/share`, { channel })
+    .then((r) => r.data)
+
+export const downloadCommercialQuote = async (id: string) => {
+  const response = await api.get(`/quotes/${id}/pdf`, { responseType: 'blob' })
+  const disposition = response.headers['content-disposition'] as string | undefined
+  const filename = filenameFromContentDisposition(disposition) ?? 'Propuesta-Optick.pdf'
+  const blob = new Blob([response.data], { type: 'application/pdf' })
+  return saveBlobWithPicker(blob, filename)
+}
+
+/** Streams the same PDF without creating a CommercialQuote row. Filename includes `prueba`. */
+export const downloadCommercialQuotePreview = async (body: CommercialQuoteDraft) => {
+  const response = await api.post('/quotes/preview', body, { responseType: 'blob' })
+  const disposition = response.headers['content-disposition'] as string | undefined
+  const filename = filenameFromContentDisposition(disposition) ?? 'Propuesta-prueba.pdf'
+  const blob = new Blob([response.data], { type: 'application/pdf' })
+  return saveBlobWithPicker(blob, filename)
+}
+
 // ─── Clients ──────────────────────────────────────────────
 export type GetClientsParams = {
   page?: number
@@ -361,7 +565,7 @@ export type ClientListItem = {
     createdAt?: string
     assignment?: { agent?: { id?: string; name: string } }
   }[]
-  importBatch?: { id?: string; filename: string; createdAt: string; operator?: string }
+  importBatch?: { id?: string; filename: string; displayName?: string | null; createdAt: string; operator?: string }
   callbacks?: { scheduledAt: string; notes?: string }[]
   _count: { callLogs: number }
 }

@@ -5,6 +5,17 @@
     <link rel="icon" type="image/png" href="/logo-optick.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Optick Cloud — CRM Llamadas</title>
+    <script>
+      try {
+        var optickUiTheme = localStorage.getItem('optickUiTheme')
+        document.documentElement.setAttribute(
+          'data-ui',
+          optickUiTheme === 'new' ? 'new' : 'classic'
+        )
+      } catch (e) {
+        document.documentElement.setAttribute('data-ui', 'classic')
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

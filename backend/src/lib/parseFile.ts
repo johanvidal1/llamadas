@@ -124,6 +124,13 @@ const DETALLE_PLAN_HEADER_ALIASES: Record<string, string> = {
   celular: 'numero_telefono',
   movil: 'numero_telefono',
   mobile: 'numero_telefono',
+  estado_linea: 'estado_linea',
+  estado_de_linea: 'estado_linea',
+  linea_estado: 'estado_linea',
+  plan: 'plan',
+  plan_detalle: 'plan',
+  estado: 'estado_producto',
+  estado_producto: 'estado_producto',
   renta_basica: 'renta_basica',
   rentabasica: 'renta_basica',
   renta_basica_con_desc: 'renta_basica_con_desc',
@@ -296,6 +303,62 @@ function parseMobileRows(rows: Record<string, unknown>[]): ParsedMobileLine[] {
   return dedupeParsedMobileLines(result)
 }
 
+/** Build productive lines from DetallePlan (plan_detalle → plan, rentas on the same row). */
+function parseDetallePlanMobileLines(rows: Record<string, unknown>[]): ParsedMobileLine[] {
+  const result: ParsedMobileLine[] = []
+
+  for (const row of rows) {
+    const ruc = String(row['ruc'] ?? '').trim()
+    if (!ruc) continue
+
+    const numeroTelefonoRaw = String(row['numero_telefono'] ?? '').trim()
+    const numeroTelefono = numeroTelefonoRaw ? normalizePhone(numeroTelefonoRaw) : undefined
+    if (!isValidMobileLineNumber(numeroTelefono)) continue
+
+    const estadoLinea = String(row['estado_linea'] ?? '').trim() || undefined
+    const plan = String(row['plan'] ?? '').trim() || undefined
+    const estado = String(row['estado_producto'] ?? '').trim() || undefined
+    const rentaBasica = String(row['renta_basica'] ?? '').trim() || undefined
+    const rentaBasicaConDesc = String(row['renta_basica_con_desc'] ?? '').trim() || undefined
+
+    result.push({
+      ruc,
+      numeroTelefono,
+      estadoLinea,
+      plan,
+      estado,
+      rentaBasica,
+      rentaBasicaConDesc,
+    })
+  }
+
+  return dedupeParsedMobileLines(result)
+}
+
+/** Keep ProductosMovil lines whose ruc+phone is not already in DetallePlan. Do not overwrite. */
+function appendProductosMovilFallback(
+  detalleLines: ParsedMobileLine[],
+  productosLines: ParsedMobileLine[]
+): ParsedMobileLine[] {
+  if (productosLines.length === 0) return detalleLines
+
+  const seen = new Set<string>()
+  for (const line of detalleLines) {
+    const key = mobileJoinKey(line.ruc, line.numeroTelefono)
+    if (key) seen.add(key)
+  }
+
+  const extras: ParsedMobileLine[] = []
+  for (const line of productosLines) {
+    const key = mobileJoinKey(line.ruc, line.numeroTelefono)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    extras.push(line)
+  }
+
+  return extras.length === 0 ? detalleLines : [...detalleLines, ...extras]
+}
+
 interface ParsedDetallePlanRenta {
   rentaBasica?: string
   rentaBasicaConDesc?: string
@@ -379,24 +442,26 @@ export async function parseExcel(
   const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
   const rows = rawRows.map(normalizeRow)
 
-  let mobileLines: ParsedMobileLine[] = []
   const mobileSheetName = findSheetName(workbook.SheetNames, 'productosmovil')
+  const detalleSheetName = findSheetName(workbook.SheetNames, 'detalleplan')
+
+  let productosLines: ParsedMobileLine[] = []
   if (mobileSheetName) {
     const mobileSheet = workbook.Sheets[mobileSheetName]
     const rawMobileRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(mobileSheet, {
       defval: '',
     })
-    mobileLines = parseMobileRows(rawMobileRows.map(normalizeMobileRow))
+    productosLines = parseMobileRows(rawMobileRows.map(normalizeMobileRow))
   }
 
-  const detalleSheetName = findSheetName(workbook.SheetNames, 'detalleplan')
-  if (detalleSheetName && mobileLines.length > 0) {
+  let mobileLines: ParsedMobileLine[] = productosLines
+  if (detalleSheetName) {
     const detalleSheet = workbook.Sheets[detalleSheetName]
     const rawDetalleRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(detalleSheet, {
       defval: '',
     })
-    const rentasByKey = parseDetallePlanRentas(rawDetalleRows.map(normalizeDetallePlanRow))
-    mobileLines = mergeDetallePlanRentas(mobileLines, rentasByKey)
+    const detalleLines = parseDetallePlanMobileLines(rawDetalleRows.map(normalizeDetallePlanRow))
+    mobileLines = appendProductosMovilFallback(detalleLines, productosLines)
   }
 
   return { companies: parseRows(rows), sourceRowCount: rawRows.length, mobileLines }

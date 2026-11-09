@@ -48,8 +48,17 @@ for (const table of [
   )
 }
 
-section('never deletes User, Tenant, or ReleaseNote (Novedades / owner / plan)')
-for (const table of ['User', 'Tenant', 'ReleaseNote']) {
+section('never deletes users, notes, plan tables, templates, or generated quotes')
+for (const table of [
+  'User',
+  'Tenant',
+  'ReleaseNote',
+  'OfferPlan',
+  'OfferPlanTable',
+  'QuoteTemplate',
+  'QuoteTemplatePromo',
+  'CommercialQuote',
+]) {
   assert.ok((CAMPAIGN_RESET_KEPT_TABLES as readonly string[]).includes(table))
   assert.equal((CAMPAIGN_RESET_WIPED_TABLES as readonly string[]).includes(table), false)
 }

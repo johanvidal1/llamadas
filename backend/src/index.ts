@@ -4,6 +4,7 @@ import express from 'express'
 import cors from 'cors'
 
 import { ensureArchivedAgent } from './lib/archivedAgent'
+import { backfillMojibakeImportBatchFilenames } from './lib/backfillImportBatchFilenames'
 import { backfillEntelTelefono2FromOriginals } from './lib/backfillTelefono2'
 import { OPTICK_TENANT_ID } from './lib/tenant'
 import { runWithTenant } from './lib/tenantContext'
@@ -23,6 +24,9 @@ import contactRouter from './routes/contact'
 import presenceRouter from './routes/presence'
 import releaseNotesRouter from './routes/releaseNotes'
 import supportTicketsRouter from './routes/supportTickets'
+import offerPlansRouter from './routes/offerPlans'
+import quoteTemplatesRouter from './routes/quoteTemplates'
+import quotesRouter from './routes/quotes'
 import { errorHandler } from './middleware/error'
 import { resolveTenant } from './middleware/tenant'
 
@@ -120,6 +124,9 @@ app.use('/api/contact', contactRouter)
 app.use('/api/presence', presenceRouter)
 app.use('/api/release-notes', releaseNotesRouter)
 app.use('/api/support-tickets', supportTicketsRouter)
+app.use('/api/offer-plans', offerPlansRouter)
+app.use('/api/quote-templates', quoteTemplatesRouter)
+app.use('/api/quotes', quotesRouter)
 
 // Global error handler (must be last)
 app.use(errorHandler)
@@ -140,6 +147,17 @@ app.listen(PORT, () => {
     })
     .catch((err) => {
       console.error('telefono2 backfill Entel falló:', err)
+    })
+  void backfillMojibakeImportBatchFilenames()
+    .then((result) => {
+      if (result.updated > 0) {
+        console.log(
+          `ImportBatch filename backfill: ${result.updated} actualizados, ${result.scanned} revisados`
+        )
+      }
+    })
+    .catch((err) => {
+      console.error('ImportBatch filename backfill falló:', err)
     })
 })
 

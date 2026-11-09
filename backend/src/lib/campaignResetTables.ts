@@ -1,7 +1,9 @@
 /**
  * Campaign reset inventory (no Prisma). Safe to import from unit tests.
  *
- * Wipe is tenant-scoped at runtime. Never delete User / Tenant / ReleaseNote.
+ * Wipe is tenant-scoped at runtime. Never delete User / Tenant / ReleaseNote /
+ * OfferPlan / OfferPlanTable / QuoteTemplate / QuoteTemplatePromo / CommercialQuote.
+ * Tenant.quoteShareEnabled stays with the tenant row (it is not a wiped table).
  */
 
 /** Tables deleted by Resetear campaña (same tenant). */
@@ -48,7 +50,16 @@ export const CAMPAIGN_RESET_FK_DELETE_ORDER = [
 ] as const
 
 /** Rows / product data that must survive Resetear campaña. */
-export const CAMPAIGN_RESET_KEPT_TABLES = ['User', 'Tenant', 'ReleaseNote'] as const
+export const CAMPAIGN_RESET_KEPT_TABLES = [
+  'User',
+  'Tenant',
+  'ReleaseNote',
+  'OfferPlan',
+  'OfferPlanTable',
+  'QuoteTemplate',
+  'QuoteTemplatePromo',
+  'CommercialQuote',
+] as const
 
 /** User columns cleared (pins), not the User row. */
 export const CAMPAIGN_RESET_USER_FIELDS_CLEARED = [

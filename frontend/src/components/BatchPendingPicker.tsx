@@ -1,9 +1,11 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown } from 'lucide-react'
 
 export type BatchPendingOption = {
   id: string
   filename: string
+  displayName?: string | null
   createdAt: string
 }
 
@@ -24,6 +26,11 @@ export type BatchPendingPickerProps = {
   label?: string
   /** FIFO/LIFO pin — optional “Lote en curso” on that row. */
   workingBatchId?: string
+  /**
+   * Paint the open list on `document.body`. The Nuevo toolbar’s backdrop-blur
+   * creates a stacking context, so an absolute list stays under the Empresa card.
+   */
+  menuPortal?: boolean
 }
 
 /**
@@ -36,7 +43,9 @@ export function isCompanyPendingForBatchPicker(c: ClientForPending): boolean {
   return !c.lastDisposition
 }
 
-function batchLabelShort(batch: { filename: string }) {
+function batchLabelShort(batch: { filename: string; displayName?: string | null }) {
+  const friendly = batch.displayName?.trim()
+  if (friendly) return friendly
   return batch.filename.replace(/\.[^.]+$/, '')
 }
 
@@ -342,6 +351,16 @@ export function BatchPendingThermometer({
   )
 }
 
+function placePortaledMenu(anchor: DOMRect, menuWidth: number) {
+  const gap = 4
+  const margin = 8
+  let left = anchor.left
+  if (menuWidth > 0 && left + menuWidth > window.innerWidth - margin) {
+    left = Math.max(margin, window.innerWidth - margin - menuWidth)
+  }
+  return { top: anchor.bottom + gap, left }
+}
+
 export function BatchPendingPicker({
   batches,
   clients,
@@ -352,11 +371,15 @@ export function BatchPendingPicker({
   className = '',
   label,
   workingBatchId,
+  menuPortal = false,
 }: BatchPendingPickerProps) {
   const [open, setOpen] = useState(false)
   const [showCompleted, setShowCompleted] = useState(false)
   const [activeIdx, setActiveIdx] = useState(0)
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
   const reactId = useId()
   const listboxId = `${reactId}-listbox`
@@ -419,11 +442,36 @@ export function BatchPendingPicker({
   useEffect(() => {
     if (!open) return
     const onPointerDown = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (rootRef.current?.contains(target)) return
+      if (menuRef.current?.contains(target)) return
+      setOpen(false)
     }
     document.addEventListener('pointerdown', onPointerDown)
     return () => document.removeEventListener('pointerdown', onPointerDown)
   }, [open])
+
+  useLayoutEffect(() => {
+    if (!open || !menuPortal) return
+    const update = () => {
+      const anchor = triggerRef.current
+      if (!anchor) return
+      const next = placePortaledMenu(
+        anchor.getBoundingClientRect(),
+        menuRef.current?.offsetWidth ?? 0
+      )
+      setMenuPos((prev) =>
+        prev && prev.top === next.top && prev.left === next.left ? prev : next
+      )
+    }
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [open, menuPortal])
 
   useEffect(() => {
     if (!open) return
@@ -504,6 +552,7 @@ export function BatchPendingPicker({
         </label>
       )}
       <button
+        ref={triggerRef}
         type="button"
         id={id}
         aria-expanded={open}
@@ -543,13 +592,25 @@ export function BatchPendingPicker({
         />
       </button>
 
-      {open && (
+      {open && (() => {
+        const menuWidthClass = isHeader
+          ? 'min-w-[280px] w-[min(320px,90vw)]'
+          : 'min-w-[22rem] w-[min(32rem,calc(100vw-2rem))]'
+        const menu = (
         <div
-          className={`absolute top-full left-0 z-50 mt-1 rounded-lg border border-gray-200 bg-white shadow-lg overflow-hidden ${
-            isHeader
-              ? 'min-w-[280px] w-[min(320px,90vw)]'
-              : 'min-w-[22rem] w-[min(32rem,calc(100vw-2rem))]'
-          }`}
+          ref={menuRef}
+          style={
+            menuPortal
+              ? menuPos
+                ? { top: menuPos.top, left: menuPos.left }
+                : { top: 0, left: 0, visibility: 'hidden' }
+              : undefined
+          }
+          className={
+            menuPortal
+              ? `fixed z-50 rounded-lg border border-gray-200 bg-white shadow-lg overflow-hidden ${menuWidthClass}`
+              : `absolute top-full left-0 z-50 mt-1 rounded-lg border border-gray-200 bg-white shadow-lg overflow-hidden ${menuWidthClass}`
+          }
         >
           <ul
             ref={listRef}
@@ -647,7 +708,12 @@ export function BatchPendingPicker({
             </div>
           )}
         </div>
-      )}
+        )
+        if (menuPortal && typeof document !== 'undefined') {
+          return createPortal(menu, document.body)
+        }
+        return menu
+      })()}
     </div>
   )
 }
