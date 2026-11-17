@@ -13,7 +13,10 @@ import {
   quoteDiscountPercentsFromSettings,
   quotePlanApps,
   quotePlanAppsShort,
+  quotePlanData,
   quotePlanInternet,
+  QUOTE_PLAN_DATA_LABELS,
+  QUOTE_PLAN_INTERNET_LABELS,
   quoteTableHeaders,
 } from './quoteSheet.ts'
 import { lineTotal } from './proposalPlans.ts'
@@ -62,9 +65,11 @@ section('catalog benefits fill internet and apps; empty stays dash')
 const benefits = [
   { label: 'Min/SMS nacionales', value: 'ILIMITADO' },
   { label: 'Internet base (GB)', value: '20 GB' },
+  { label: 'Full Claro (GB)', value: '45 GB' },
   { label: 'Apps incluidas', value: 'Facebook, WhatsApp.' },
 ]
 assert.equal(quotePlanInternet(benefits), '20 GB')
+assert.equal(quotePlanData(benefits), '45 GB')
 assert.equal(quotePlanApps(benefits).includes('Waze'), false)
 assert.equal(quotePlanAppsShort(benefits), 'Ilimitadas')
 assert.equal(quotePlanAppsShort([{ label: 'Apps incluidas', value: 'Ilimitadas' }]), 'Ilimitadas')
@@ -90,6 +95,34 @@ assert.equal(
         { label: 'Cobertura internacional min', value: '' },
         { label: 'Cobertura internacional internet', value: '   ' },
         { label: 'Apps incluidas', value: 'WhatsApp' },
+      ],
+    },
+  ]),
+  false
+)
+
+section('updated MAX Negocios headers fill DATOS and INTERNET; old names still work')
+assert.deepEqual([...QUOTE_PLAN_INTERNET_LABELS], ['Internet base (GB)', 'Lineas nueva Gbs'])
+assert.deepEqual(
+  [...QUOTE_PLAN_DATA_LABELS],
+  [
+    'Full Claro (GB)',
+    'Portabilidad Full Claro (GB)',
+    'Lineass nuevas Internet',
+    'Portabilidad internet',
+  ]
+)
+assert.equal(quotePlanInternet([{ label: 'Lineas nueva Gbs', value: '30 GB' }]), '30 GB')
+assert.equal(quotePlanData([{ label: 'Lineass nuevas Internet', value: '30 GB' }]), '30 GB')
+assert.equal(quotePlanData([{ label: 'Portabilidad internet', value: '55 GB' }]), '55 GB')
+assert.equal(quotePlanData([{ label: 'Portabilidad Full Claro (GB)', value: '30 GB' }]), '30 GB')
+assert.equal(
+  mixHasRoaming([
+    {
+      benefits: [
+        { label: 'Lineas nueva Gbs', value: '30 GB' },
+        { label: 'Lineass nuevas Internet', value: '30 GB' },
+        { label: 'Cobertura internacional min', value: '' },
       ],
     },
   ]),

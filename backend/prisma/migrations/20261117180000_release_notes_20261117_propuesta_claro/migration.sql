@@ -13,7 +13,8 @@ VALUES (
     "El PDF cierra con ejecutivo y celular del perfil; **Beneficios adicionales** se editan o se quitan.",
     "El PDF añade el mapa de **Zonas de roaming internacional** (hoja 2 si no cabe; solo si el mix tiene roaming).",
     "El mapa de **Zonas de roaming internacional** queda más nítido.",
-    "Logo **Claro empresas** más nítido, sin el fondo sucio en el encabezado."
+    "Logo **Claro empresas** más nítido, sin el fondo sucio en el encabezado.",
+    "El catálogo **Planes MAX Negocios** actualizado (nombres de GB/internet) se entiende al importar."
   ]$json$::jsonb,
   CURRENT_TIMESTAMP,
   CURRENT_TIMESTAMP

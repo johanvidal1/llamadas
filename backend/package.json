@@ -22,6 +22,7 @@
     "test:last-client-admin": "ts-node --transpile-only src/lib/lastClientAdmin.test.ts",
     "test:campaign-reset": "ts-node --transpile-only src/lib/campaignReset.test.ts",
     "test:offer-plans": "ts-node --transpile-only src/lib/offerPlanWorkbook.test.ts",
+    "test:quote-discount": "ts-node --transpile-only src/lib/quoteDiscount.test.ts",
     "test:quote-pdf": "ts-node --transpile-only src/lib/quotePdf.test.ts",
     "test:batch-queue": "npm --prefix ../frontend run test:batch-queue"
   },

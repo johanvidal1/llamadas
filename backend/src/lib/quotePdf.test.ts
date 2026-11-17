@@ -24,6 +24,7 @@ import {
   quoteDiscountPercentsFromTenant,
   quotePlanApps,
   quotePlanAppsShort,
+  quotePlanData,
   quotePlanInternet,
 } from './quoteDiscount'
 
@@ -118,6 +119,23 @@ async function main() {
   assert.deepEqual(quoteDiscountPercentsFromTenant([50, 25, 30]), [25, 50])
   assert.deepEqual(quoteDiscountPercentsFromTenant([]), [])
   assert.equal(quotePlanInternet(CATALOG_BENEFITS), '20 GB')
+  assert.equal(quotePlanData(CATALOG_BENEFITS), '45 GB')
+  assert.equal(
+    quotePlanInternet([{ label: 'Lineas nueva Gbs', value: '30 GB' }]),
+    '30 GB'
+  )
+  assert.equal(
+    quotePlanData([{ label: 'Lineass nuevas Internet', value: '30 GB' }]),
+    '30 GB'
+  )
+  assert.equal(
+    quotePlanData([{ label: 'Portabilidad internet', value: '55 GB' }]),
+    '55 GB'
+  )
+  assert.equal(
+    quotePlanData([{ label: 'Portabilidad  internet', value: '55 GB' }]),
+    '55 GB'
+  )
   assert.equal(quotePlanApps(CATALOG_BENEFITS).includes('Waze'), false)
   assert.equal(quotePlanAppsShort(CATALOG_BENEFITS), 'Ilimitadas')
   assert.equal(quotePlanAppsShort([{ label: 'Apps incluidas', value: 'Ilimitadas' }]), 'Ilimitadas')
@@ -410,6 +428,26 @@ async function main() {
 
   section('sample with roaming prints the zones title')
   assert.ok(text.includes('Zonas de roaming') || text.includes('Zonas'))
+
+  section('updated MAX Negocios GB headers fill DATOS and INTERNET in the PDF')
+  const renamed = await renderQuotePdf(
+    sample({
+      benefits: [
+        { label: 'Min/SMS nacionales', value: 'ILIMITADO' },
+        { label: 'Lineas nueva Gbs', value: '30 GB' },
+        { label: 'Lineass nuevas Internet', value: '45 GB' },
+        { label: 'Portabilidad internet', value: '55 GB' },
+        { label: 'Apps incluidas', value: 'WhatsApp' },
+        { label: 'Cobertura internacional min', value: '30 min' },
+      ],
+    }),
+    { compress: false }
+  )
+  const renamedText = pdfText(renamed)
+  assert.ok(renamedText.includes('30 GB'))
+  assert.ok(renamedText.includes('45 GB'))
+  assert.equal(quotePlanInternet([{ label: 'Lineas nueva Gbs', value: '30 GB' }]), '30 GB')
+  assert.equal(quotePlanData([{ label: 'Lineass nuevas Internet', value: '45 GB' }]), '45 GB')
 
   section('extras print only when the agent typed them')
   const withExtras = await renderQuotePdf(

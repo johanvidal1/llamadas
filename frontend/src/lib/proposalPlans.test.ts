@@ -84,6 +84,40 @@ assert.ok(summary.includes(`${pro} · 3 líneas`))
 assert.ok(summary.includes('Portabilidad base (GB): 20 GB'))
 assert.ok(summary.includes('Portabilidad Full Claro (GB): 30 GB'))
 assert.equal(summary.includes('Renta —'), false)
+
+section('updated MAX Negocios portability header still splits; new GB names stay in rest')
+const renamedSplit = splitPortabilityBenefits([
+  { label: 'Lineas nueva Gbs', value: '30 GB' },
+  { label: 'Lineass nuevas Internet', value: '30 GB' },
+  { label: 'Portabilidad internet', value: '55 GB' },
+  { label: 'Portabilidad base (GB)', value: '55 GB' },
+])
+assert.deepEqual(
+  renamedSplit.portability.map((benefit) => benefit.label),
+  ['Portabilidad internet', 'Portabilidad base (GB)']
+)
+assert.deepEqual(
+  renamedSplit.rest.map((benefit) => benefit.label),
+  ['Lineas nueva Gbs', 'Lineass nuevas Internet']
+)
+const renamedSummary = buildProposalSummary({
+  contactName: 'María',
+  razonSocial: 'ACME SAC',
+  ruc: '20123456789',
+  currentPlans: [],
+  planName: 'MAX NEGOCIOS+ 29.9',
+  price: 29.9,
+  lines: 3,
+  total: lineTotal(29.9, 3),
+  benefits: [
+    { label: 'Lineas nueva Gbs', value: '30 GB' },
+    { label: 'Lineass nuevas Internet', value: '30 GB' },
+    { label: 'Portabilidad internet', value: '55 GB' },
+  ],
+})
+assert.ok(renamedSummary.includes('Portabilidad internet: 55 GB'))
+assert.ok(renamedSummary.includes('Lineas nueva Gbs: 30 GB'))
+assert.ok(renamedSummary.includes('Lineass nuevas Internet: 30 GB'))
 assert.ok(summary.includes('Total mensual: S/ 89.70'))
 assert.equal(lineTotal(29.9, 3), 89.7)
 

@@ -12,6 +12,21 @@ function section(name: string) {
 }
 
 const REAL_FILE = 'C:\\Users\\franc\\Downloads\\Planes_MAX_Negocios_Editables.xlsx'
+const REAL_NEW_FILE =
+  'C:\\Users\\franc\\Downloads\\Planes_MAX_Negocios_Editables 2 Actualizado.xlsx'
+
+const NEW_HEADERS = [
+  'Min/SMS nacionales',
+  'Min internacionales',
+  'Lineas nueva Gbs',
+  'Lineass nuevas Internet',
+  'Portabilidad base (GB)',
+  'Portabilidad internet',
+  'Apps incluidas',
+  'Cobertura internacional min',
+  'Cobertura internacional internet',
+  'Cobertura internacional SMS',
+]
 
 const FIXTURE_NAMES = [
   'MAX NEGOCIOS+ 29.9',
@@ -49,17 +64,50 @@ function fixtureBuffer(): Buffer {
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
 }
 
-function assertCatalog(plans: ReturnType<typeof parseOfferPlanWorkbook>, source: string) {
+function updatedHeadersFixtureBuffer(): Buffer {
+  const header = ['Precio (S/)', ...NEW_HEADERS]
+  const rows: (string | number)[][] = [
+    ['MAX NEGOCIOS +', ...Array(NEW_HEADERS.length).fill('')],
+    ['', ...Array(NEW_HEADERS.length).fill('')],
+    ['Datos transcritos de las imágenes originales', ...Array(NEW_HEADERS.length).fill('')],
+    header,
+    ...FIXTURE_NAMES.map((name, i) => [
+      name,
+      'ILIMITADO',
+      '300 min',
+      `${30 + i} GB`,
+      `${30 + i} GB`,
+      `${55 + i} GB`,
+      `${55 + i} GB`,
+      'WhatsApp',
+      '30 min',
+      '180 MB',
+      '100 sms',
+    ]),
+  ]
+  const wb = XLSX.utils.book_new()
+  const ws = XLSX.utils.aoa_to_sheet(rows)
+  XLSX.utils.book_append_sheet(wb, ws, OFFER_PLAN_SHEET_NAME)
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+}
+
+function assertCatalog(
+  plans: ReturnType<typeof parseOfferPlanWorkbook>,
+  source: string,
+  options: { requireFullClaro?: boolean } = {}
+) {
   assert.equal(plans.length, 12, `${source}: expected 12 plans`)
   assert.equal(plans[0].name, 'MAX NEGOCIOS+ 29.9')
   assert.equal(plans[0].priceSoles, 29.9)
   assert.equal(plans.find((p) => p.name.includes('125'))?.priceSoles, 125)
   assert.equal(plans[plans.length - 1].name, 'MAX ILIMITADO + 289.9')
   assert.equal(plans[plans.length - 1].priceSoles, 289.9)
-  assert.ok(
-    plans[0].benefits.some((b) => b.label.includes('Full Claro')),
-    `${source}: keep Excel header "Full Claro"`
-  )
+  if (options.requireFullClaro !== false) {
+    assert.ok(
+      plans[0].benefits.some((b) => b.label.includes('Full Claro')),
+      `${source}: keep Excel header "Full Claro"`
+    )
+  }
   assert.equal(
     plans.some((p) => /transcritos|MAX NEGOCIOS \+/.test(p.name)),
     false,
@@ -117,6 +165,48 @@ if (existsSync(REAL_FILE)) {
   assert.equal(last.colors.row, null)
 } else {
   section('real xlsx not on this machine; fixture covered 29.9 and 289.9')
+}
+
+section('fixture: keep updated MAX Negocios GB headers as-is')
+const updated = parseOfferPlanWorkbook(updatedHeadersFixtureBuffer())
+assertCatalog(updated, 'updated-headers-fixture', { requireFullClaro: false })
+assert.deepEqual(
+  updated[0].benefits.map((benefit) => benefit.label),
+  NEW_HEADERS
+)
+assert.equal(updated[0].benefits.find((b) => b.label === 'Lineas nueva Gbs')?.value, '30 GB')
+assert.equal(
+  updated[0].benefits.find((b) => b.label === 'Lineass nuevas Internet')?.value,
+  '30 GB'
+)
+assert.equal(
+  updated[0].benefits.find((b) => b.label === 'Portabilidad internet')?.value,
+  '55 GB'
+)
+assert.equal(
+  updated[0].benefits.some((b) => b.label === 'Internet base (GB)' || b.label === 'Full Claro (GB)'),
+  false
+)
+
+if (existsSync(REAL_NEW_FILE)) {
+  section('real Planes_MAX_Negocios_Editables 2 Actualizado.xlsx')
+  const realNew = parseOfferPlanWorkbook(readFileSync(REAL_NEW_FILE))
+  assertCatalog(realNew, 'xlsx-actualizado', { requireFullClaro: false })
+  assert.deepEqual(
+    realNew[0].benefits.map((benefit) => benefit.label),
+    NEW_HEADERS
+  )
+  assert.equal(realNew[0].benefits.find((b) => b.label === 'Lineas nueva Gbs')?.value, '30 GB')
+  assert.equal(
+    realNew[0].benefits.find((b) => b.label === 'Lineass nuevas Internet')?.value,
+    '30 GB'
+  )
+  assert.equal(
+    realNew[0].benefits.find((b) => b.label === 'Portabilidad internet')?.value,
+    '55 GB'
+  )
+} else {
+  section('real updated xlsx not on this machine; fixture covered new GB headers')
 }
 
 console.log('\noffer plan workbook ok')

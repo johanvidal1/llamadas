@@ -49,13 +49,17 @@ export function quoteDiscountedLineTotal(priceSoles: number, lines: number, perc
   return quoteLineTotal(quoteDiscountedUnit(priceSoles, percent), lines)
 }
 
+function benefitKey(label: string): string {
+  return label.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
 function benefitValue(benefits: QuoteBenefit[], labels: string[]): string {
   const rows = benefits.map((benefit) => ({
-    key: benefit.label.trim().toLowerCase(),
+    key: benefitKey(benefit.label),
     value: (benefit.value ?? '').trim(),
   }))
   for (const label of labels) {
-    const key = label.toLowerCase()
+    const key = benefitKey(label)
     const exact = rows.find((row) => row.key === key)
     if (exact?.value) return exact.value
   }
@@ -66,12 +70,23 @@ export function quotePlanMinutes(benefits: QuoteBenefit[]): string {
   return benefitValue(benefits, ['Min/SMS nacionales'])
 }
 
+/** DATOS: keep old Full Claro headers plus the updated MAX Negocios names. */
+export const QUOTE_PLAN_DATA_LABELS = [
+  'Full Claro (GB)',
+  'Portabilidad Full Claro (GB)',
+  'Lineass nuevas Internet',
+  'Portabilidad internet',
+] as const
+
+/** INTERNET: keep old Internet base plus the updated MAX Negocios name. */
+export const QUOTE_PLAN_INTERNET_LABELS = ['Internet base (GB)', 'Lineas nueva Gbs'] as const
+
 export function quotePlanData(benefits: QuoteBenefit[]): string {
-  return benefitValue(benefits, ['Full Claro (GB)', 'Portabilidad Full Claro (GB)'])
+  return benefitValue(benefits, [...QUOTE_PLAN_DATA_LABELS])
 }
 
 export function quotePlanInternet(benefits: QuoteBenefit[]): string {
-  return benefitValue(benefits, ['Internet base (GB)'])
+  return benefitValue(benefits, [...QUOTE_PLAN_INTERNET_LABELS])
 }
 
 export function quotePlanApps(benefits: QuoteBenefit[]): string {
