@@ -44,6 +44,10 @@ export function formatLineCount(count: number): string {
   return count === 1 ? '1 línea' : `${count} líneas`
 }
 
+export function totalCurrentLines(groups: CurrentPlanGroup[]): number {
+  return groups.reduce((sum, group) => sum + group.count, 0)
+}
+
 /** Renta básica and discount, or '' when both are empty. */
 export function formatCurrentPlanRenta(group: CurrentPlanGroup): string {
   const renta: string[] = []

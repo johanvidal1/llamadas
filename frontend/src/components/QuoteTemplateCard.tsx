@@ -200,13 +200,28 @@ export default function QuoteTemplateCard() {
   }
 
   const shareToggle = useMutation({
-    mutationFn: (next: boolean) => patchQuoteSettings(next),
+    mutationFn: (next: boolean) => patchQuoteSettings({ shareEnabled: next }),
     onSuccess: (data) => {
       qc.setQueryData(['quote-settings'], data)
       toast.success(data.shareEnabled ? 'WhatsApp y correo activados' : 'WhatsApp y correo desactivados')
     },
     onError: (err: unknown) => toast.error(apiError(err, 'No se pudo guardar el ajuste')),
   })
+
+  const enabledDiscounts = new Set(quoteSettings?.discountPercents ?? [25, 50])
+  const discountToggle = useMutation({
+    mutationFn: (next: number[]) => patchQuoteSettings({ discountPercents: next }),
+    onSuccess: (data) => {
+      qc.setQueryData(['quote-settings'], data)
+      toast.success('Descuentos de la propuesta actualizados')
+    },
+    onError: (err: unknown) => toast.error(apiError(err, 'No se pudo guardar el descuento')),
+  })
+
+  function setDiscountEnabled(percent: 25 | 50, on: boolean) {
+    const next = ([25, 50] as const).filter((item) => (item === percent ? on : enabledDiscounts.has(item)))
+    discountToggle.mutate([...next])
+  }
 
   return (
     <div className="card p-4 space-y-4">
@@ -242,6 +257,27 @@ export default function QuoteTemplateCard() {
             }`}
           />
         </button>
+      </div>
+
+      <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5">
+        <div>
+          <p className="text-sm font-medium text-gray-900">Descuento de la propuesta</p>
+          <p className="mt-0.5 text-xs text-gray-500">
+            El agente elige uno por cotización. No se escribe un porcentaje libre.
+          </p>
+        </div>
+        <DiscountSwitch
+          percent={25}
+          enabled={enabledDiscounts.has(25)}
+          disabled={settingsLoading || discountToggle.isPending}
+          onToggle={(on) => setDiscountEnabled(25, on)}
+        />
+        <DiscountSwitch
+          percent={50}
+          enabled={enabledDiscounts.has(50)}
+          disabled={settingsLoading || discountToggle.isPending}
+          onToggle={(on) => setDiscountEnabled(50, on)}
+        />
       </div>
 
       {isLoading ? (
@@ -372,6 +408,41 @@ export default function QuoteTemplateCard() {
           e.target.value = ''
         }}
       />
+    </div>
+  )
+}
+
+function DiscountSwitch({
+  percent,
+  enabled,
+  disabled,
+  onToggle,
+}: {
+  percent: 25 | 50
+  enabled: boolean
+  disabled: boolean
+  onToggle: (on: boolean) => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <p className="text-sm text-gray-800">{percent}% en cada línea</p>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        aria-label={`Descuento ${percent}%`}
+        disabled={disabled}
+        onClick={() => onToggle(!enabled)}
+        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+          enabled ? 'bg-blue-600' : 'bg-gray-300'
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+            enabled ? 'left-5' : 'left-0.5'
+          }`}
+        />
+      </button>
     </div>
   )
 }

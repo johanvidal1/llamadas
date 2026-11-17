@@ -414,13 +414,18 @@ export const getQuoteTemplateAsset = (
     })
     .then((r) => r.data)
 
-export type QuoteSettings = { shareEnabled: boolean; greeting?: string; farewell?: string }
+export type QuoteSettings = {
+  shareEnabled: boolean
+  greeting?: string
+  farewell?: string
+  discountPercents?: number[]
+}
 
 export const getQuoteSettings = () =>
   api.get<QuoteSettings>('/quotes/settings').then((r) => r.data)
 
-export const patchQuoteSettings = (shareEnabled: boolean) =>
-  api.patch<QuoteSettings>('/quotes/settings', { shareEnabled }).then((r) => r.data)
+export const patchQuoteSettings = (body: { shareEnabled?: boolean; discountPercents?: number[] }) =>
+  api.patch<QuoteSettings>('/quotes/settings', body).then((r) => r.data)
 
 export type CompanyQuoteHistoryItem = {
   id: string
@@ -439,9 +444,7 @@ export const getCompanyQuotes = (companyId: string) =>
 
 export type CommercialQuoteDraft = {
   tableId: string
-  planId: string
-  comparePlanIds?: string[]
-  lines: number
+  items: { planId: string; lines: number }[]
   companyId?: string
   companyName: string
   contactName: string
@@ -449,9 +452,10 @@ export type CommercialQuoteDraft = {
   phone: string
   email: string
   currentPlans: { plan: string; rentaBasica: string; rentaConDesc: string; count: number }[]
-  greeting?: string
-  farewell?: string
+  extras?: string
+  headlineSuffix?: string
   senderName?: string
+  discountPercent?: number
 }
 
 export type CommercialQuoteCreated = {
@@ -479,7 +483,7 @@ export const markCommercialQuoteShared = (id: string, channel: 'whatsapp' | 'ema
 export const downloadCommercialQuote = async (id: string) => {
   const response = await api.get(`/quotes/${id}/pdf`, { responseType: 'blob' })
   const disposition = response.headers['content-disposition'] as string | undefined
-  const filename = filenameFromContentDisposition(disposition) ?? 'Propuesta-Optick.pdf'
+  const filename = filenameFromContentDisposition(disposition) ?? 'Propuesta.pdf'
   const blob = new Blob([response.data], { type: 'application/pdf' })
   return saveBlobWithPicker(blob, filename)
 }

@@ -7,9 +7,14 @@ import {
   type ProposalBenefit,
 } from './proposalPlans'
 
-export const MAX_COMPARE_PLANS = 3
+export const MAX_MIX_PLANS = 8
 
-const DARK_INK = '#182333'
+const DARK_INK = '#1F232A'
+export const CLARO_RED = '#E2231A'
+export const CLARO_NAVY = '#1F232A'
+export const CLARO_LOGO_SRC = '/claro-empresas-logo.png'
+export const QUOTE_EXTRAS_PLACEHOLDER = 'Asesor posventa · Nota de crédito en el tercer mes'
+export const QUOTE_HEADLINE_SUFFIX_DEFAULT = 'corporativas con descuento por portabilidad.'
 
 export function inkOnFill(fill: string | null | undefined): string {
   if (!fill) return DARK_INK
@@ -68,6 +73,154 @@ export function currentPlanSentence(groups: CurrentPlanGroup[]): string {
   return `Plan actual: ${groups.map((group) => formatCurrentPlanGroup(group)).join(' · ')}`
 }
 
-export function offerSentence(name: string, lines: number, total: number): string {
-  return `Propuesta: ${name} · ${formatLineCount(lines)} · ${formatSoles(total)} al mes`
+export function mixOfferHeader(planCount: number, lineCount: number): string {
+  const plans = planCount === 1 ? '1 plan' : `${planCount} planes`
+  return `Oferta · ${plans} · ${formatLineCount(lineCount)}`
+}
+
+export function mixOfferSummary(
+  items: { name: string; lines: number; priceSoles: number; subtotal: number }[],
+  total: number
+): string {
+  const lines = items.map(
+    (item) =>
+      `${item.name} · ${formatLineCount(item.lines)} · ${formatSoles(item.priceSoles)} · ${formatSoles(item.subtotal)}`
+  )
+  lines.push(`Total mensual: ${formatSoles(total)}`)
+  return lines.join('\n')
+}
+
+/** Percents an admin may enable. The agent cannot type a free percent. */
+export const QUOTE_DISCOUNT_OPTIONS = [25, 50] as const
+
+export function quoteDiscountPercentsFromSettings(value: unknown): number[] {
+  if (!Array.isArray(value)) return [...QUOTE_DISCOUNT_OPTIONS]
+  const enabled = new Set<number>()
+  for (const item of value) {
+    const n = typeof item === 'number' ? item : Number(item)
+    if (n === 25 || n === 50) enabled.add(n)
+  }
+  return QUOTE_DISCOUNT_OPTIONS.filter((pct) => enabled.has(pct))
+}
+
+export function normalizeQuoteDiscountPercent(value: unknown, allowed?: number[]): number {
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isInteger(n) || n < 0) return 0
+  if (n === 0) return 0
+  if (allowed) return allowed.includes(n) ? n : 0
+  return n === 25 || n === 50 ? n : 0
+}
+
+export function discountedUnit(priceSoles: number, percent: number): number {
+  const pct = normalizeQuoteDiscountPercent(percent)
+  const cents = Math.round(priceSoles * 100)
+  if (pct <= 0) return cents / 100
+  return Math.round((cents * (100 - pct)) / 100) / 100
+}
+
+export function discountedLineTotal(priceSoles: number, lines: number, percent: number): number {
+  const cents = Math.round(discountedUnit(priceSoles, percent) * 100)
+  return (cents * lines) / 100
+}
+
+function benefitValue(benefits: ProposalBenefit[], labels: string[]): string {
+  const rows = benefits.map((benefit) => ({
+    key: benefit.label.trim().toLowerCase(),
+    value: (benefit.value ?? '').trim(),
+  }))
+  for (const label of labels) {
+    const key = label.toLowerCase()
+    const exact = rows.find((row) => row.key === key)
+    if (exact?.value) return exact.value
+  }
+  return ''
+}
+
+export function quotePlanMinutes(benefits: ProposalBenefit[]): string {
+  return benefitValue(benefits, ['Min/SMS nacionales'])
+}
+
+export function quotePlanData(benefits: ProposalBenefit[]): string {
+  return benefitValue(benefits, ['Full Claro (GB)', 'Portabilidad Full Claro (GB)'])
+}
+
+export function quotePlanInternet(benefits: ProposalBenefit[]): string {
+  return benefitValue(benefits, ['Internet base (GB)'])
+}
+
+export function quotePlanApps(benefits: ProposalBenefit[]): string {
+  return benefitValue(benefits, ['Apps incluidas'])
+}
+
+/** Table APPS cell: keep a catalog short label, otherwise Ilimitadas. Long lists belong in §3. */
+export function quotePlanAppsShort(benefits: ProposalBenefit[]): string {
+  const full = quotePlanApps(benefits).trim()
+  if (!full) return ''
+  if (full.length <= 16 && !/[;,]/.test(full)) return full
+  return 'Ilimitadas'
+}
+
+export function quotePlanRoaming(benefits: ProposalBenefit[]): { min: string; internet: string; sms: string } {
+  return {
+    min: benefitValue(benefits, ['Cobertura internacional min']),
+    internet: benefitValue(benefits, ['Cobertura internacional internet']),
+    sms: benefitValue(benefits, ['Cobertura internacional SMS']),
+  }
+}
+
+export function displayBenefit(value: string): string {
+  return value.trim() || '—'
+}
+
+export function mobileLineCountPhrase(lines: number): string {
+  const n = Math.max(0, Math.round(lines))
+  return n === 1 ? '1 línea móvil' : `${n} líneas móviles`
+}
+
+/** Mix line sum, then the agent suffix. Empty suffix → `N líneas móviles.` */
+export function mobileHeadline(lines: number, suffix?: string | null): string {
+  const count = mobileLineCountPhrase(lines)
+  const extra = suffix == null ? QUOTE_HEADLINE_SUFFIX_DEFAULT : suffix.trim()
+  if (!extra) return `${count}.`
+  return `${count} ${extra}`
+}
+
+export function quoteTableHeaders(percent: number): { key: string; label: string }[] {
+  const cols = [
+    { key: 'cant', label: 'CANT.' },
+    { key: 'plan', label: 'PLAN' },
+    { key: 'precio', label: 'PRECIO' },
+  ]
+  if (percent > 0) cols.push({ key: 'dcto', label: `${percent}% DCTO.` })
+  cols.push(
+    { key: 'minutos', label: 'MINUTOS' },
+    { key: 'datos', label: 'DATOS' },
+    { key: 'internet', label: 'INTERNET' },
+    { key: 'apps', label: 'APPS' }
+  )
+  return cols
+}
+
+export function formatQuoteDate(date = new Date()): string {
+  return new Intl.DateTimeFormat('es-PE', {
+    timeZone: 'America/Lima',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  })
+    .format(date)
+    .replace(/\./g, '')
+    .toUpperCase()
+}
+
+export function discountLabel(percent: number): string {
+  if (percent <= 0) return 'Sin descuento'
+  return `${percent}%`
+}
+
+/** Footer CEL. grouping like the Claro sample: 987 963 762. */
+export function formatQuoteCel(phone: string): string {
+  const digits = phone.replace(/\D/g, '')
+  if (digits.length === 9) return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`
+  return phone.trim()
 }

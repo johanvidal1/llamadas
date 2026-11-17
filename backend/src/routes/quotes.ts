@@ -8,16 +8,27 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
 import { requireTenantIdFromContext } from '../lib/tenantContext'
 import { AuthRequest, requireAdmin, requireAuth } from '../middleware/auth'
+import { requireAdminOrLocalAgentQuotes } from '../lib/quoteAgentEnabled'
 import { normalizeOfferPlanBenefits, normalizeOfferPlanColors } from '../lib/offerPlanWorkbook'
 import {
+  bundledClaroLogoPath,
+  decodeHeadlineSuffixSnapshot,
+  encodeHeadlineSuffixSnapshot,
+  mixHistoryPlanName,
   normalizeQuotePlanRows,
-  quoteLineTotal,
   quotePdfFilename,
+  QUOTE_HEADLINE_SUFFIX_DEFAULT,
   renderQuotePdf,
   type QuotePdfBenefit,
   type QuotePdfCurrentPlan,
   type QuotePdfPlanRow,
 } from '../lib/quotePdf'
+import {
+  normalizeQuoteDiscountPercent,
+  quoteDiscountPercentsFromTenant,
+  quoteDiscountedLineTotal,
+  quoteLineTotal,
+} from '../lib/quoteDiscount'
 import { resolveQuoteFile, toStoredPath } from '../lib/quoteFiles'
 import { getDefaultQuoteTemplate } from '../lib/quoteTemplates'
 
@@ -30,28 +41,52 @@ const currentPlanSchema = z.object({
   count: z.number().int().min(1).max(9999),
 })
 
-const createSchema = z.object({
-  tableId: z.string().trim().min(1, 'Elige una tabla de planes.'),
-  planId: z.string().trim().min(1, 'Elige un plan.'),
-  comparePlanIds: z.array(z.string().trim().min(1).max(64)).max(3).optional().default([]),
+const quoteItemSchema = z.object({
+  planId: z.string().trim().min(1, 'Elige un plan.').max(64),
   lines: z.number().int().min(1).max(999),
-  companyId: z.string().trim().max(64).optional().default(''),
-  companyName: z.string().trim().max(300).optional().default(''),
-  contactName: z.string().trim().max(200).optional().default(''),
-  ruc: z.string().trim().max(20).optional().default(''),
-  phone: z.string().trim().max(40).optional().default(''),
-  email: z.string().trim().max(200).optional().default(''),
-  currentPlans: z.array(currentPlanSchema).max(40).optional().default([]),
-  greeting: z.string().trim().max(2000).optional(),
-  farewell: z.string().trim().max(2000).optional(),
-  senderName: z.string().trim().max(120).optional(),
 })
+
+const createSchema = z
+  .object({
+    tableId: z.string().trim().min(1, 'Elige una tabla de planes.'),
+    items: z
+      .array(quoteItemSchema)
+      .min(1, 'Elige al menos un plan.')
+      .max(8, 'Puedes incluir hasta 8 planes en la oferta.'),
+    companyId: z.string().trim().max(64).optional().default(''),
+    companyName: z.string().trim().max(300).optional().default(''),
+    contactName: z.string().trim().max(200).optional().default(''),
+    ruc: z.string().trim().max(20).optional().default(''),
+    phone: z.string().trim().max(40).optional().default(''),
+    email: z.string().trim().max(200).optional().default(''),
+    currentPlans: z.array(currentPlanSchema).max(40).optional().default([]),
+    greeting: z.string().trim().max(2000).optional(),
+    farewell: z.string().trim().max(2000).optional(),
+    extras: z.string().trim().max(2000).optional().default(''),
+    headlineSuffix: z.string().trim().max(500).optional(),
+    senderName: z.string().trim().max(120).optional(),
+    discountPercent: z.number().int().min(0).max(90).optional().default(0),
+  })
+  .superRefine((data, ctx) => {
+    const ids = data.items.map((item) => item.planId)
+    if (new Set(ids).size !== ids.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Cada plan solo puede ir una vez.',
+        path: ['items'],
+      })
+    }
+  })
 
 const settingsSchema = z
   .object({
-    shareEnabled: z.boolean(),
+    shareEnabled: z.boolean().optional(),
+    discountPercents: z.array(z.number().int()).optional(),
   })
   .strict()
+  .refine((data) => data.shareEnabled !== undefined || data.discountPercents !== undefined, {
+    message: 'Datos inválidos',
+  })
 
 const shareSchema = z.object({
   channel: z.enum(['whatsapp', 'email']),
@@ -76,16 +111,11 @@ function sendPdf(
   res: Response,
   absolute: string,
   disposition: 'inline' | 'attachment',
-  filename = 'Propuesta-Optick.pdf'
+  filename = 'Propuesta.pdf'
 ) {
   res.setHeader('Content-Type', 'application/pdf')
   res.setHeader('Content-Disposition', `${disposition}; filename="${filename}"`)
   res.sendFile(absolute)
-}
-
-function stringList(value: Prisma.JsonValue): string[] {
-  if (!Array.isArray(value)) return []
-  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
 }
 
 function normalizeCurrentPlans(value: Prisma.JsonValue): QuotePdfCurrentPlan[] {
@@ -116,7 +146,9 @@ type StoredQuote = {
   totalSoles: Prisma.Decimal
   benefits: Prisma.JsonValue
   planRows: Prisma.JsonValue
+  discountPercent: number
   currentPlans: Prisma.JsonValue
+  createdAt: Date
   companyName: string
   contactName: string
   ruc: string
@@ -130,6 +162,16 @@ type StoredQuote = {
   letterheadPath: string | null
   signaturePath: string | null
   promoPaths: Prisma.JsonValue
+}
+
+/** New quotes store extras in farewell. Headline suffix is JSON in greeting. Legacy greeting means no extras. */
+function extrasFromSnapshot(quote: StoredQuote): string {
+  if (quote.greeting.trim() && decodeHeadlineSuffixSnapshot(quote.greeting) === undefined) return ''
+  return quote.farewell.trim()
+}
+
+function headlineSuffixFromSnapshot(quote: StoredQuote): string {
+  return decodeHeadlineSuffixSnapshot(quote.greeting) ?? ''
 }
 
 function rowsFromQuote(quote: StoredQuote): QuotePdfPlanRow[] {
@@ -148,43 +190,47 @@ function rowsFromQuote(quote: StoredQuote): QuotePdfPlanRow[] {
   ]
 }
 
-async function renderStoredQuote(quote: StoredQuote, tenantId: string): Promise<Buffer> {
+async function renderStoredQuote(quote: StoredQuote): Promise<Buffer> {
   const rows = rowsFromQuote(quote)
-  const proposed = rows.find((row) => row.proposed) ?? rows[0]
-  const benefits: QuotePdfBenefit[] = proposed?.benefits ?? normalizeOfferPlanBenefits(quote.benefits)
-  const promoPaths = stringList(quote.promoPaths)
-    .map((relative) => resolveQuoteFile(tenantId, relative))
-    .filter((file): file is string => Boolean(file))
+  const lead = rows[0]
+  const benefits: QuotePdfBenefit[] = lead?.benefits ?? normalizeOfferPlanBenefits(quote.benefits)
   return renderQuotePdf({
-    greeting: quote.greeting,
-    farewell: quote.farewell,
+    extras: extrasFromSnapshot(quote),
+    headlineSuffix: headlineSuffixFromSnapshot(quote),
     companyName: quote.companyName,
     contactName: quote.contactName,
     ruc: quote.ruc,
     phone: quote.phone,
     email: quote.email,
     currentPlans: normalizeCurrentPlans(quote.currentPlans),
-    planName: proposed?.name ?? quote.planName,
-    priceSoles: proposed?.priceSoles ?? quote.priceSoles.toNumber(),
-    lines: proposed?.lines ?? quote.lines,
-    totalSoles: proposed?.monthlySoles ?? quote.totalSoles.toNumber(),
+    planName: quote.planName,
+    priceSoles: quote.priceSoles.toNumber(),
+    lines: quote.lines,
+    totalSoles: quote.totalSoles.toNumber(),
     benefits,
     planRows: rows,
     tableName: quote.tableName,
+    discountPercent: quote.discountPercent,
+    issuedAt: quote.createdAt,
     senderName: quote.senderName,
     senderPhone: quote.senderPhone,
-    letterheadPath: resolveQuoteFile(tenantId, quote.letterheadPath),
-    signaturePath: resolveQuoteFile(tenantId, quote.signaturePath),
-    promoPaths,
+    letterheadPath: bundledClaroLogoPath(),
   })
 }
 
-async function readShareEnabled(): Promise<boolean> {
+async function readQuoteSettings() {
   const tenant = await prisma.tenant.findUnique({
     where: { id: requireTenantIdFromContext() },
-    select: { quoteShareEnabled: true },
+    select: { quoteShareEnabled: true, quoteDiscountPercents: true },
   })
-  return tenant?.quoteShareEnabled === true
+  return {
+    shareEnabled: tenant?.quoteShareEnabled === true,
+    discountPercents: quoteDiscountPercentsFromTenant(tenant?.quoteDiscountPercents),
+  }
+}
+
+async function readShareEnabled(): Promise<boolean> {
+  return (await readQuoteSettings()).shareEnabled
 }
 
 function snapshotPlan(
@@ -194,17 +240,16 @@ function snapshotPlan(
     benefits: Prisma.JsonValue
     colors?: Prisma.JsonValue | null
   },
-  lines: number,
-  proposed: boolean
+  lines: number
 ): QuotePdfPlanRow {
   const price = plan.priceSoles.toNumber()
-  const rowLines = proposed ? lines : 1
+  const rowLines = Math.min(999, Math.max(1, lines))
   return {
     name: plan.name,
     priceSoles: price,
     lines: rowLines,
     monthlySoles: quoteLineTotal(price, rowLines),
-    proposed,
+    proposed: false,
     benefits: normalizeOfferPlanBenefits(plan.benefits),
     colors: normalizeOfferPlanColors(plan.colors),
   }
@@ -251,10 +296,11 @@ router.get('/public/:token', async (req: AuthRequest, res: Response) => {
 
 // GET /api/quotes/settings — any signed-in user can read. Agents cannot change it.
 router.get('/settings', requireAuth, async (_req: AuthRequest, res: Response) => {
-  const shareEnabled = await readShareEnabled()
+  const settings = await readQuoteSettings()
   const template = await getDefaultQuoteTemplate()
   res.json({
-    shareEnabled,
+    shareEnabled: settings.shareEnabled,
+    discountPercents: settings.discountPercents,
     greeting: template?.greeting ?? '',
     farewell: template?.farewell ?? '',
   })
@@ -268,15 +314,30 @@ router.patch('/settings', requireAdmin, async (req: AuthRequest, res: Response) 
     return
   }
   const tenantId = requireTenantIdFromContext()
+  const current = await readQuoteSettings()
+  const shareEnabled = parsed.data.shareEnabled ?? current.shareEnabled
+  const discountPercents =
+    parsed.data.discountPercents !== undefined
+      ? quoteDiscountPercentsFromTenant(parsed.data.discountPercents)
+      : current.discountPercents
   await prisma.tenant.update({
     where: { id: tenantId },
-    data: { quoteShareEnabled: parsed.data.shareEnabled },
+    data: {
+      quoteShareEnabled: shareEnabled,
+      quoteDiscountPercents: discountPercents as Prisma.InputJsonValue,
+    },
   })
-  res.json({ shareEnabled: parsed.data.shareEnabled })
+  const template = await getDefaultQuoteTemplate()
+  res.json({
+    shareEnabled,
+    discountPercents,
+    greeting: template?.greeting ?? '',
+    farewell: template?.farewell ?? '',
+  })
 })
 
-// GET /api/quotes?companyId= — admin-only history. Agents must not see generated quotes.
-router.get('/', requireAdmin, async (req: AuthRequest, res: Response) => {
+// GET /api/quotes?companyId= — admin history; AGENT only when QUOTE_AGENT_ENABLED.
+router.get('/', requireAdminOrLocalAgentQuotes, async (req: AuthRequest, res: Response) => {
   const companyId = typeof req.query.companyId === 'string' ? req.query.companyId.trim() : ''
   if (!companyId) {
     res.status(400).json({ error: 'Falta la empresa.' })
@@ -337,8 +398,8 @@ router.post('/:id/share', requireAdmin, async (req: AuthRequest, res: Response) 
   res.json({ status, statusLabel: quoteStatusLabel(status) })
 })
 
-// GET /api/quotes/:id/pdf — rewrite the file from the snapshot, then download. Admin only.
-router.get('/:id/pdf', requireAdmin, async (req: AuthRequest, res: Response) => {
+// GET /api/quotes/:id/pdf — rewrite the file from the snapshot, then download.
+router.get('/:id/pdf', requireAdminOrLocalAgentQuotes, async (req: AuthRequest, res: Response) => {
   const quote = await prisma.commercialQuote.findFirst({ where: { id: req.params.id } })
   if (!quote) {
     res.status(404).json({ error: 'Propuesta no encontrada' })
@@ -347,7 +408,7 @@ router.get('/:id/pdf', requireAdmin, async (req: AuthRequest, res: Response) => 
   const tenantId = requireTenantIdFromContext()
   let pdf: Buffer
   try {
-    pdf = await renderStoredQuote(quote, tenantId)
+    pdf = await renderStoredQuote(quote)
   } catch (err) {
     console.error('[quote pdf regenerate]', err)
     res.status(500).json({ error: 'No se pudo generar el PDF.' })
@@ -378,7 +439,7 @@ router.get('/:id/pdf', requireAdmin, async (req: AuthRequest, res: Response) => 
     res.status(500).json({ error: 'No se pudo guardar el PDF.' })
     return
   }
-  sendPdf(res, absolute, 'attachment', quotePdfFilename(quote.ruc, quote.planName, false))
+  sendPdf(res, absolute, 'attachment', quotePdfFilename(quote.ruc, false))
 })
 
 class QuoteRequestError extends Error {
@@ -406,68 +467,90 @@ async function buildQuotePdf(body: QuoteDraftBody, tenantId: string, userId: str
   })
   if (!table) throw new QuoteRequestError(400, 'Esa tabla no está activa.')
 
-  const plan = await prisma.offerPlan.findFirst({
-    where: { id: body.planId, tableId: table.id },
+  const itemIds = body.items.map((item) => item.planId)
+  const plans = await prisma.offerPlan.findMany({
+    where: { id: { in: itemIds }, tableId: table.id },
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
   })
-  if (!plan) throw new QuoteRequestError(400, 'El plan no pertenece a la tabla elegida.')
-
-  const compareIds = [...new Set(body.comparePlanIds.filter((id) => id !== plan.id))]
-  const comparePlans = compareIds.length
-    ? await prisma.offerPlan.findMany({
-        where: { id: { in: compareIds }, tableId: table.id },
-        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-      })
-    : []
-  if (comparePlans.length !== compareIds.length) {
-    throw new QuoteRequestError(400, 'Los planes de comparación deben ser de la misma tabla activa.')
+  if (plans.length !== itemIds.length) {
+    throw new QuoteRequestError(400, 'Los planes de la oferta deben ser de la misma tabla activa.')
   }
 
   const template = await getDefaultQuoteTemplate()
   if (!template) throw new QuoteRequestError(500, 'No hay un formato de propuesta.')
 
-  const ordered = [plan, ...comparePlans].sort(
-    (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'es')
+  const settings = await readQuoteSettings()
+  const requested = body.discountPercent ?? 0
+  if (requested !== 0 && !settings.discountPercents.includes(requested)) {
+    throw new QuoteRequestError(400, 'Ese descuento no está disponible.')
+  }
+  const discountPercent = normalizeQuoteDiscountPercent(requested)
+
+  const linesById = new Map(body.items.map((item) => [item.planId, item.lines]))
+  const planRows = plans.map((plan) => snapshotPlan(plan, linesById.get(plan.id) ?? 1))
+  const lead = planRows[0]
+  if (!lead) throw new QuoteRequestError(400, 'Elige al menos un plan.')
+  const mixName = mixHistoryPlanName(planRows.map((row) => row.name))
+  const totalLines = planRows.reduce((sum, row) => sum + row.lines, 0)
+  const totalSoles = planRows.reduce(
+    (sum, row) => sum + quoteDiscountedLineTotal(row.priceSoles, row.lines, discountPercent),
+    0
   )
-  const planRows = ordered.map((item) => snapshotPlan(item, body.lines, item.id === plan.id))
-  const main = planRows.find((row) => row.proposed) ?? planRows[0]
-  const benefits = main.benefits
+  const benefits = lead.benefits
   const promoPaths = template.promos.map((promo) => promo.path)
-  const greeting = body.greeting !== undefined ? body.greeting : template.greeting
-  const farewell = body.farewell !== undefined ? body.farewell : template.farewell
+  const extras = (body.extras ?? '').trim()
+  const headlineSuffix =
+    body.headlineSuffix === undefined ? QUOTE_HEADLINE_SUFFIX_DEFAULT : body.headlineSuffix.trim()
+  const greeting = encodeHeadlineSuffixSnapshot(headlineSuffix)
+  const farewell = extras
   const sender = await senderForQuote(userId, body.senderName)
+  const issuedAt = new Date()
 
   let pdf: Buffer
   try {
     pdf = await renderQuotePdf({
-      greeting,
-      farewell,
+      extras,
+      headlineSuffix,
       companyName: body.companyName,
       contactName: body.contactName,
       ruc: body.ruc,
       phone: body.phone,
       email: body.email,
       currentPlans: body.currentPlans,
-      planName: main.name,
-      priceSoles: main.priceSoles,
-      lines: main.lines,
-      totalSoles: main.monthlySoles,
+      planName: mixName,
+      priceSoles: lead.priceSoles,
+      lines: totalLines,
+      totalSoles,
       benefits,
       planRows,
       tableName: table.name,
+      discountPercent,
+      issuedAt,
       senderName: sender.senderName,
       senderPhone: sender.senderPhone,
-      letterheadPath: resolveQuoteFile(tenantId, template.letterheadPath),
-      signaturePath: resolveQuoteFile(tenantId, template.signaturePath),
-      promoPaths: promoPaths
-        .map((relative) => resolveQuoteFile(tenantId, relative))
-        .filter((file): file is string => Boolean(file)),
+      letterheadPath: bundledClaroLogoPath(),
     })
   } catch (err) {
     console.error('[quote pdf]', err)
     throw new QuoteRequestError(500, 'No se pudo generar el PDF.')
   }
 
-  return { pdf, table, template, planRows, main, benefits, promoPaths, greeting, farewell, sender }
+  return {
+    pdf,
+    table,
+    template,
+    planRows,
+    lead,
+    mixName,
+    totalLines,
+    totalSoles,
+    discountPercent,
+    benefits,
+    promoPaths,
+    greeting,
+    farewell,
+    sender,
+  }
 }
 
 function sendQuoteError(res: Response, err: unknown) {
@@ -479,8 +562,8 @@ function sendQuoteError(res: Response, err: unknown) {
   res.status(500).json({ error: 'No se pudo generar el PDF.' })
 }
 
-// POST /api/quotes/preview — same PDF as a real quote, streamed. Admin only; no row and no stored file.
-router.post('/preview', requireAdmin, async (req: AuthRequest, res: Response) => {
+// POST /api/quotes/preview — same PDF as a real quote, streamed. No row and no stored file.
+router.post('/preview', requireAdminOrLocalAgentQuotes, async (req: AuthRequest, res: Response) => {
   const parsed = createSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.errors[0]?.message ?? 'Datos inválidos' })
@@ -489,7 +572,7 @@ router.post('/preview', requireAdmin, async (req: AuthRequest, res: Response) =>
   const tenantId = requireTenantIdFromContext()
   try {
     const built = await buildQuotePdf(parsed.data, tenantId, req.user?.id)
-    const filename = quotePdfFilename(parsed.data.ruc, built.main.name, true)
+    const filename = quotePdfFilename(parsed.data.ruc, true)
     res.setHeader('Content-Type', 'application/pdf')
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
     res.setHeader('Cache-Control', 'no-store')
@@ -499,8 +582,8 @@ router.post('/preview', requireAdmin, async (req: AuthRequest, res: Response) =>
   }
 })
 
-// POST /api/quotes — snapshot the chosen rows. Admin only. The PDF is regenerated on download.
-router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
+// POST /api/quotes — snapshot the chosen rows. The PDF is regenerated on download.
+router.post('/', requireAdminOrLocalAgentQuotes, async (req: AuthRequest, res: Response) => {
   const parsed = createSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.errors[0]?.message ?? 'Datos inválidos' })
@@ -517,7 +600,22 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
     return
   }
 
-  const { table, template, planRows, main, benefits, promoPaths, pdf, greeting, farewell, sender } = built
+  const {
+    table,
+    template,
+    planRows,
+    lead,
+    mixName,
+    totalLines,
+    totalSoles,
+    discountPercent,
+    benefits,
+    promoPaths,
+    pdf,
+    greeting,
+    farewell,
+    sender,
+  } = built
   const token = randomBytes(32).toString('base64url')
 
   const quote = await prisma.commercialQuote.create({
@@ -527,12 +625,13 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
       tableId: table.id,
       templateId: template.id,
       companyId: body.companyId || null,
-      planName: main.name,
-      priceSoles: main.priceSoles.toFixed(2),
-      lines: main.lines,
-      totalSoles: main.monthlySoles.toFixed(2),
+      planName: mixName,
+      priceSoles: lead.priceSoles.toFixed(2),
+      lines: totalLines,
+      totalSoles: totalSoles.toFixed(2),
       benefits: benefits as Prisma.InputJsonValue,
       planRows: planRows as unknown as Prisma.InputJsonValue,
+      discountPercent,
       currentPlans: body.currentPlans as Prisma.InputJsonValue,
       companyName: body.companyName,
       contactName: body.contactName,
@@ -579,9 +678,9 @@ router.post('/', requireAdmin, async (req: AuthRequest, res: Response) => {
   res.status(201).json({
     id: quote.id,
     token,
-    planName: main.name,
-    lines: main.lines,
-    totalSoles: main.monthlySoles,
+    planName: mixName,
+    lines: totalLines,
+    totalSoles,
   })
 })
 

@@ -49,6 +49,9 @@ model Tenant {
   /// Propuesta: botones de WhatsApp y correo. Apagado por defecto.
   /// Columna del tenant: Resetear campaña no la borra. Solo un admin la cambia.
   quoteShareEnabled Boolean @default(false)
+  /// Percents the agent may pick on a quote (subset of 25 and 50). JSON number array.
+  /// Default both on. Resetear campaña does not wipe this column.
+  quoteDiscountPercents Json @default("[25,50]")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -529,6 +532,8 @@ model CommercialQuote {
   benefits     Json
   /// Chosen rows only: the quoted plan plus any comparison plans from the same table.
   planRows     Json     @default("[]")
+  /// Quote-level discount applied to every mix line. 0 = sin descuento. Frozen on the snapshot.
+  discountPercent Int     @default(0)
   currentPlans Json
   companyName  String   @default("")
   contactName  String   @default("")

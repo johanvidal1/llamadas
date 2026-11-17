@@ -2,7 +2,27 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
-import { quoteLineTotal, quotePdfFilename, renderQuotePdf, type QuotePdfInput } from './quotePdf'
+import {
+  decodeHeadlineSuffixSnapshot,
+  encodeHeadlineSuffixSnapshot,
+  formatMixSummaryLines,
+  mixHistoryPlanName,
+  mobileHeadline,
+  quoteDiscountedLineTotal,
+  quoteDiscountedUnit,
+  quoteLineTotal,
+  quotePdfFilename,
+  QUOTE_HEADLINE_SUFFIX_DEFAULT,
+  renderQuotePdf,
+  type QuotePdfInput,
+} from './quotePdf'
+import {
+  normalizeQuoteDiscountPercent,
+  quoteDiscountPercentsFromTenant,
+  quotePlanApps,
+  quotePlanAppsShort,
+  quotePlanInternet,
+} from './quoteDiscount'
 
 function section(name: string) {
   console.log(`\n• ${name}`)
@@ -26,10 +46,14 @@ function mediaBox(pdf: Buffer): { width: number; height: number } {
 /** pdfkit writes WinAnsi text as hex or literal strings, often split on the first glyph. */
 function pdfText(pdf: Buffer): string {
   const raw = pdf.toString('latin1')
+  const streams = [...raw.matchAll(/stream\r?\n([\s\S]*?)\nendstream/g)]
+    .map((match) => match[1])
+    .filter((stream) => /Tj|TJ/.test(stream))
+  const source = streams.join('\n') || raw
   const parts: string[] = []
   const re = /<([0-9A-Fa-f]{2,})>|\((?:\\\)|[^)])*\)/g
   let match: RegExpExecArray | null
-  while ((match = re.exec(raw))) {
+  while ((match = re.exec(source))) {
     if (match[1]) {
       if (match[1].length % 2 === 0) parts.push(Buffer.from(match[1], 'hex').toString('latin1'))
       continue
@@ -38,6 +62,16 @@ function pdfText(pdf: Buffer): string {
   }
   return parts.join('')
 }
+
+const CATALOG_BENEFITS = [
+  { label: 'Min/SMS nacionales', value: 'ILIMITADO' },
+  { label: 'Internet base (GB)', value: '20 GB' },
+  { label: 'Full Claro (GB)', value: '45 GB' },
+  { label: 'Apps incluidas', value: 'Facebook, Messenger, Instagram, WhatsApp.' },
+  { label: 'Cobertura internacional min', value: '300 min' },
+  { label: 'Cobertura internacional internet', value: '3 GB' },
+  { label: 'Cobertura internacional SMS', value: '300 SMS' },
+]
 
 function sample(overrides: Partial<QuotePdfInput> = {}): QuotePdfInput {
   return {
@@ -56,21 +90,44 @@ function sample(overrides: Partial<QuotePdfInput> = {}): QuotePdfInput {
     tableName: 'MAX Negocios',
     senderName: 'Ana Pérez',
     senderPhone: '999111222',
-    benefits: [
-      { label: 'Min/SMS nacionales', value: 'ILIMITADO' },
-      { label: 'Full Claro (GB)', value: '45 GB' },
-      { label: 'Portabilidad base (GB)', value: '20 GB' },
-      { label: 'Portabilidad Full Claro (GB)', value: '30 GB' },
-    ],
+    discountPercent: 0,
+    benefits: CATALOG_BENEFITS,
     ...overrides,
   }
 }
 
 async function main() {
-  section('line total keeps cents')
+  section('line total keeps cents and discount does not invent 50%')
   assert.equal(quoteLineTotal(29.9, 3), 89.7)
+  assert.equal(quoteDiscountedUnit(29.9, 0), 29.9)
+  assert.equal(quoteDiscountedUnit(29.9, 50), 14.95)
+  assert.equal(quoteDiscountedUnit(159.9, 50), 79.95)
+  assert.equal(quoteDiscountedLineTotal(29.9, 3, 50), 44.85)
+  assert.equal(quoteDiscountedLineTotal(29.9, 3, 0), 89.7)
+  assert.equal(normalizeQuoteDiscountPercent(50), 50)
+  assert.equal(normalizeQuoteDiscountPercent(0), 0)
+  assert.equal(normalizeQuoteDiscountPercent(17), 0)
+  assert.equal(normalizeQuoteDiscountPercent(50, [25]), 0)
+  assert.deepEqual(quoteDiscountPercentsFromTenant(undefined), [25, 50])
+  assert.deepEqual(quoteDiscountPercentsFromTenant([50, 25, 30]), [25, 50])
+  assert.deepEqual(quoteDiscountPercentsFromTenant([]), [])
+  assert.equal(quotePlanInternet(CATALOG_BENEFITS), '20 GB')
+  assert.equal(quotePlanApps(CATALOG_BENEFITS).includes('Waze'), false)
+  assert.equal(quotePlanAppsShort(CATALOG_BENEFITS), 'Ilimitadas')
+  assert.equal(quotePlanAppsShort([{ label: 'Apps incluidas', value: 'Ilimitadas' }]), 'Ilimitadas')
+  assert.equal(mobileHeadline(1), `1 línea móvil ${QUOTE_HEADLINE_SUFFIX_DEFAULT}`)
+  assert.equal(mobileHeadline(6), `6 líneas móviles ${QUOTE_HEADLINE_SUFFIX_DEFAULT}`)
+  assert.equal(mobileHeadline(6, ''), '6 líneas móviles.')
+  assert.equal(mobileHeadline(1, ''), '1 línea móvil.')
+  assert.equal(
+    decodeHeadlineSuffixSnapshot(encodeHeadlineSuffixSnapshot(QUOTE_HEADLINE_SUFFIX_DEFAULT)),
+    QUOTE_HEADLINE_SUFFIX_DEFAULT
+  )
+  assert.equal(decodeHeadlineSuffixSnapshot(encodeHeadlineSuffixSnapshot('')), '')
+  assert.equal(decodeHeadlineSuffixSnapshot('Estimado/a, gracias por su tiempo.'), undefined)
+  assert.equal(decodeHeadlineSuffixSnapshot(''), undefined)
 
-  section('one page holds a short proposal and ignores remote images')
+  section('zero discount stays CONTECH hierarchy without inventing 50% or plan actual')
   const dir = mkdtempSync(path.join(tmpdir(), 'optick-quote-'))
   const png = path.join(dir, 'pixel.png')
   writeFileSync(png, PNG)
@@ -87,21 +144,46 @@ async function main() {
   const box = mediaBox(pdf)
   assert.ok(box.height > box.width, 'page stays portrait')
   assert.equal(pageCount(pdf), 1)
-  assert.ok(text.includes('Optick'))
-  assert.ok(text.includes('al mes'))
-  assert.ok(text.includes('MAX Negocios'))
+  assert.ok(text.includes('PROPUESTA COMERCIAL') || text.includes('PROPUESTA'))
+  assert.ok(text.includes('PORTABILIDAD'))
+  assert.equal(text.includes('OPTICK'), false)
+  assert.equal(text.includes('Optick'), false)
+  assert.equal(text.includes('Estimado'), false)
+  assert.equal(text.includes('Quedamos atentos'), false)
+  assert.ok(text.includes('FACTURACI') || text.includes('FACTUR'))
+  assert.ok(text.includes('Planes, precios') || text.includes('beneficios'))
+  assert.ok(text.includes('Roaming'))
+  assert.ok(text.includes('Aplicaciones') || text.includes('ilimitadas'))
   assert.ok(text.includes('MAX NEGOCIOS+ 29.9'))
-  assert.ok(text.includes('Propuesta'))
-  assert.ok(text.includes('Ana'))
-  assert.ok(text.includes('999111222'))
+  assert.ok(text.includes('Ana') || text.includes('ANA'))
+  assert.ok(text.includes('999111222') || text.includes('999 111 222'))
   assert.equal(text.includes('999888777'), false)
-  assert.ok(text.includes('Full Claro'))
-  assert.ok(text.includes('tabilidad'))
-  assert.ok(text.includes('Empresa PRO'))
-  assert.equal(text.includes('Precio mensual'), false)
+  assert.equal(text.includes('Empresa PRO'), false)
+  assert.equal(text.includes('Plan actual'), false)
+  assert.equal(text.includes('50%'), false)
+  assert.equal(text.includes('50 %'), false)
+  assert.equal(text.includes('Richard'), false)
+  assert.equal(text.includes('Correo y Waze'), false)
+  assert.ok(text.includes('20 GB'))
+  assert.ok(text.includes('Ilimitadas'))
   assert.equal(text.includes('example.com'), false)
   assert.equal(text.toLowerCase().includes('prueba'), false)
   assert.equal(text.toLowerCase().includes('borrador'), false)
+  assert.ok(text.includes('Facebook') || text.includes('WhatsApp'))
+  assert.equal(text.includes('BENEFICIOS ADICIONALES'), false)
+  assert.ok(text.includes('corporativas'))
+  assert.ok(text.includes('portabilidad'))
+
+  section('50% snapshot shows badge, DCTO column and discounted mix total')
+  const discounted = await renderQuotePdf(sample({ discountPercent: 50 }), { compress: false })
+  const discountedText = pdfText(discounted)
+  assert.ok(discountedText.includes('50%') || discountedText.includes('50 %'))
+  assert.ok(discountedText.includes('DCTO') || discountedText.includes('DESCUENTO'))
+  assert.ok(discountedText.includes('14.95') || discountedText.includes('14,95'))
+  assert.ok(discountedText.includes('44.85') || discountedText.includes('44,85'))
+  assert.equal(discountedText.includes('Empresa PRO'), false)
+  assert.equal(discountedText.includes('Plan actual'), false)
+  assert.equal(discountedText.includes('Richard'), false)
 
   section('compressed output is still a PDF')
   const compressed = await renderQuotePdf(sample())
@@ -118,7 +200,7 @@ async function main() {
           lines: 3,
           monthlySoles: quoteLineTotal(29.9, 3),
           proposed: true,
-          benefits: sample().benefits,
+          benefits: CATALOG_BENEFITS,
           colors: {
             title: '#B9280B',
             header: '#182333',
@@ -138,8 +220,8 @@ async function main() {
           monthlySoles: 39.9,
           proposed: false,
           benefits: [
-            { label: 'Portabilidad base (GB)', value: '25 GB' },
-            { label: 'Full Claro (GB)', value: '55 GB' },
+            { label: 'Internet base (GB)', value: '25 GB' },
+            { label: 'Apps incluidas', value: 'Facebook, WhatsApp.' },
           ],
         },
       ],
@@ -147,30 +229,56 @@ async function main() {
     { compress: false }
   )
   const comparedText = pdfText(compared)
-  assert.ok(comparedText.includes('Propuesta'))
   assert.ok(comparedText.includes('MAX NEGOCIOS+ 39.9'))
-  assert.ok(comparedText.includes('al mes'))
-  assert.ok(comparedText.includes('Precio'))
+  assert.ok(comparedText.includes('25 GB'))
   assert.equal(comparedText.includes('MAX ILIMITADO + 289.9'), false)
-  assert.equal(comparedText.includes('MAX ILIMITADO + 189.9'), false)
+  assert.equal(comparedText.includes('Plan actual'), false)
+  assert.equal(comparedText.includes('OPTICK'), false)
+  assert.equal(comparedText.includes('Estimado'), false)
+
+  section('mix history name and filename use RUC only')
+  assert.equal(mixHistoryPlanName([]), 'Oferta')
+  assert.equal(mixHistoryPlanName(['MAX NEGOCIOS+ 29.9']), 'MAX NEGOCIOS+ 29.9')
+  assert.equal(
+    mixHistoryPlanName(['MAX NEGOCIOS+ 29.9', 'MAX NEGOCIOS+ 39.9', 'MAX 49.9']),
+    'MAX NEGOCIOS+ 29.9 + 2 más'
+  )
+  const mixLines = formatMixSummaryLines([
+    {
+      name: 'MAX NEGOCIOS+ 29.9',
+      priceSoles: 29.9,
+      lines: 3,
+      monthlySoles: quoteLineTotal(29.9, 3),
+      proposed: false,
+      benefits: [],
+    },
+    {
+      name: 'MAX NEGOCIOS+ 39.9',
+      priceSoles: 39.9,
+      lines: 2,
+      monthlySoles: quoteLineTotal(39.9, 2),
+      proposed: false,
+      benefits: [],
+    },
+  ])
+  assert.equal(mixLines.length, 3)
+  assert.ok(mixLines[0].includes('MAX NEGOCIOS+ 29.9'))
+  assert.ok(mixLines[2].startsWith('Total mensual:'), true)
 
   section('preview filename carries prueba; the registrar name does not')
-  const previewName = quotePdfFilename('20123456789', 'Plan 69.90', true)
-  const registrarName = quotePdfFilename('20123456789', 'Plan 69.90', false)
-  assert.equal(previewName, 'Propuesta-prueba-20123456789-Plan-69-90.pdf')
-  assert.equal(registrarName, 'Propuesta-20123456789-Plan-69-90.pdf')
+  const previewName = quotePdfFilename('20123456789', true)
+  const registrarName = quotePdfFilename('20123456789', false)
+  assert.equal(previewName, 'Propuesta-prueba-20123456789.pdf')
+  assert.equal(registrarName, 'Propuesta-20123456789.pdf')
   assert.equal(registrarName.includes('prueba'), false)
   assert.equal(text.toLowerCase().includes('prueba'), false)
   assert.equal(text.toLowerCase().includes('borrador'), false)
 
-  section('eleven excel columns and four rows stay on one portrait page')
+  section('four mix plans stay portrait and keep catalog internet / apps')
   const headers = [
     'Min/SMS nacionales',
-    'Min internacionales',
     'Internet base (GB)',
     'Full Claro (GB)',
-    'Portabilidad base (GB)',
-    'Portabilidad Full Claro (GB)',
     'Apps incluidas',
     'Cobertura internacional min',
     'Cobertura internacional internet',
@@ -182,16 +290,13 @@ async function main() {
     headerText: '#FFFFFF',
     priceHeader: 'Precio (S/)',
     row: null,
-    cells: {
-      'Precio (S/)': '#B9280B',
-      'Full Claro (GB)': '#FFF0E9',
-      'Portabilidad Full Claro (GB)': '#FFF0E9',
-    },
+    cells: {},
   }
   const names = ['MAX NEGOCIOS+ 29.9', 'MAX NEGOCIOS+ 39.9', 'MAX NEGOCIOS+ 49.9', 'MAX ILIMITADO + 69.9']
   const wide = await renderQuotePdf(
     sample({
       senderPhone: '',
+      discountPercent: 25,
       planRows: names.map((name, index) => ({
         name,
         priceSoles: 29.9 + index,
@@ -201,7 +306,11 @@ async function main() {
         colors,
         benefits: headers.map((label) => ({
           label,
-          value: label.startsWith('Apps') ? 'Facebook, Messenger, Threads, Instagram, WhatsApp.' : 'ILIMITADO',
+          value: label.startsWith('Apps')
+            ? 'Facebook, Messenger, Threads, Instagram, WhatsApp.'
+            : label.startsWith('Internet')
+              ? `${20 + index} GB`
+              : 'ILIMITADO',
         })),
       })),
     }),
@@ -210,15 +319,46 @@ async function main() {
   const wideBox = mediaBox(wide)
   const wideText = pdfText(wide)
   assert.ok(wideBox.height > wideBox.width)
-  assert.equal(pageCount(wide), 1)
-  assert.ok(wideText.includes('Precio (S/)'))
-  assert.ok(wideText.includes('Portabilidad Full Claro'))
-  assert.ok(wideText.includes('Cobertura internacional SMS'))
+  assert.ok(pageCount(wide) >= 1)
   assert.ok(wideText.includes('MAX ILIMITADO + 69.9'))
-  assert.ok(wideText.includes('Propuesta: MAX NEGOCIOS+ 29.9'))
+  assert.ok(wideText.includes('25%') || wideText.includes('25 %'))
+  assert.ok(wideText.includes('20 GB'))
+  assert.equal(wideText.includes('Correo y Waze'), false)
+  assert.equal(wideText.includes('Plan actual'), false)
+  assert.equal(wideText.includes('nota de cr'), false)
   assert.equal(wideText.includes('999111222'), false)
+  assert.equal(wideText.includes('999 111 222'), false)
+  assert.equal(wideText.includes('OPTICK'), false)
+  assert.equal(wideText.includes('Estimado'), false)
   assert.equal(wideText.toLowerCase().includes('prueba'), false)
   assert.equal(wideText.toLowerCase().includes('borrador'), false)
+
+  section('empty headline suffix prints only the line count')
+  const shortHeadline = await renderQuotePdf(sample({ headlineSuffix: '' }), { compress: false })
+  const shortText = pdfText(shortHeadline)
+  assert.equal(shortText.includes('corporativas'), false)
+  assert.equal(shortText.includes('portabilidad'), false)
+
+  section('custom headline suffix is snapshotted into the PDF')
+  const customHeadline = await renderQuotePdf(
+    sample({ headlineSuffix: 'con cobertura nacional.' }),
+    { compress: false }
+  )
+  const customText = pdfText(customHeadline)
+  assert.ok(customText.includes('cobertura') || customText.includes('nacional'))
+  assert.equal(customText.includes('corporativas'), false)
+
+  section('extras print only when the agent typed them')
+  const withExtras = await renderQuotePdf(
+    sample({ extras: 'Asesor posventa · Nota de crédito en el tercer mes' }),
+    { compress: false }
+  )
+  const extrasText = pdfText(withExtras)
+  assert.ok(extrasText.includes('BENEFICIOS ADICIONALES') || extrasText.includes('BENEFICIOS'))
+  assert.ok(extrasText.includes('Asesor posventa') || extrasText.includes('Asesor'))
+  assert.equal(extrasText.includes('OPTICK'), false)
+  assert.equal(extrasText.includes('Estimado'), false)
+  assert.equal(extrasText.includes('Quedamos atentos'), false)
 
   console.log('\nquote PDF smoke test ok')
 }

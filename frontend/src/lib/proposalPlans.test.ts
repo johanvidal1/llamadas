@@ -3,9 +3,11 @@ import {
   buildProposalShareText,
   buildProposalSummary,
   formatCurrentPlanGroup,
+  formatLineCount,
   groupCurrentPlans,
   lineTotal,
   splitPortabilityBenefits,
+  totalCurrentLines,
 } from './proposalPlans.ts'
 
 function section(name: string) {
@@ -38,6 +40,12 @@ assert.equal(formatCurrentPlanGroup({ plan: '', rentaBasica: '', rentaConDesc: '
 
 section('no lines stay an empty group list')
 assert.deepEqual(groupCurrentPlans([]), [])
+assert.equal(totalCurrentLines([]), 0)
+
+section('contracted lines are the sum of group counts')
+assert.equal(totalCurrentLines(grouped), 5)
+assert.equal(formatLineCount(totalCurrentLines(grouped)), '5 líneas')
+assert.equal(formatLineCount(1), '1 línea')
 
 section('portabilidad labels are the spoken offer; other benefits stay apart')
 const split = splitPortabilityBenefits([

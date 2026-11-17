@@ -12,11 +12,11 @@ import {
   getOfferPlanTables,
   getQuoteSettings,
   markCommercialQuoteShared,
+  patchMe,
   type CommercialQuoteDraft,
   type OfferPlan,
 } from '../api/client'
 import { Button } from './ui/button'
-import { Card, CardContent } from './ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 import { useAuth } from '../contexts/AuthContext'
 import { peruMobileDigits } from '../lib/mobileLine'
@@ -28,10 +28,19 @@ import {
   formatSoles,
   groupCurrentPlans,
   lineTotal,
-  splitPortabilityBenefits,
+  totalCurrentLines,
   type CurrentPlanGroup,
 } from '../lib/proposalPlans'
-import { currentPlanSentence, MAX_COMPARE_PLANS, offerSentence } from '../lib/quoteSheet'
+import {
+  discountLabel,
+  discountedLineTotal,
+  MAX_MIX_PLANS,
+  mixOfferHeader,
+  normalizeQuoteDiscountPercent,
+  QUOTE_EXTRAS_PLACEHOLDER,
+  QUOTE_HEADLINE_SUFFIX_DEFAULT,
+  quoteDiscountPercentsFromSettings,
+} from '../lib/quoteSheet'
 import QuoteSheetPreview from './QuoteSheetPreview'
 
 const NO_PLANS: OfferPlan[] = []
@@ -42,6 +51,11 @@ type Line = {
   plan?: string
   rentaBasica?: string
   rentaBasicaConDesc?: string
+}
+
+type MixItem = {
+  planId: string
+  linesInput: string
 }
 
 const labelClass = 'text-[10px] font-medium uppercase tracking-widest text-muted-foreground'
@@ -86,90 +100,42 @@ async function readApiError(err: unknown, fallback: string): Promise<string> {
   return apiError(err, fallback)
 }
 
-function BenefitRows({ benefits }: { benefits: { label: string; value: string }[] }) {
-  return (
-    <dl className="divide-y divide-border/30 border-t border-border/30">
-      {benefits.map((benefit, index) => (
-        <div
-          key={`${benefit.label}:${index}`}
-          className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm"
-        >
-          <dt className="min-w-0 break-words text-muted-foreground">{benefit.label}</dt>
-          <dd className="min-w-0 break-words text-right font-medium text-foreground">{benefit.value.trim() || '—'}</dd>
-        </div>
-      ))}
-    </dl>
-  )
+function parseLines(value: string): number {
+  const n = Number.parseInt(value, 10)
+  if (!Number.isFinite(n) || n < 1) return 1
+  return Math.min(999, n)
 }
 
-function QuotedPlanTitle({ plan, lines }: { plan: OfferPlan; lines: number }) {
-  return (
-    <div className="min-w-0 flex-1 space-y-1">
-      <p className={labelClass}>Plan cotizado</p>
-      <p className="break-words text-base font-semibold leading-snug text-foreground">{plan.name}</p>
-      <p className="text-sm tabular-nums text-foreground">
-        {formatSoles(plan.priceSoles)} por línea · {formatLineCount(lines)}
-      </p>
-    </div>
-  )
+function defaultLineCount(mobileCount: number): number {
+  return Math.min(999, Math.max(1, mobileCount || 1))
 }
 
-function QuotedPlanFacts({ plan }: { plan: OfferPlan }) {
-  const { portability, rest } = splitPortabilityBenefits(plan.benefits)
-  return (
-    <Card className="border-border/60 shadow-sm">
-      <div className="space-y-1.5 p-4">
-        <p className={labelClass}>Portabilidad</p>
-        {portability.length === 0 ? (
-          <p className="rounded-xl border border-primary/10 bg-primary/5 p-3 text-sm text-foreground">
-            Sin portabilidad en este plan
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {portability.map((benefit, index) => (
-              <div
-                key={`${benefit.label}:${index}`}
-                className="flex items-center justify-between gap-3 rounded-xl border border-primary/10 bg-primary/5 p-3"
-              >
-                <span className="min-w-0 break-words text-sm text-foreground">{benefit.label}</span>
-                <span className="shrink-0 text-right text-sm font-bold text-primary">
-                  {benefit.value.trim() || '—'}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      {rest.length > 0 ? (
-        <CardContent className="p-0 pb-1">
-          <BenefitRows benefits={rest} />
-        </CardContent>
-      ) : null}
-    </Card>
-  )
+function contractedLinesLabel(count: number): string {
+  const lines = formatLineCount(count)
+  return count === 1 ? `${lines} contratada` : `${lines} contratadas`
 }
 
 function PlanActualList({ groups }: { groups: CurrentPlanGroup[] }) {
   if (groups.length === 0) {
     return <p className="text-sm text-muted-foreground">Sin líneas móviles registradas</p>
   }
-  const twoCols = groups.length >= 5
   return (
-    <ul className={twoCols ? 'grid grid-cols-2 gap-1.5' : 'space-y-1'}>
+    <ul className="max-h-[13rem] overflow-y-auto overscroll-contain">
       {groups.map((group) => {
         const renta = formatCurrentPlanRenta(group)
         const name = group.plan || '—'
-        const label = renta ? `${name} · ${renta}` : name
         return (
           <li
             key={currentPlanGroupKey(group)}
-            className="flex min-w-0 items-center justify-between gap-1.5 rounded-lg border border-border/50 bg-card px-2 py-1 text-xs shadow-sm"
+            className="flex items-start justify-between gap-3 border-b border-stone-200/80 py-1.5 last:border-b-0"
           >
-            <span className="min-w-0 truncate font-medium text-foreground" title={label}>
+            <span className="min-w-0 flex-1 break-words text-xs leading-snug font-medium text-foreground">
               {name}
               {renta ? <span className="font-normal text-muted-foreground"> · {renta}</span> : null}
             </span>
-            <span className="shrink-0 tabular-nums text-muted-foreground">{formatLineCount(group.count)}</span>
+            <span className="shrink-0 text-right text-xs tabular-nums text-foreground">
+              {formatLineCount(group.count)}
+            </span>
           </li>
         )
       })}
@@ -202,7 +168,7 @@ export default function ProposalPanel({
   onClose: () => void
   onQuoteRegistered?: () => void
 }) {
-  const { user } = useAuth()
+  const { user, updateUser } = useAuth()
   const qc = useQueryClient()
   const { data: tables = [], isLoading, isError } = useQuery({
     queryKey: ['offer-plan-tables'],
@@ -214,16 +180,20 @@ export default function ProposalPanel({
   })
   const shareEnabled = quoteSettings?.shareEnabled === true
   const settingsSettled = settingsReady || settingsError
+  const allowedDiscounts = quoteDiscountPercentsFromSettings(quoteSettings?.discountPercents)
   const [tableId, setTableId] = useState('')
-  const [planId, setPlanId] = useState('')
-  const [compareIds, setCompareIds] = useState<string[]>([])
-  const [compareNotice, setCompareNotice] = useState('')
-  const [linesInput, setLinesInput] = useState('1')
-  const [greeting, setGreeting] = useState('')
-  const [farewell, setFarewell] = useState('')
-  const [addressee, setAddressee] = useState(() => contactName.trim())
-  const [senderName, setSenderName] = useState('')
+  const [items, setItems] = useState<MixItem[]>([])
+  const [discountPercent, setDiscountPercent] = useState(0)
+  const [mixNotice, setMixNotice] = useState('')
+  const [extras, setExtras] = useState('')
+  const [headlineSuffix, setHeadlineSuffix] = useState(QUOTE_HEADLINE_SUFFIX_DEFAULT)
   const [seededFor, setSeededFor] = useState('')
+  const [phoneModalOpen, setPhoneModalOpen] = useState(false)
+  const [phoneDraft, setPhoneDraft] = useState('')
+  const [phoneError, setPhoneError] = useState('')
+  const [savingPhone, setSavingPhone] = useState(false)
+  const [phoneSkipped, setPhoneSkipped] = useState(false)
+  const pendingAction = useRef<'sheet' | 'preview' | 'register' | null>(null)
   const [share, setShare] = useState<{ key: string; id: string; url: string } | null>(null)
   const [shareError, setShareError] = useState('')
   const [downloading, setDownloading] = useState(false)
@@ -242,10 +212,13 @@ export default function ProposalPanel({
   const escapeMenuRef = useRef(false)
   const sheetOpenRef = useRef(false)
   const sheetWideRef = useRef(false)
+  const phoneModalOpenRef = useRef(false)
   const onCloseRef = useRef(onClose)
+  const tableSeed = useRef('')
   onRegisteredRef.current = onQuoteRegistered
   sheetOpenRef.current = sheetOpen
   sheetWideRef.current = sheetWide
+  phoneModalOpenRef.current = phoneModalOpen
   onCloseRef.current = onClose
 
   function dismissTop() {
@@ -254,6 +227,11 @@ export default function ProposalPanel({
     window.setTimeout(() => {
       escapeLock.current = false
     }, 0)
+    if (phoneModalOpenRef.current) {
+      setPhoneModalOpen(false)
+      pendingAction.current = null
+      return
+    }
     if (sheetWideRef.current) {
       setSheetWide(false)
       return
@@ -308,17 +286,20 @@ export default function ProposalPanel({
 
   useEffect(() => {
     if (!quoteSettings || seededFor === companyId) return
-    setGreeting(quoteSettings.greeting ?? '')
-    setFarewell(quoteSettings.farewell ?? '')
-    setAddressee(contactName.trim())
-    setSenderName(user?.name?.trim() ?? '')
+    setExtras('')
+    setHeadlineSuffix(QUOTE_HEADLINE_SUFFIX_DEFAULT)
+    setDiscountPercent(0)
+    setPhoneSkipped(false)
     setSeededFor(companyId)
-  }, [quoteSettings, companyId, seededFor, contactName, user?.name])
+  }, [quoteSettings, companyId, seededFor])
 
+  const allowedDiscountKey = allowedDiscounts.join(',')
   useEffect(() => {
-    if (seededFor !== companyId) return
-    setSenderName((current) => current || user?.name?.trim() || '')
-  }, [user?.name, seededFor, companyId])
+    const allowed = allowedDiscountKey
+      ? allowedDiscountKey.split(',').map((item) => Number(item))
+      : []
+    setDiscountPercent((current) => normalizeQuoteDiscountPercent(current, allowed))
+  }, [allowedDiscountKey])
 
   useEffect(() => {
     const principal = tables.find((table) => table.isPrincipal) ?? tables[0]
@@ -333,78 +314,104 @@ export default function ProposalPanel({
   const plans = table?.plans ?? NO_PLANS
 
   useEffect(() => {
-    if (!table) return
-    if (!table.plans.some((plan) => plan.id === planId)) {
-      const next = table.plans[0]?.id ?? ''
-      setPlanId(next)
-      if (next) setCompareIds((current) => current.filter((id) => id !== next))
+    if (!table) {
+      if (!tables.length) {
+        setItems([])
+        tableSeed.current = ''
+      }
+      return
     }
-  }, [table, planId])
+    const seedLines = String(defaultLineCount(mobileLines.length))
+    if (tableSeed.current !== table.id) {
+      tableSeed.current = table.id
+      const first = table.plans[0]
+      setItems(first ? [{ planId: first.id, linesInput: seedLines }] : [])
+      setMixNotice('')
+      return
+    }
+    const allowed = new Set(table.plans.map((plan) => plan.id))
+    setItems((current) => {
+      const next = current.filter((item) => allowed.has(item.planId))
+      if (next.length === current.length) return current
+      if (next.length === 0) {
+        const first = table.plans[0]
+        return first ? [{ planId: first.id, linesInput: seedLines }] : []
+      }
+      return next
+    })
+  }, [table, tables.length, mobileLines.length])
 
-  function selectQuotedPlan(nextId: string) {
-    setPlanId(nextId)
-    setCompareNotice('')
-    setCompareIds((current) => current.filter((id) => id !== nextId))
-  }
+  const mixRows = useMemo(() => {
+    const byId = new Map(items.map((item) => [item.planId, parseLines(item.linesInput)]))
+    return plans
+      .filter((plan) => byId.has(plan.id))
+      .map((plan) => {
+        const lines = byId.get(plan.id) ?? 1
+        return {
+          id: plan.id,
+          name: plan.name,
+          lines,
+          priceSoles: plan.priceSoles,
+          subtotal: lineTotal(plan.priceSoles, lines),
+          benefits: plan.benefits,
+          colors: plan.colors,
+        }
+      })
+  }, [plans, items])
 
-  const selected = plans.find((plan) => plan.id === planId) ?? null
+  const hasOffer = mixRows.length > 0
+  const listTotal = mixRows.reduce((sum, row) => sum + row.subtotal, 0)
+  const total = mixRows.reduce(
+    (sum, row) => sum + discountedLineTotal(row.priceSoles, row.lines, discountPercent),
+    0,
+  )
+  const totalLines = mixRows.reduce((sum, row) => sum + row.lines, 0)
 
   useEffect(() => {
-    if (selected) return
+    if (hasOffer) return
     setSheetOpen(false)
     setSheetWide(false)
-  }, [selected])
-  const comparePlanIds = useMemo(() => {
-    const allowed = new Set(plans.map((plan) => plan.id))
-    return compareIds.filter((id) => id !== planId && allowed.has(id)).slice(0, MAX_COMPARE_PLANS)
-  }, [compareIds, plans, planId])
-
-  const lines = (() => {
-    const n = Number.parseInt(linesInput, 10)
-    if (!Number.isFinite(n) || n < 1) return 1
-    return Math.min(999, n)
-  })()
+  }, [hasOffer])
 
   const groups = useMemo(() => groupCurrentPlans(mobileLines), [mobileLines])
   const currentKey = groups
     .map((group) => `${group.plan}\u0001${group.rentaBasica}\u0001${group.rentaConDesc}\u0001${group.count}`)
     .join('\u0002')
+  const mixKey = mixRows.map((row) => `${row.id}:${row.lines}`).join('|')
 
   const draft = useMemo<CommercialQuoteDraft | null>(() => {
-    if (!tableId || !planId) return null
+    if (!tableId || mixRows.length === 0) return null
     return {
       tableId,
-      planId,
-      comparePlanIds,
-      lines,
+      items: mixRows.map((row) => ({ planId: row.id, lines: row.lines })),
       companyId,
       companyName: razonSocial.trim(),
-      contactName: addressee.trim(),
+      contactName: contactName.trim(),
       ruc: ruc.trim(),
       phone: phone.trim(),
       email: email.trim(),
       currentPlans: groups,
-      greeting,
-      farewell,
-      senderName: senderName.trim(),
+      extras,
+      headlineSuffix,
+      senderName: user?.name?.trim() ?? '',
+      discountPercent,
     }
-    // currentKey is the contents of groups, so a fresh array with the same lines does not create another PDF.
+    // currentKey / mixKey are the contents of groups and mixRows.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     tableId,
-    planId,
-    comparePlanIds,
-    lines,
+    mixKey,
     companyId,
     razonSocial,
-    addressee,
+    contactName,
     ruc,
     phone,
     email,
     currentKey,
-    greeting,
-    farewell,
-    senderName,
+    extras,
+    headlineSuffix,
+    user?.name,
+    discountPercent,
   ])
 
   const draftKey = draft ? JSON.stringify(draft) : ''
@@ -439,7 +446,6 @@ export default function ProposalPanel({
 
   const ready = share && share.key === draftKey ? share : null
   const shareText = shareEnabled && ready ? buildProposalShareText(contactName, ready.url) : ''
-  const total = selected ? lineTotal(selected.priceSoles, lines) : 0
   const mobile = peruMobileDigits(phone)
   const mail = email.trim()
   const waHref =
@@ -470,36 +476,40 @@ export default function ProposalPanel({
   const busy = downloading || previewing
   const canPreview = Boolean(draft) && !busy
   const canRegister = Boolean(draft) && settingsSettled && !busy && !(shareEnabled && !ready)
-  const canOpenSheet = Boolean(selected)
+  const canOpenSheet = hasOffer
 
-  const previewRows = useMemo(() => {
-    if (!selected) return []
-    const chosen = new Set([selected.id, ...comparePlanIds])
-    return plans
-      .filter((plan) => chosen.has(plan.id))
-      .slice()
-      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'es'))
-      .map((plan) => ({
-        id: plan.id,
-        name: plan.name,
-        proposed: plan.id === selected.id,
-        benefits: plan.benefits,
-        colors: plan.colors,
-      }))
-  }, [plans, selected, comparePlanIds])
+  const previewRows = mixRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    lines: row.lines,
+    priceSoles: row.priceSoles,
+    proposed: false,
+    benefits: row.benefits,
+    colors: row.colors,
+  }))
 
-  function toggleCompare(id: string, checked: boolean) {
+  function togglePlan(id: string, checked: boolean) {
     if (!checked) {
-      setCompareNotice('')
-      setCompareIds((current) => current.filter((item) => item !== id))
+      setMixNotice('')
+      setItems((current) => current.filter((item) => item.planId !== id))
       return
     }
-    if (comparePlanIds.length >= MAX_COMPARE_PLANS && !comparePlanIds.includes(id)) {
-      setCompareNotice('Puedes comparar hasta 3 planes.')
+    if (items.length >= MAX_MIX_PLANS && !items.some((item) => item.planId === id)) {
+      setMixNotice('Puedes incluir hasta 8 planes en la oferta.')
       return
     }
-    setCompareNotice('')
-    setCompareIds((current) => (current.includes(id) ? current : [...current, id]))
+    setMixNotice('')
+    setItems((current) =>
+      current.some((item) => item.planId === id)
+        ? current
+        : [...current, { planId: id, linesInput: '1' }],
+    )
+  }
+
+  function setItemLines(planId: string, value: string) {
+    setItems((current) =>
+      current.map((item) => (item.planId === planId ? { ...item, linesInput: value } : item)),
+    )
   }
 
   async function refreshCompanyQuotes() {
@@ -552,20 +562,72 @@ export default function ProposalPanel({
     }
   }
 
+  function runPendingQuoteAction(action: 'sheet' | 'preview' | 'register') {
+    if (action === 'sheet') {
+      setSheetOpen(true)
+      return
+    }
+    if (action === 'preview') {
+      void onPreview()
+      return
+    }
+    void onDownload()
+  }
+
+  function withPhoneGate(action: 'sheet' | 'preview' | 'register') {
+    if (user?.phone?.trim() || phoneSkipped) {
+      runPendingQuoteAction(action)
+      return
+    }
+    pendingAction.current = action
+    setPhoneDraft('')
+    setPhoneError('')
+    setPhoneModalOpen(true)
+  }
+
+  async function savePhoneAndContinue() {
+    const digits = peruMobileDigits(phoneDraft)
+    if (!digits) {
+      setPhoneError('Ingresa un celular de Perú (9 dígitos).')
+      return
+    }
+    setSavingPhone(true)
+    try {
+      const next = await patchMe({ phone: digits })
+      updateUser({ phone: next.phone ?? digits })
+      setPhoneModalOpen(false)
+      const action = pendingAction.current
+      pendingAction.current = null
+      if (action) runPendingQuoteAction(action)
+    } catch (err: unknown) {
+      toast.error(apiError(err, 'No se pudo guardar el celular'))
+    } finally {
+      setSavingPhone(false)
+    }
+  }
+
+  function continueWithoutPhone() {
+    setPhoneSkipped(true)
+    setPhoneModalOpen(false)
+    const action = pendingAction.current
+    pendingAction.current = null
+    if (action) runPendingQuoteAction(action)
+  }
+
   function downloadActions() {
     return (
       <>
         <Button
           type="button"
           variant="outline"
-          onClick={() => void onPreview()}
+          onClick={() => withPhoneGate('preview')}
           disabled={!canPreview}
           className={outlineActionClass}
         >
           <Download />
           Descargar prueba
         </Button>
-        <Button type="button" onClick={() => void onDownload()} disabled={!canRegister} className={registerActionClass}>
+        <Button type="button" onClick={() => withPhoneGate('register')} disabled={!canRegister} className={registerActionClass}>
           <Download />
           Descargar y registrar
         </Button>
@@ -574,23 +636,19 @@ export default function ProposalPanel({
   }
 
   function renderSheet(size: 'panel' | 'wide') {
-    if (!selected) return null
+    if (!hasOffer) return null
     return (
       <QuoteSheetPreview
         size={size}
-        tableName={table?.name ?? ''}
+        companyName={razonSocial}
+        ruc={ruc}
         rows={previewRows}
-        currentLine={currentPlanSentence(groups)}
-        offerLine={offerSentence(selected.name, lines, total)}
-        greeting={greeting}
-        farewell={farewell}
-        addressee={addressee}
-        senderName={senderName}
+        discountPercent={discountPercent}
+        extras={extras}
+        headlineSuffix={headlineSuffix}
+        senderName={user?.name?.trim() ?? ''}
         senderPhone={senderPhone}
-        onGreeting={setGreeting}
-        onFarewell={setFarewell}
-        onAddressee={setAddressee}
-        onSenderName={setSenderName}
+        onExtras={setExtras}
       />
     )
   }
@@ -629,7 +687,21 @@ export default function ProposalPanel({
           </p>
         </div>
         <div className="flex min-w-0 items-start gap-3 px-4 py-3">
-          {selected ? <QuotedPlanTitle plan={selected} lines={lines} /> : <div className="min-w-0 flex-1" />}
+          <div className="min-w-0 flex-1 space-y-0.5">
+            {hasOffer ? (
+              <>
+                <p className="text-sm font-semibold leading-snug text-foreground">
+                  {mixOfferHeader(mixRows.length, totalLines)}
+                </p>
+                <p className="text-2xl font-bold tabular-nums tracking-tight text-primary">{formatSoles(total)}</p>
+                {discountPercent > 0 ? (
+                  <p className="text-xs tabular-nums text-muted-foreground">lista {formatSoles(listTotal)}</p>
+                ) : null}
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">Elige planes para armar la oferta.</p>
+            )}
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -652,13 +724,19 @@ export default function ProposalPanel({
               {contactLine ? <p className={`text-xs ${mutedClass}`}>{contactLine}</p> : null}
             </div>
             <div className="space-y-1.5">
-              <p className={labelClass}>Plan actual</p>
+              <div className="flex items-baseline justify-between gap-3">
+                <p className={labelClass}>Plan actual</p>
+                {groups.length > 0 ? (
+                  <p className="text-xs tabular-nums text-muted-foreground">
+                    {contractedLinesLabel(totalCurrentLines(groups))}
+                  </p>
+                ) : null}
+              </div>
               <PlanActualList groups={groups} />
             </div>
           </div>
 
-          <div className="mt-3 flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="shrink-0 space-y-3">
+          <div className="mt-3 min-w-0 space-y-3">
             {isLoading ? (
               <p className={`text-sm ${mutedClass}`}>Cargando planes…</p>
             ) : isError ? (
@@ -677,133 +755,144 @@ export default function ProposalPanel({
                   'No hay planes de propuesta. Pide a un administrador que active una tabla.'
                 )}
               </p>
-            ) : !selected ? (
-              table && table.plans.length === 0 ? (
-                <p className="text-sm text-amber-800">Esta tabla no tiene planes.</p>
-              ) : (
-                <p className={`text-sm ${mutedClass}`}>Cargando planes…</p>
-              )
+            ) : table && table.plans.length === 0 ? (
+              <p className="text-sm text-amber-800">Esta tabla no tiene planes.</p>
             ) : (
-              <>
-                <div className="space-y-1">
-                  <label className={labelClass} htmlFor="proposal-table">
-                    Tabla de planes
-                  </label>
-                  <Select
-                    value={table?.id ?? ''}
-                    onValueChange={setTableId}
-                    onOpenChange={(open) => onMenuOpenChange('table', open)}
-                  >
-                    <SelectTrigger id="proposal-table" className={selectTriggerClass}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent position="popper" className="z-[70]">
-                      {tables.map((item) => (
-                        <SelectItem key={item.id} value={item.id}>
-                          {item.name}
-                          {item.isPrincipal ? ' · Principal' : ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className={labelClass} htmlFor="proposal-plan">
-                    Plan
-                  </label>
-                  <Select
-                    value={selected.id}
-                    onValueChange={selectQuotedPlan}
-                    onOpenChange={(open) => onMenuOpenChange('plan', open)}
-                  >
-                    <SelectTrigger id="proposal-plan" className={selectTriggerClass}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent position="popper" className="z-[70]">
-                      {plans.map((plan) => (
-                        <SelectItem key={plan.id} value={plan.id}>
-                          {plan.name} · {formatSoles(plan.priceSoles)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </>
-            )}
-            </div>
-
-            <div className="mt-auto shrink-0">
-              <div className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-3 rounded-xl border border-border/60 bg-muted/50 px-3 py-2">
-                <div className="space-y-1">
-                  <label className={labelClass} htmlFor="proposal-lines">
-                    Líneas
-                  </label>
-                  <input
-                    id="proposal-lines"
-                    type="number"
-                    min={1}
-                    max={999}
-                    inputMode="numeric"
-                    className={`${inputClass} tabular-nums`}
-                    value={linesInput}
-                    onChange={(e) => setLinesInput(e.target.value)}
-                    onBlur={() => setLinesInput(String(lines))}
-                  />
-                </div>
-                <div className="min-w-0 text-right">
-                  <p className={labelClass}>Total mensual</p>
-                  <p className="text-2xl font-bold tabular-nums tracking-tight text-primary">
-                    {selected ? formatSoles(total) : '—'}
-                  </p>
-                </div>
+              <div className="space-y-1">
+                <label className={labelClass} htmlFor="proposal-table">
+                  Tabla de planes
+                </label>
+                <Select
+                  value={table?.id ?? ''}
+                  onValueChange={setTableId}
+                  onOpenChange={(open) => onMenuOpenChange('table', open)}
+                >
+                  <SelectTrigger id="proposal-table" className={selectTriggerClass}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper" className="z-[70]">
+                    {tables.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.name}
+                        {item.isPrincipal ? ' · Principal' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-            </div>
+            )}
           </div>
         </div>
 
         <div className="min-h-0 min-w-0 space-y-4 overflow-y-auto p-4">
-          {selected ? (
-            <QuotedPlanFacts key={selected.id} plan={selected} />
-          ) : (
-            <p className={`text-sm ${mutedClass}`}>Elige un plan para ver la oferta.</p>
-          )}
-
           <div className="space-y-1.5">
-            <p className={labelClass}>Comparar planes en PDF</p>
-            <p className={`text-xs ${mutedClass}`}>Hasta 3 planes de esta tabla, en el orden del catálogo.</p>
-            {compareNotice ? <p className="text-xs text-amber-800">{compareNotice}</p> : null}
-            {!selected ? (
-              <p className={`text-xs ${mutedClass}`}>Elige un plan para comparar.</p>
-            ) : plans.filter((plan) => plan.id !== selected.id).length === 0 ? (
-              <p className={`text-xs ${mutedClass}`}>Esta tabla no tiene otros planes para comparar.</p>
+            <p className={labelClass}>Oferta</p>
+            <p className={`text-xs ${mutedClass}`}>Hasta 8 planes de esta tabla, cada uno con sus líneas.</p>
+            <div className="space-y-1">
+              <label className={labelClass} htmlFor="proposal-discount">
+                Descuento
+              </label>
+              <Select
+                value={String(discountPercent)}
+                onValueChange={(value) => setDiscountPercent(Number(value) || 0)}
+                onOpenChange={(open) => onMenuOpenChange('discount', open)}
+              >
+                <SelectTrigger id="proposal-discount" className={selectTriggerClass}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent position="popper" className="z-[70]">
+                  <SelectItem value="0">{discountLabel(0)}</SelectItem>
+                  {allowedDiscounts.map((pct) => (
+                    <SelectItem key={pct} value={String(pct)}>
+                      {discountLabel(pct)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {mixNotice ? <p className="text-xs text-amber-800">{mixNotice}</p> : null}
+            {plans.length === 0 ? (
+              <p className={`text-xs ${mutedClass}`}>Elige una tabla para armar la oferta.</p>
             ) : (
-              <ul className="max-h-64 space-y-0.5 overflow-y-auto overscroll-contain rounded-xl border border-border/40 bg-muted/20 p-2">
-                {plans
-                  .filter((plan) => plan.id !== selected.id)
-                  .map((plan) => {
-                    const checked = comparePlanIds.includes(plan.id)
-                    return (
-                      <li key={plan.id}>
-                        <label
-                          className={`flex items-start gap-2 rounded-lg p-1.5 text-sm text-foreground transition-colors hover:bg-muted/50 ${checked ? 'bg-primary/5' : ''}`}
-                        >
+              <ul className="space-y-0.5 overflow-y-auto overscroll-contain rounded-xl border border-border/40 bg-muted/20 p-2">
+                {plans.map((plan) => {
+                  const item = items.find((row) => row.planId === plan.id)
+                  const checked = Boolean(item)
+                  const lines = item ? parseLines(item.linesInput) : 0
+                  const subtotal = checked ? lineTotal(plan.priceSoles, lines) : 0
+                  return (
+                    <li
+                      key={plan.id}
+                      className={`rounded-lg p-1.5 text-sm text-foreground transition-colors ${checked ? 'bg-primary/5' : 'hover:bg-muted/50'}`}
+                    >
+                      <label className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 accent-primary"
+                          checked={checked}
+                          onChange={(e) => togglePlan(plan.id, e.target.checked)}
+                        />
+                        <span className="min-w-0 leading-snug">
+                          {plan.name}
+                          <span className="font-normal text-muted-foreground"> · {formatSoles(plan.priceSoles)}</span>
+                        </span>
+                      </label>
+                      {item ? (
+                        <div className="mt-1.5 ml-6 flex items-center gap-2">
+                          <label className={`${labelClass} shrink-0`} htmlFor={`proposal-lines-${plan.id}`}>
+                            Líneas
+                          </label>
                           <input
-                            type="checkbox"
-                            className="mt-0.5 accent-primary"
-                            checked={checked}
-                            onChange={(e) => toggleCompare(plan.id, e.target.checked)}
+                            id={`proposal-lines-${plan.id}`}
+                            type="number"
+                            min={1}
+                            max={999}
+                            inputMode="numeric"
+                            className={`${inputClass} h-7 w-[4.5rem] px-2 tabular-nums`}
+                            value={item.linesInput}
+                            onChange={(e) => setItemLines(plan.id, e.target.value)}
+                            onBlur={() => setItemLines(plan.id, String(parseLines(item.linesInput)))}
                           />
-                          <span className="min-w-0 leading-snug">
-                            {plan.name}
-                            <span className="font-normal text-muted-foreground"> · {formatSoles(plan.priceSoles)}</span>
+                          <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
+                            {formatSoles(subtotal)}
                           </span>
-                        </label>
-                      </li>
-                    )
-                  })}
+                        </div>
+                      ) : null}
+                    </li>
+                  )
+                })}
               </ul>
             )}
+            <div className="space-y-1 pt-2">
+              <label className={labelClass} htmlFor="proposal-headline-suffix">
+                Subtítulo
+              </label>
+              <textarea
+                id="proposal-headline-suffix"
+                rows={2}
+                value={headlineSuffix}
+                onChange={(e) => setHeadlineSuffix(e.target.value)}
+                placeholder={QUOTE_HEADLINE_SUFFIX_DEFAULT}
+                className={`${inputClass} h-auto min-h-[3.5rem] resize-y py-2`}
+              />
+              <p className={`text-xs ${mutedClass}`}>
+                N sale de la oferta. Vacío: solo se imprime N líneas móviles.
+              </p>
+            </div>
+            <div className="space-y-1 pt-2">
+              <label className={labelClass} htmlFor="proposal-extras">
+                Beneficios adicionales
+              </label>
+              <textarea
+                id="proposal-extras"
+                rows={2}
+                value={extras}
+                onChange={(e) => setExtras(e.target.value)}
+                placeholder={QUOTE_EXTRAS_PLACEHOLDER}
+                className={`${inputClass} h-auto min-h-[3.5rem] resize-y py-2`}
+              />
+              <p className={`text-xs ${mutedClass}`}>Vacío: no se imprime este bloque.</p>
+            </div>
           </div>
         </div>
       </div>
@@ -884,7 +973,7 @@ export default function ProposalPanel({
             <Button
               type="button"
               variant="outline"
-              onClick={() => setSheetOpen(true)}
+              onClick={() => withPhoneGate('sheet')}
               disabled={!canOpenSheet}
               className={outlineActionClass}
             >
@@ -896,7 +985,7 @@ export default function ProposalPanel({
         </div>
       </div>
 
-      {sheetOpen && selected ? (
+      {sheetOpen && hasOffer ? (
         <div className="absolute inset-0 z-30 flex min-h-0 flex-col bg-slate-100" role="region" aria-label="Vista previa">
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-3 py-2">
             <button
@@ -920,7 +1009,7 @@ export default function ProposalPanel({
         </div>
       ) : null}
 
-      {sheetWide && selected
+      {sheetWide && hasOffer
         ? createPortal(
             <div
               className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40"
@@ -949,6 +1038,53 @@ export default function ProposalPanel({
                 </div>
                 <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-slate-100 p-4">{renderSheet('wide')}</div>
                 <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-slate-200 bg-white px-4 py-3">{downloadActions()}</div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {phoneModalOpen
+        ? createPortal(
+            <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40" onMouseDown={() => dismissTop()}>
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="quote-phone-title"
+                className="w-[min(28rem,calc(100vw-2rem))] rounded-xl border border-border/60 bg-background p-5 text-foreground shadow-xl"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <h2 id="quote-phone-title" className="text-base font-semibold">
+                  ¿Agregar tu celular?
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Se muestra en el pie como CEL. Si no, la propuesta se genera sin celular.
+                </p>
+                <label className={`${labelClass} mt-4 block`} htmlFor="quote-agent-phone">
+                  Celular
+                </label>
+                <input
+                  id="quote-agent-phone"
+                  type="tel"
+                  inputMode="numeric"
+                  autoComplete="tel"
+                  value={phoneDraft}
+                  onChange={(e) => {
+                    setPhoneDraft(e.target.value)
+                    setPhoneError('')
+                  }}
+                  placeholder="9 dígitos"
+                  className={`${inputClass} mt-1`}
+                />
+                {phoneError ? <p className="mt-1 text-xs text-red-700">{phoneError}</p> : null}
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                  <Button type="button" variant="outline" onClick={continueWithoutPhone} disabled={savingPhone}>
+                    Continuar sin celular
+                  </Button>
+                  <Button type="button" onClick={() => void savePhoneAndContinue()} disabled={savingPhone}>
+                    {savingPhone ? 'Guardando…' : 'Guardar y continuar'}
+                  </Button>
+                </div>
               </div>
             </div>,
             document.body,
