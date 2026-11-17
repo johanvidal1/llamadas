@@ -4,6 +4,7 @@ import {
   discountedUnit,
   displayBenefit,
   formatQuoteCel,
+  mixHasRoaming,
   mixOfferHeader,
   mixOfferSummary,
   mobileHeadline,
@@ -70,5 +71,29 @@ assert.equal(quotePlanAppsShort([{ label: 'Apps incluidas', value: 'Ilimitadas' 
 assert.equal(displayBenefit(''), '—')
 assert.equal(quotePlanInternet([]), '')
 assert.equal(formatQuoteCel('999111222'), '999 111 222')
+assert.equal(
+  mixHasRoaming([
+    {
+      benefits: [
+        { label: 'Cobertura internacional min', value: '300 min' },
+        { label: 'Cobertura internacional internet', value: '' },
+        { label: 'Cobertura internacional SMS', value: '  ' },
+      ],
+    },
+  ]),
+  true
+)
+assert.equal(
+  mixHasRoaming([
+    {
+      benefits: [
+        { label: 'Cobertura internacional min', value: '' },
+        { label: 'Cobertura internacional internet', value: '   ' },
+        { label: 'Apps incluidas', value: 'WhatsApp' },
+      ],
+    },
+  ]),
+  false
+)
 
 console.log('\nquote sheet mix helpers ok')

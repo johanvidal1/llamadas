@@ -10,7 +10,9 @@ VALUES (
     "**Mis clientes**: agentes y admin ven **Generar propuesta**; arma varios planes con líneas propias, descuento 25/50, PDF Claro Empresas.",
     "En **Importar datos**, el admin activa 25% y 50% en **Formato Cotización PDF**.",
     "En **Importar datos**, **Planes de propuesta** ya permite subir el Excel del catálogo (antes fallaba).",
-    "El PDF cierra con ejecutivo y celular del perfil; **Beneficios adicionales** se editan o se quitan."
+    "El PDF cierra con ejecutivo y celular del perfil; **Beneficios adicionales** se editan o se quitan.",
+    "El PDF añade el mapa de **Zonas de roaming internacional** (hoja 2 si no cabe; solo si el mix tiene roaming).",
+    "Logo **Claro empresas** más nítido, sin el fondo sucio en el encabezado."
   ]$json$::jsonb,
   CURRENT_TIMESTAMP,
   CURRENT_TIMESTAMP

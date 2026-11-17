@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import {
+  bundledClaroLogoPath,
+  bundledRoamingZonesPath,
   decodeHeadlineSuffixSnapshot,
   encodeHeadlineSuffixSnapshot,
   formatMixSummaryLines,
@@ -17,6 +19,7 @@ import {
   type QuotePdfInput,
 } from './quotePdf'
 import {
+  mixHasRoaming,
   normalizeQuoteDiscountPercent,
   quoteDiscountPercentsFromTenant,
   quotePlanApps,
@@ -46,19 +49,22 @@ function mediaBox(pdf: Buffer): { width: number; height: number } {
 /** pdfkit writes WinAnsi text as hex or literal strings, often split on the first glyph. */
 function pdfText(pdf: Buffer): string {
   const raw = pdf.toString('latin1')
-  const streams = [...raw.matchAll(/stream\r?\n([\s\S]*?)\nendstream/g)]
-    .map((match) => match[1])
-    .filter((stream) => /Tj|TJ/.test(stream))
-  const source = streams.join('\n') || raw
+  // Slice by /Length so PNG image bytes cannot fake `endstream` and swallow text.
   const parts: string[] = []
-  const re = /<([0-9A-Fa-f]{2,})>|\((?:\\\)|[^)])*\)/g
-  let match: RegExpExecArray | null
-  while ((match = re.exec(source))) {
-    if (match[1]) {
-      if (match[1].length % 2 === 0) parts.push(Buffer.from(match[1], 'hex').toString('latin1'))
-      continue
+  const headerRe = /<<\r?\n\/Length (\d+)\r?\n>>\r?\nstream\r?\n/g
+  let header: RegExpExecArray | null
+  const tokenRe = /<([0-9A-Fa-f]{2,})>|\((?:\\\)|[^)])*\)/g
+  while ((header = headerRe.exec(raw))) {
+    const stream = raw.slice(header.index + header[0].length, header.index + header[0].length + Number(header[1]))
+    tokenRe.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = tokenRe.exec(stream))) {
+      if (match[1]) {
+        if (match[1].length % 2 === 0) parts.push(Buffer.from(match[1], 'hex').toString('latin1'))
+        continue
+      }
+      parts.push(match[0].slice(1, -1).replace(/\\(.)/g, '$1'))
     }
-    parts.push(match[0].slice(1, -1).replace(/\\(.)/g, '$1'))
   }
   return parts.join('')
 }
@@ -115,6 +121,11 @@ async function main() {
   assert.equal(quotePlanApps(CATALOG_BENEFITS).includes('Waze'), false)
   assert.equal(quotePlanAppsShort(CATALOG_BENEFITS), 'Ilimitadas')
   assert.equal(quotePlanAppsShort([{ label: 'Apps incluidas', value: 'Ilimitadas' }]), 'Ilimitadas')
+  assert.equal(mixHasRoaming([{ benefits: CATALOG_BENEFITS }]), true)
+  assert.equal(
+    mixHasRoaming([{ benefits: CATALOG_BENEFITS.filter((row) => !row.label.startsWith('Cobertura')) }]),
+    false
+  )
   assert.equal(mobileHeadline(1), `1 línea móvil ${QUOTE_HEADLINE_SUFFIX_DEFAULT}`)
   assert.equal(mobileHeadline(6), `6 líneas móviles ${QUOTE_HEADLINE_SUFFIX_DEFAULT}`)
   assert.equal(mobileHeadline(6, ''), '6 líneas móviles.')
@@ -143,7 +154,8 @@ async function main() {
   assert.equal(pdf.subarray(0, 5).toString(), '%PDF-')
   const box = mediaBox(pdf)
   assert.ok(box.height > box.width, 'page stays portrait')
-  assert.equal(pageCount(pdf), 1)
+  assert.ok(pageCount(pdf) >= 1)
+  assert.ok(pageCount(pdf) <= 2)
   assert.ok(text.includes('PROPUESTA COMERCIAL') || text.includes('PROPUESTA'))
   assert.ok(text.includes('PORTABILIDAD'))
   assert.equal(text.includes('OPTICK'), false)
@@ -347,6 +359,57 @@ async function main() {
   const customText = pdfText(customHeadline)
   assert.ok(customText.includes('cobertura') || customText.includes('nacional'))
   assert.equal(customText.includes('corporativas'), false)
+
+  section('bundled Claro logo and roaming zones graphic exist')
+  const logoPath = bundledClaroLogoPath()
+  const zonesPath = bundledRoamingZonesPath()
+  assert.ok(logoPath, 'bundled Claro logo path')
+  assert.ok(zonesPath, 'bundled roaming zones path')
+  assert.equal(existsSync(logoPath as string), true)
+  assert.equal(existsSync(zonesPath as string), true)
+  assert.ok((logoPath as string).endsWith('claro-empresas-logo.png'))
+  assert.ok((zonesPath as string).endsWith('claro-roaming-zonas.png'))
+
+  section('zones map omitted without roaming')
+  const noRoamingBenefits = CATALOG_BENEFITS.filter((row) => !row.label.startsWith('Cobertura'))
+  const noRoam = await renderQuotePdf(sample({ benefits: noRoamingBenefits }), { compress: false })
+  const noRoamText = pdfText(noRoam)
+  assert.equal(pageCount(noRoam), 1)
+  assert.equal(noRoamText.includes('Zonas de roaming'), false)
+  assert.equal(noRoamText.includes('Zonas'), false)
+  assert.ok(noRoamText.includes('Roaming'))
+  assert.ok(noRoamText.includes('Aplicaciones') || noRoamText.includes('ilimitadas'))
+
+  section('zones map keep-together on page 2 when mix is tall')
+  const tallRows = names.map((name, index) => ({
+    name,
+    priceSoles: 29.9 + index,
+    lines: index === 0 ? 5 : 1,
+    monthlySoles: index === 0 ? quoteLineTotal(29.9, 5) : 29.9 + index,
+    proposed: index === 0,
+    colors,
+    benefits: CATALOG_BENEFITS,
+  }))
+  const tall = await renderQuotePdf(
+    sample({
+      extras: 'Asesor posventa · Nota de crédito en el tercer mes · Portabilidad asistida',
+      discountPercent: 50,
+      planRows: tallRows,
+    }),
+    { compress: false }
+  )
+  const tallText = pdfText(tall)
+  const tallPages = pageCount(tall)
+  assert.ok(tallPages >= 2, 'tall mix with zones uses a second page')
+  assert.ok(tallPages <= 3, 'zones block stays together instead of spilling extra pages')
+  assert.ok(tallText.includes('Zonas de roaming') || tallText.includes('Zonas'))
+  assert.ok(tallText.includes('Roaming'))
+  const propuestaHits = tallText.split('PROPUESTA').length - 1
+  assert.ok(propuestaHits <= 2, 'no second red header on the zones page')
+  assert.ok(tallText.includes('EJECUTIVO') || tallText.includes('COMERCIAL'))
+
+  section('sample with roaming prints the zones title')
+  assert.ok(text.includes('Zonas de roaming') || text.includes('Zonas'))
 
   section('extras print only when the agent typed them')
   const withExtras = await renderQuotePdf(

@@ -5,10 +5,12 @@ import {
   CLARO_LOGO_SRC,
   CLARO_NAVY,
   CLARO_RED,
+  CLARO_ROAMING_ZONES_SRC,
   discountedUnit,
   displayBenefit,
   formatQuoteCel,
   formatQuoteDate,
+  mixHasRoaming,
   mobileHeadline,
   quotePlanApps,
   quotePlanAppsShort,
@@ -201,6 +203,19 @@ export default function QuoteSheetPreview({
                 className={wide ? 'text-sm leading-relaxed text-slate-800' : 'text-xs leading-relaxed text-slate-800'}
               />
             </div>
+          </section>
+        ) : null}
+
+        {mixHasRoaming(rows) ? (
+          <section>
+            <h3 className={wide ? 'text-lg font-bold leading-snug text-slate-900' : 'text-sm font-bold leading-snug text-slate-900'}>
+              Zonas de roaming internacional
+            </h3>
+            <img
+              src={CLARO_ROAMING_ZONES_SRC}
+              alt="Zonas de roaming internacional: Zona Andina, América, EE.UU. y Canadá, Europa x 18 meses"
+              className="mt-2 w-full rounded-md"
+            />
           </section>
         ) : null}
       </div>

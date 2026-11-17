@@ -37,6 +37,7 @@ RUN npm ci --omit=dev \
 
 COPY --from=build /app/dist ./dist
 COPY scripts ./scripts
+COPY assets ./assets
 
 RUN mkdir -p uploads/imports \
   && chown -R node:node /app

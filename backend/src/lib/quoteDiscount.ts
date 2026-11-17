@@ -94,6 +94,14 @@ export function quotePlanRoaming(benefits: QuoteBenefit[]): { min: string; inter
   }
 }
 
+/** True when any mix plan has a non-empty catalog roaming cell (min / internet / SMS). */
+export function mixHasRoaming(rows: { benefits: QuoteBenefit[] }[]): boolean {
+  return rows.some((row) => {
+    const roam = quotePlanRoaming(row.benefits)
+    return Boolean(roam.min || roam.internet || roam.sms)
+  })
+}
+
 export function displayBenefit(value: string): string {
   return value.trim() || '—'
 }

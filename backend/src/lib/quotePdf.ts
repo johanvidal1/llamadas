@@ -4,6 +4,7 @@ import PDFDocument from 'pdfkit'
 import { inkOnFill, type OfferPlanColors } from './offerPlanWorkbook'
 import {
   displayBenefit,
+  mixHasRoaming,
   normalizeQuoteDiscountPercent,
   quoteDiscountedLineTotal,
   quoteDiscountedUnit,
@@ -94,14 +95,26 @@ const HEADER_H = 96
 const FOOTER_H = 32
 const CONTENT_W = PAGE_W - MARGIN_X * 2
 
+function firstExisting(files: string[]): string | null {
+  return files.find((file) => existsSync(file)) ?? null
+}
+
 /** Bundled Claro Empresas mark. Never fall back to an OPTICK letterhead. */
 export function bundledClaroLogoPath(): string | null {
-  const files = [
+  return firstExisting([
     path.resolve(__dirname, '../../assets/claro-empresas-logo.png'),
     path.resolve(process.cwd(), 'assets/claro-empresas-logo.png'),
     path.resolve(process.cwd(), 'backend/assets/claro-empresas-logo.png'),
-  ]
-  return files.find((file) => existsSync(file)) ?? null
+  ])
+}
+
+/** Flags infographic. Title + image stay atomic; omit the block if the file is missing. */
+export function bundledRoamingZonesPath(): string | null {
+  return firstExisting([
+    path.resolve(__dirname, '../../assets/claro-roaming-zonas.png'),
+    path.resolve(process.cwd(), 'assets/claro-roaming-zonas.png'),
+    path.resolve(process.cwd(), 'backend/assets/claro-roaming-zonas.png'),
+  ])
 }
 
 export const QUOTE_HEADLINE_SUFFIX_DEFAULT = 'corporativas con descuento por portabilidad.'
@@ -644,6 +657,59 @@ function drawExtras(doc: PdfDoc, extras: string, y: number): number {
   return doc.y
 }
 
+const ZONES_TITLE = 'Zonas de roaming internacional'
+const ZONES_TITLE_SIZE = 13
+const ZONES_TITLE_GAP = 8
+const PAGE_TOP = 24
+const PAGE_BOTTOM = PAGE_H - FOOTER_H - 16
+
+function roamingZonesMetrics(doc: PdfDoc, imagePath: string): {
+  titleH: number
+  imgW: number
+  imgH: number
+  needed: number
+} {
+  doc.font('Helvetica-Bold').fontSize(ZONES_TITLE_SIZE)
+  const titleH = doc.currentLineHeight()
+  const image = doc.openImage(imagePath)
+  const imgW = CONTENT_W
+  const imgH = image.width > 0 ? (image.height / image.width) * imgW : 0
+  return { titleH, imgW, imgH, needed: titleH + ZONES_TITLE_GAP + imgH + 8 }
+}
+
+/**
+ * Title glued to the flags graphic. Measure first; if the pair does not fit
+ * on the current page, move the entire block. Never split the map.
+ */
+function drawRoamingZones(doc: PdfDoc, y: number, imagePath: string): number {
+  const metrics = roamingZonesMetrics(doc, imagePath)
+  let imgW = metrics.imgW
+  let imgH = metrics.imgH
+  let needed = metrics.needed
+  const fullPage = PAGE_BOTTOM - PAGE_TOP
+
+  if (y + needed > PAGE_BOTTOM) {
+    doc.addPage()
+    y = PAGE_TOP
+  }
+
+  if (needed > fullPage && imgH > 0) {
+    const maxImg = Math.max(80, fullPage - metrics.titleH - ZONES_TITLE_GAP - 8)
+    const scale = maxImg / imgH
+    imgH *= scale
+    imgW *= scale
+    needed = metrics.titleH + ZONES_TITLE_GAP + imgH + 8
+  }
+
+  doc.font('Helvetica-Bold').fontSize(ZONES_TITLE_SIZE).fillColor(INK)
+  doc.text(ZONES_TITLE, MARGIN_X, y, { width: CONTENT_W, lineBreak: false })
+  const imgX = MARGIN_X + (CONTENT_W - imgW) / 2
+  const imgY = y + metrics.titleH + ZONES_TITLE_GAP
+  doc.image(imagePath, imgX, imgY, { width: imgW, height: imgH })
+  doc.y = imgY + imgH + 8
+  return doc.y
+}
+
 export function renderQuotePdf(input: QuotePdfInput, options?: { compress?: boolean }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
@@ -707,7 +773,13 @@ export function renderQuotePdf(input: QuotePdfInput, options?: { compress?: bool
     y = drawApps(doc, rows, y)
     doc.y = y
 
-    drawExtras(doc, extras, doc.y)
+    y = drawExtras(doc, extras, doc.y)
+    doc.y = y
+
+    const zonesPath = bundledRoamingZonesPath()
+    if (mixHasRoaming(rows) && zonesPath) {
+      drawRoamingZones(doc, doc.y, zonesPath)
+    }
 
     doc.end()
   })

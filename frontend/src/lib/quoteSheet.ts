@@ -13,6 +13,7 @@ const DARK_INK = '#1F232A'
 export const CLARO_RED = '#E2231A'
 export const CLARO_NAVY = '#1F232A'
 export const CLARO_LOGO_SRC = '/claro-empresas-logo.png'
+export const CLARO_ROAMING_ZONES_SRC = '/claro-roaming-zonas.png'
 export const QUOTE_EXTRAS_PLACEHOLDER = 'Asesor posventa · Nota de crédito en el tercer mes'
 export const QUOTE_HEADLINE_SUFFIX_DEFAULT = 'corporativas con descuento por portabilidad.'
 
@@ -166,6 +167,14 @@ export function quotePlanRoaming(benefits: ProposalBenefit[]): { min: string; in
     internet: benefitValue(benefits, ['Cobertura internacional internet']),
     sms: benefitValue(benefits, ['Cobertura internacional SMS']),
   }
+}
+
+/** True when any mix plan has a non-empty catalog roaming cell (min / internet / SMS). */
+export function mixHasRoaming(rows: { benefits: ProposalBenefit[] }[]): boolean {
+  return rows.some((row) => {
+    const roam = quotePlanRoaming(row.benefits)
+    return Boolean(roam.min || roam.internet || roam.sms)
+  })
 }
 
 export function displayBenefit(value: string): string {
