@@ -1,4 +1,4 @@
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import path from 'path'
 import PDFDocument from 'pdfkit'
 import { inkOnFill, type OfferPlanColors } from './offerPlanWorkbook'
@@ -663,6 +663,12 @@ const ZONES_TITLE_GAP = 8
 const PAGE_TOP = 24
 const PAGE_BOTTOM = PAGE_H - FOOTER_H - 16
 
+function pngPixelSize(file: string): { width: number; height: number } {
+  const buf = readFileSync(file)
+  if (buf.length < 24) return { width: 1, height: 1 }
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) }
+}
+
 function roamingZonesMetrics(doc: PdfDoc, imagePath: string): {
   titleH: number
   imgW: number
@@ -671,7 +677,7 @@ function roamingZonesMetrics(doc: PdfDoc, imagePath: string): {
 } {
   doc.font('Helvetica-Bold').fontSize(ZONES_TITLE_SIZE)
   const titleH = doc.currentLineHeight()
-  const image = doc.openImage(imagePath)
+  const image = pngPixelSize(imagePath)
   const imgW = CONTENT_W
   const imgH = image.width > 0 ? (image.height / image.width) * imgW : 0
   return { titleH, imgW, imgH, needed: titleH + ZONES_TITLE_GAP + imgH + 8 }
