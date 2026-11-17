@@ -8,7 +8,6 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
 import { requireTenantIdFromContext } from '../lib/tenantContext'
 import { AuthRequest, requireAdmin, requireAuth } from '../middleware/auth'
-import { requireAdminOrLocalAgentQuotes } from '../lib/quoteAgentEnabled'
 import { normalizeOfferPlanBenefits, normalizeOfferPlanColors } from '../lib/offerPlanWorkbook'
 import {
   bundledClaroLogoPath,
@@ -336,8 +335,8 @@ router.patch('/settings', requireAdmin, async (req: AuthRequest, res: Response) 
   })
 })
 
-// GET /api/quotes?companyId= — admin history; AGENT only when QUOTE_AGENT_ENABLED.
-router.get('/', requireAdminOrLocalAgentQuotes, async (req: AuthRequest, res: Response) => {
+// GET /api/quotes?companyId= — any signed-in user (admin and agent).
+router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const companyId = typeof req.query.companyId === 'string' ? req.query.companyId.trim() : ''
   if (!companyId) {
     res.status(400).json({ error: 'Falta la empresa.' })
@@ -399,7 +398,7 @@ router.post('/:id/share', requireAdmin, async (req: AuthRequest, res: Response) 
 })
 
 // GET /api/quotes/:id/pdf — rewrite the file from the snapshot, then download.
-router.get('/:id/pdf', requireAdminOrLocalAgentQuotes, async (req: AuthRequest, res: Response) => {
+router.get('/:id/pdf', requireAuth, async (req: AuthRequest, res: Response) => {
   const quote = await prisma.commercialQuote.findFirst({ where: { id: req.params.id } })
   if (!quote) {
     res.status(404).json({ error: 'Propuesta no encontrada' })
@@ -563,7 +562,7 @@ function sendQuoteError(res: Response, err: unknown) {
 }
 
 // POST /api/quotes/preview — same PDF as a real quote, streamed. No row and no stored file.
-router.post('/preview', requireAdminOrLocalAgentQuotes, async (req: AuthRequest, res: Response) => {
+router.post('/preview', requireAuth, async (req: AuthRequest, res: Response) => {
   const parsed = createSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.errors[0]?.message ?? 'Datos inválidos' })
@@ -583,7 +582,7 @@ router.post('/preview', requireAdminOrLocalAgentQuotes, async (req: AuthRequest,
 })
 
 // POST /api/quotes — snapshot the chosen rows. The PDF is regenerated on download.
-router.post('/', requireAdminOrLocalAgentQuotes, async (req: AuthRequest, res: Response) => {
+router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const parsed = createSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.errors[0]?.message ?? 'Datos inválidos' })

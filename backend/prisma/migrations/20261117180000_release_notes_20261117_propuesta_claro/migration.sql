@@ -7,7 +7,7 @@ VALUES (
   '2026-11-17',
   '17 de noviembre de 2026',
   $json$[
-    "**Mis clientes**: **Generar propuesta** (admin) arma varios planes con líneas propias, descuento 25/50, PDF Claro Empresas.",
+    "**Mis clientes**: agentes y admin ven **Generar propuesta**; arma varios planes con líneas propias, descuento 25/50, PDF Claro Empresas.",
     "En **Importar datos**, el admin activa 25% y 50% en **Formato Cotización PDF**.",
     "El PDF cierra con ejecutivo y celular del perfil; **Beneficios adicionales** se editan o se quitan."
   ]$json$::jsonb,

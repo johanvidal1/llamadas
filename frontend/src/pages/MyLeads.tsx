@@ -128,7 +128,6 @@ import {
   MAX_NO_ANSWER_ATTEMPTS,
 } from '../config/responseOptions'
 import { shouldAdvanceToPropuestaPresentada } from '../lib/quoteDisposition'
-import { quoteAgentEnabled } from '../lib/quoteAgentEnabled'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1008,7 +1007,6 @@ export default function MyLeads() {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const { user, isAdmin, updateUser: patchAuthUser } = useAuth()
-  const canOpenProposal = isAdmin || quoteAgentEnabled
   const [uiTheme] = useUiTheme()
   const isLg = useIsLg()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -4040,12 +4038,10 @@ export default function MyLeads() {
                   )}
                 </div>
 
-                {canOpenProposal && (
-                  <CompanyQuoteHistory
-                    companyId={currentClient?.id ?? displayDetail.id}
-                    nuevo={nuevoDetail}
-                  />
-                )}
+                <CompanyQuoteHistory
+                  companyId={currentClient?.id ?? displayDetail.id}
+                  nuevo={nuevoDetail}
+                />
 
                 {/* ── Resultado + Agendar apilados ── */}
                 <div className="flex flex-col gap-3 flex-1">
@@ -4064,7 +4060,7 @@ export default function MyLeads() {
                         onChange={handleDispositionChange}
                         error={respuestaError}
                         appearance={nuevoDetail ? 'new' : 'classic'}
-                        onOpenProposal={canOpenProposal ? () => setProposalOpen(true) : undefined}
+                        onOpenProposal={() => setProposalOpen(true)}
                       />
                     </div>
                     <div className="flex flex-col gap-0.5">
@@ -4607,7 +4603,7 @@ export default function MyLeads() {
             </div>
 
           </div>
-          {proposalOpen && displayDetail && canOpenProposal && (
+          {proposalOpen && displayDetail && (
             <ProposalPanel
               nuevo={nuevoDetail}
               isAdmin={isAdmin}
