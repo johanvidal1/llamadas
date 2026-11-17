@@ -5,7 +5,7 @@ import { Router, Response, NextFunction } from 'express'
 import multer from 'multer'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma'
-import { requireTenantIdFromContext } from '../lib/tenantContext'
+import { requireTenantIdFromContext, runWithTenant } from '../lib/tenantContext'
 import { AuthRequest, requireAdmin } from '../middleware/auth'
 import { ensureQuoteTemplates } from '../lib/quoteTemplates'
 import {
@@ -263,12 +263,27 @@ async function replaceSlot(
   res.json(toDto(row))
 }
 
+// Multer stream callbacks leave resolveTenant ALS; re-enter for Prisma.
 router.post('/:id/letterhead', requireAdmin, uploadImage, async (req: AuthRequest, res: Response) => {
-  await replaceSlot(req, res, 'letterhead')
+  const tenantId = req.tenant?.id
+  if (!tenantId) {
+    res.status(400).json({ error: 'Tenant no resuelto' })
+    return
+  }
+  await runWithTenant(tenantId, async () => {
+    await replaceSlot(req, res, 'letterhead')
+  })
 })
 
 router.post('/:id/signature', requireAdmin, uploadImage, async (req: AuthRequest, res: Response) => {
-  await replaceSlot(req, res, 'signature')
+  const tenantId = req.tenant?.id
+  if (!tenantId) {
+    res.status(400).json({ error: 'Tenant no resuelto' })
+    return
+  }
+  await runWithTenant(tenantId, async () => {
+    await replaceSlot(req, res, 'signature')
+  })
 })
 
 router.delete('/:id/letterhead', requireAdmin, async (req: AuthRequest, res: Response) => {
@@ -296,42 +311,50 @@ async function clearSlot(req: AuthRequest, res: Response, slot: 'letterhead' | '
 }
 
 router.post('/:id/promos', requireAdmin, uploadImage, async (req: AuthRequest, res: Response) => {
-  if (!req.file) {
-    res.status(400).json({ error: 'Adjunta una imagen en el campo file.' })
+  const tenantId = req.tenant?.id
+  if (!tenantId) {
+    res.status(400).json({ error: 'Tenant no resuelto' })
     return
   }
-  const ext = imageExt(req.file.mimetype, req.file.originalname)
-  if (!ext) {
-    res.status(400).json({ error: 'Solo se permiten archivos JPG o PNG.' })
-    return
-  }
-  const existing = await loadTemplate(req.params.id)
-  if (!existing) {
-    res.status(404).json({ error: 'Formato no encontrado.' })
-    return
-  }
-  if (existing.promos.length >= MAX_PROMO_IMAGES) {
-    res.status(400).json({ error: 'Este formato ya tiene 4 imágenes de promoción.' })
-    return
-  }
-  const tenantId = requireTenantIdFromContext()
-  const promo = await prisma.quoteTemplatePromo.create({
-    data: {
-      tenantId,
-      templateId: existing.id,
-      path: 'pending',
-      sortOrder: existing.promos.length,
-    },
+
+  await runWithTenant(tenantId, async () => {
+    if (!req.file) {
+      res.status(400).json({ error: 'Adjunta una imagen en el campo file.' })
+      return
+    }
+    const ext = imageExt(req.file.mimetype, req.file.originalname)
+    if (!ext) {
+      res.status(400).json({ error: 'Solo se permiten archivos JPG o PNG.' })
+      return
+    }
+    const existing = await loadTemplate(req.params.id)
+    if (!existing) {
+      res.status(404).json({ error: 'Formato no encontrado.' })
+      return
+    }
+    if (existing.promos.length >= MAX_PROMO_IMAGES) {
+      res.status(400).json({ error: 'Este formato ya tiene 4 imágenes de promoción.' })
+      return
+    }
+    const scopedTenantId = requireTenantIdFromContext()
+    const promo = await prisma.quoteTemplatePromo.create({
+      data: {
+        tenantId: scopedTenantId,
+        templateId: existing.id,
+        path: 'pending',
+        sortOrder: existing.promos.length,
+      },
+    })
+    try {
+      const relative = await saveImage(scopedTenantId, existing.id, `promos/${promo.id}${ext}`, req.file.buffer)
+      await prisma.quoteTemplatePromo.update({ where: { id: promo.id }, data: { path: relative } })
+    } catch (err) {
+      await prisma.quoteTemplatePromo.delete({ where: { id: promo.id } }).catch(() => undefined)
+      throw err
+    }
+    const row = await loadTemplate(existing.id)
+    res.status(201).json(row ? toDto(row) : null)
   })
-  try {
-    const relative = await saveImage(tenantId, existing.id, `promos/${promo.id}${ext}`, req.file.buffer)
-    await prisma.quoteTemplatePromo.update({ where: { id: promo.id }, data: { path: relative } })
-  } catch (err) {
-    await prisma.quoteTemplatePromo.delete({ where: { id: promo.id } }).catch(() => undefined)
-    throw err
-  }
-  const row = await loadTemplate(existing.id)
-  res.status(201).json(row ? toDto(row) : null)
 })
 
 router.delete('/:id/promos/:promoId', requireAdmin, async (req: AuthRequest, res: Response) => {

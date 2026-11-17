@@ -9,6 +9,7 @@ VALUES (
   $json$[
     "**Mis clientes**: agentes y admin ven **Generar propuesta**; arma varios planes con líneas propias, descuento 25/50, PDF Claro Empresas.",
     "En **Importar datos**, el admin activa 25% y 50% en **Formato Cotización PDF**.",
+    "En **Importar datos**, **Planes de propuesta** ya permite subir el Excel del catálogo (antes fallaba).",
     "El PDF cierra con ejecutivo y celular del perfil; **Beneficios adicionales** se editan o se quitan."
   ]$json$::jsonb,
   CURRENT_TIMESTAMP,

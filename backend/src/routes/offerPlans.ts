@@ -3,7 +3,7 @@ import path from 'path'
 import multer from 'multer'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
-import { requireTenantIdFromContext } from '../lib/tenantContext'
+import { requireTenantIdFromContext, runWithTenant } from '../lib/tenantContext'
 import { AuthRequest, requireAdmin, requireAuth } from '../middleware/auth'
 import {
   OfferPlanWorkbookError,
@@ -182,50 +182,61 @@ router.patch('/tables/:id', requireAdmin, async (req: AuthRequest, res: Response
 
 // POST /api/offer-plans/import — admin. Fields: file, optional name.
 // Creates a new table. Previous tables and their plans stay.
+// Multer parses the upload on stream callbacks that leave the resolveTenant ALS
+// store (Node async_hooks). Re-enter runWithTenant for the full handler so Prisma
+// scoped queries keep tenant context.
 router.post('/import', requireAdmin, upload.single('file'), async (req: AuthRequest, res: Response) => {
-  if (!req.file) {
-    res.status(400).json({ error: 'Adjunta un archivo Excel en el campo file.' })
+  const tenantId = req.tenant?.id
+  if (!tenantId) {
+    res.status(400).json({ error: 'Tenant no resuelto' })
     return
   }
 
-  let parsed
-  try {
-    parsed = parseOfferPlanWorkbook(req.file.buffer)
-  } catch (err) {
-    if (err instanceof OfferPlanWorkbookError) {
-      res.status(400).json({ error: err.message })
+  await runWithTenant(tenantId, async () => {
+    if (!req.file) {
+      res.status(400).json({ error: 'Adjunta un archivo Excel en el campo file.' })
       return
     }
-    throw err
-  }
 
-  const rawName = Array.isArray(req.body?.name) ? req.body.name[0] : req.body?.name
-  const name = tableDisplayName(rawName, req.file.originalname)
-  const tenantId = requireTenantIdFromContext()
-  const existingCount = await prisma.offerPlanTable.count()
-  const isFirst = existingCount === 0
+    let parsed
+    try {
+      parsed = parseOfferPlanWorkbook(req.file.buffer)
+    } catch (err) {
+      if (err instanceof OfferPlanWorkbookError) {
+        res.status(400).json({ error: err.message })
+        return
+      }
+      throw err
+    }
 
-  const created = await prisma.offerPlanTable.create({
-    data: {
-      tenantId,
-      name,
-      isActive: isFirst,
-      isPrincipal: isFirst,
-      plans: {
-        create: parsed.map((plan) => ({
-          tenantId,
-          name: plan.name,
-          priceSoles: plan.priceSoles.toFixed(2),
-          benefits: plan.benefits as unknown as Prisma.InputJsonValue,
-          colors: plan.colors as unknown as Prisma.InputJsonValue,
-          sortOrder: plan.sortOrder,
-        })),
+    const rawName = Array.isArray(req.body?.name) ? req.body.name[0] : req.body?.name
+    const name = tableDisplayName(rawName, req.file.originalname)
+    const scopedTenantId = requireTenantIdFromContext()
+    const existingCount = await prisma.offerPlanTable.count()
+    const isFirst = existingCount === 0
+
+    const created = await prisma.offerPlanTable.create({
+      data: {
+        tenantId: scopedTenantId,
+        name,
+        isActive: isFirst,
+        isPrincipal: isFirst,
+        plans: {
+          create: parsed.map((plan) => ({
+            tenantId: scopedTenantId,
+            name: plan.name,
+            priceSoles: plan.priceSoles.toFixed(2),
+            benefits: plan.benefits as unknown as Prisma.InputJsonValue,
+            colors: plan.colors as unknown as Prisma.InputJsonValue,
+            sortOrder: plan.sortOrder,
+          })),
+        },
       },
-    },
-    include: planInclude,
-  })
+      include: planInclude,
+    })
 
-  res.status(201).json(toTableDto(created))
+    res.status(201).json(toTableDto(created))
+  })
 })
 
 export default router
