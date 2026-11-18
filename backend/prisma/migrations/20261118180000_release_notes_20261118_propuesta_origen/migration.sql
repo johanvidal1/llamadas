@@ -12,7 +12,8 @@ VALUES (
     "DATOS e INTERNET de cada fila salen solo del grupo elegido; si DATOS es ilimitado se imprime **ILIMITADO**.",
     "El listado de oferta en **Generar propuesta** hace scroll con la columna; la rueda no cambia el número de líneas.",
     "**Generar propuesta** admite hasta 16 planes (porta y nueva del mismo no cuentan doble).",
-    "El PDF no tapa el pie; **Aplicaciones** y roaming pasan enteros a la hoja 2 si no caben; aviso si el PDF está abierto."
+    "El PDF no tapa el pie; **Aplicaciones** y roaming pasan enteros a la hoja 2 si no caben.",
+    "Si el PDF está abierto, se vuelve a abrir **Guardar como**."
   ]$json$::jsonb,
   CURRENT_TIMESTAMP,
   CURRENT_TIMESTAMP
