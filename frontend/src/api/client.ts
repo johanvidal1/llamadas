@@ -442,9 +442,11 @@ export const getCompanyQuotes = (companyId: string) =>
     .get<{ quotes: CompanyQuoteHistoryItem[] }>('/quotes', { params: { companyId } })
     .then((r) => r.data.quotes)
 
+export type QuotePlanOrigin = 'nueva' | 'portabilidad'
+
 export type CommercialQuoteDraft = {
   tableId: string
-  items: { planId: string; lines: number }[]
+  items: { planId: string; lines: number; origin: QuotePlanOrigin }[]
   companyId?: string
   companyName: string
   contactName: string

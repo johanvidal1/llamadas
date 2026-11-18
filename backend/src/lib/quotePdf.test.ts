@@ -10,6 +10,7 @@ import {
   formatMixSummaryLines,
   mixHistoryPlanName,
   mobileHeadline,
+  normalizeQuotePlanRows,
   quoteDiscountedLineTotal,
   quoteDiscountedUnit,
   quoteLineTotal,
@@ -19,6 +20,7 @@ import {
   type QuotePdfInput,
 } from './quotePdf'
 import {
+  defaultQuotePlanOrigin,
   mixHasRoaming,
   normalizeQuoteDiscountPercent,
   quoteDiscountPercentsFromTenant,
@@ -118,24 +120,26 @@ async function main() {
   assert.deepEqual(quoteDiscountPercentsFromTenant(undefined), [25, 50])
   assert.deepEqual(quoteDiscountPercentsFromTenant([50, 25, 30]), [25, 50])
   assert.deepEqual(quoteDiscountPercentsFromTenant([]), [])
-  assert.equal(quotePlanInternet(CATALOG_BENEFITS), '20 GB')
-  assert.equal(quotePlanData(CATALOG_BENEFITS), '45 GB')
+  assert.equal(quotePlanInternet(CATALOG_BENEFITS, 'nueva'), '20 GB')
+  assert.equal(quotePlanData(CATALOG_BENEFITS, 'nueva'), '45 GB')
   assert.equal(
-    quotePlanInternet([{ label: 'Lineas nueva Gbs', value: '30 GB' }]),
+    quotePlanInternet([{ label: 'Lineas nueva Gbs', value: '30 GB' }], 'nueva'),
     '30 GB'
   )
   assert.equal(
-    quotePlanData([{ label: 'Lineass nuevas Internet', value: '30 GB' }]),
+    quotePlanData([{ label: 'Lineass nuevas Internet', value: '30 GB' }], 'nueva'),
     '30 GB'
   )
   assert.equal(
-    quotePlanData([{ label: 'Portabilidad internet', value: '55 GB' }]),
+    quotePlanData([{ label: 'Portabilidad internet', value: '55 GB' }], 'portabilidad'),
     '55 GB'
   )
   assert.equal(
-    quotePlanData([{ label: 'Portabilidad  internet', value: '55 GB' }]),
+    quotePlanData([{ label: 'Portabilidad  internet', value: '55 GB' }], 'portabilidad'),
     '55 GB'
   )
+  assert.equal(defaultQuotePlanOrigin(0), 'nueva')
+  assert.equal(defaultQuotePlanOrigin(4), 'portabilidad')
   assert.equal(quotePlanApps(CATALOG_BENEFITS).includes('Waze'), false)
   assert.equal(quotePlanAppsShort(CATALOG_BENEFITS), 'Ilimitadas')
   assert.equal(quotePlanAppsShort([{ label: 'Apps incluidas', value: 'Ilimitadas' }]), 'Ilimitadas')
@@ -446,8 +450,79 @@ async function main() {
   const renamedText = pdfText(renamed)
   assert.ok(renamedText.includes('30 GB'))
   assert.ok(renamedText.includes('45 GB'))
-  assert.equal(quotePlanInternet([{ label: 'Lineas nueva Gbs', value: '30 GB' }]), '30 GB')
-  assert.equal(quotePlanData([{ label: 'Lineass nuevas Internet', value: '45 GB' }]), '45 GB')
+  assert.equal(renamedText.includes('55 GB'), false)
+  assert.equal(quotePlanInternet([{ label: 'Lineas nueva Gbs', value: '30 GB' }], 'nueva'), '30 GB')
+  assert.equal(quotePlanData([{ label: 'Lineass nuevas Internet', value: '45 GB' }], 'nueva'), '45 GB')
+  assert.equal(
+    quotePlanData([{ label: 'Portabilidad internet', value: '55 GB' }], 'nueva'),
+    ''
+  )
+
+  section('per-row origin keeps PORTABILIDAD MÓVIL and does not mix GB groups')
+  const mixedBenefits = [
+    { label: 'Min/SMS nacionales', value: 'ILIMITADO' },
+    { label: 'Internet base (GB)', value: '21 GB' },
+    { label: 'Full Claro (GB)', value: '41 GB' },
+    { label: 'Portabilidad base (GB)', value: '52 GB' },
+    { label: 'Portabilidad Full Claro (GB)', value: '62 GB' },
+    { label: 'Apps incluidas', value: 'WhatsApp' },
+  ]
+  const dual = await renderQuotePdf(
+    sample({
+      planRows: [
+        {
+          name: 'MAX NEGOCIOS+ 29.9',
+          priceSoles: 29.9,
+          lines: 2,
+          monthlySoles: quoteLineTotal(29.9, 2),
+          proposed: false,
+          origin: 'nueva',
+          benefits: mixedBenefits,
+        },
+        {
+          name: 'MAX NEGOCIOS+ 29.9',
+          priceSoles: 29.9,
+          lines: 3,
+          monthlySoles: quoteLineTotal(29.9, 3),
+          proposed: false,
+          origin: 'portabilidad',
+          benefits: mixedBenefits,
+        },
+      ],
+    }),
+    { compress: false }
+  )
+  const dualText = pdfText(dual)
+  assert.ok(dualText.includes('PORTABILIDAD'))
+  assert.ok(dualText.includes('nueva'))
+  assert.ok(dualText.includes('porta'))
+  assert.ok(dualText.includes('21 GB'))
+  assert.ok(dualText.includes('41 GB'))
+  assert.ok(dualText.includes('52 GB'))
+  assert.ok(dualText.includes('62 GB'))
+  const stored = normalizeQuotePlanRows([
+    {
+      name: 'MAX NEGOCIOS+ 29.9',
+      priceSoles: 29.9,
+      lines: 1,
+      monthlySoles: 29.9,
+      origin: 'portabilidad',
+      benefits: mixedBenefits,
+    },
+    {
+      name: 'MAX NEGOCIOS+ 29.9',
+      priceSoles: 29.9,
+      lines: 1,
+      monthlySoles: 29.9,
+      benefits: mixedBenefits,
+    },
+  ])
+  assert.equal(stored[0]?.origin, 'portabilidad')
+  assert.equal(stored[1]?.origin, undefined)
+  assert.equal(quotePlanData(mixedBenefits, stored[0]?.origin), '62 GB')
+  assert.equal(quotePlanInternet(mixedBenefits, stored[0]?.origin), '52 GB')
+  assert.equal(quotePlanData(mixedBenefits, stored[1]?.origin), '41 GB')
+  assert.equal(quotePlanInternet(mixedBenefits, stored[1]?.origin), '21 GB')
 
   section('extras print only when the agent typed them')
   const withExtras = await renderQuotePdf(

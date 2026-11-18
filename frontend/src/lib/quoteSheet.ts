@@ -9,6 +9,95 @@ import {
 
 export const MAX_MIX_PLANS = 8
 
+export type QuotePlanOrigin = 'nueva' | 'portabilidad'
+
+export type MixDraftItem = {
+  planId: string
+  linesInput: string
+  origin: QuotePlanOrigin
+}
+
+export function isQuotePlanOrigin(value: unknown): value is QuotePlanOrigin {
+  return value === 'nueva' || value === 'portabilidad'
+}
+
+/** Missing origin (legacy quotes) does not invent a tag. Lookups still treat it as nueva. */
+export function parseQuotePlanOrigin(value: unknown): QuotePlanOrigin | undefined {
+  return isQuotePlanOrigin(value) ? value : undefined
+}
+
+export function defaultQuotePlanOrigin(contractedLines: number): QuotePlanOrigin {
+  return contractedLines > 0 ? 'portabilidad' : 'nueva'
+}
+
+export function otherQuotePlanOrigin(origin: QuotePlanOrigin): QuotePlanOrigin {
+  return origin === 'nueva' ? 'portabilidad' : 'nueva'
+}
+
+export function quotePlanOriginTag(origin: QuotePlanOrigin): string {
+  return origin === 'portabilidad' ? 'porta' : 'nueva'
+}
+
+export function quotePlanOriginLabel(origin: QuotePlanOrigin): string {
+  return origin === 'portabilidad' ? 'Portabilidad' : 'Línea nueva'
+}
+
+export function quotePlanNameWithOrigin(name: string, origin?: QuotePlanOrigin | null): string {
+  if (!isQuotePlanOrigin(origin)) return name
+  return `${name} · ${quotePlanOriginTag(origin)}`
+}
+
+export function mixItemKey(planId: string, origin: QuotePlanOrigin): string {
+  return `${planId}:${origin}`
+}
+
+export function addMixItem(
+  items: MixDraftItem[],
+  planId: string,
+  preferredOrigin: QuotePlanOrigin,
+  linesInput = '1',
+  max = MAX_MIX_PLANS
+): { items: MixDraftItem[]; notice: string } {
+  const hasPreferred = items.some((item) => item.planId === planId && item.origin === preferredOrigin)
+  const other = otherQuotePlanOrigin(preferredOrigin)
+  const hasOther = items.some((item) => item.planId === planId && item.origin === other)
+  if (hasPreferred && hasOther) return { items, notice: '' }
+  if (items.length >= max) {
+    return { items, notice: 'Puedes incluir hasta 8 planes en la oferta.' }
+  }
+  const origin = hasPreferred ? other : preferredOrigin
+  return { items: [...items, { planId, linesInput, origin }], notice: '' }
+}
+
+export function addOtherOriginMixItem(
+  items: MixDraftItem[],
+  planId: string,
+  linesInput = '1',
+  max = MAX_MIX_PLANS
+): { items: MixDraftItem[]; notice: string } {
+  const present = items.filter((item) => item.planId === planId)
+  if (present.length === 0) return { items, notice: '' }
+  if (present.length >= 2) return { items, notice: '' }
+  if (items.length >= max) {
+    return { items, notice: 'Puedes incluir hasta 8 planes en la oferta.' }
+  }
+  const origin = otherQuotePlanOrigin(present[0].origin)
+  return { items: [...items, { planId, linesInput, origin }], notice: '' }
+}
+
+export function setMixItemOrigin(
+  items: MixDraftItem[],
+  planId: string,
+  from: QuotePlanOrigin,
+  to: QuotePlanOrigin
+): MixDraftItem[] {
+  if (from === to) return items
+  if (items.some((item) => item.planId === planId && item.origin === to)) return items
+  return items.map((item) =>
+    item.planId === planId && item.origin === from ? { ...item, origin: to } : item
+  )
+}
+
 const DARK_INK = '#1F232A'
 export const CLARO_RED = '#E2231A'
 export const CLARO_NAVY = '#1F232A'
@@ -145,7 +234,16 @@ export function quotePlanMinutes(benefits: ProposalBenefit[]): string {
   return benefitValue(benefits, ['Min/SMS nacionales'])
 }
 
-/** DATOS: keep old Full Claro headers plus the updated MAX Negocios names. */
+/** DATOS — línea nueva: old Full Claro plus updated MAX Negocios. */
+export const QUOTE_PLAN_DATA_LABELS_NUEVA = ['Full Claro (GB)', 'Lineass nuevas Internet'] as const
+
+/** DATOS — portabilidad. */
+export const QUOTE_PLAN_DATA_LABELS_PORTABILIDAD = [
+  'Portabilidad Full Claro (GB)',
+  'Portabilidad internet',
+] as const
+
+/** All DATOS headers (both origin groups). Prefer origin-aware helpers. */
 export const QUOTE_PLAN_DATA_LABELS = [
   'Full Claro (GB)',
   'Portabilidad Full Claro (GB)',
@@ -153,15 +251,28 @@ export const QUOTE_PLAN_DATA_LABELS = [
   'Portabilidad internet',
 ] as const
 
-/** INTERNET: keep old Internet base plus the updated MAX Negocios name. */
+/** INTERNET — línea nueva: old Internet base plus updated MAX Negocios. */
 export const QUOTE_PLAN_INTERNET_LABELS = ['Internet base (GB)', 'Lineas nueva Gbs'] as const
 
-export function quotePlanData(benefits: ProposalBenefit[]): string {
-  return benefitValue(benefits, [...QUOTE_PLAN_DATA_LABELS])
+/** INTERNET — portabilidad. */
+export const QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD = ['Portabilidad base (GB)'] as const
+
+function dataLabelsFor(origin?: QuotePlanOrigin | null): readonly string[] {
+  return origin === 'portabilidad' ? QUOTE_PLAN_DATA_LABELS_PORTABILIDAD : QUOTE_PLAN_DATA_LABELS_NUEVA
 }
 
-export function quotePlanInternet(benefits: ProposalBenefit[]): string {
-  return benefitValue(benefits, [...QUOTE_PLAN_INTERNET_LABELS])
+function internetLabelsFor(origin?: QuotePlanOrigin | null): readonly string[] {
+  return origin === 'portabilidad' ? QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD : QUOTE_PLAN_INTERNET_LABELS
+}
+
+/** DATOS for the chosen origin. Omit origin (legacy) → nueva, so old catalogs still fill. */
+export function quotePlanData(benefits: ProposalBenefit[], origin?: QuotePlanOrigin | null): string {
+  return benefitValue(benefits, [...dataLabelsFor(origin)])
+}
+
+/** INTERNET for the chosen origin. Omit origin (legacy) → nueva. */
+export function quotePlanInternet(benefits: ProposalBenefit[], origin?: QuotePlanOrigin | null): string {
+  return benefitValue(benefits, [...internetLabelsFor(origin)])
 }
 
 export function quotePlanApps(benefits: ProposalBenefit[]): string {

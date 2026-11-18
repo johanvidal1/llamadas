@@ -10,10 +10,13 @@ import {
   quoteDiscountedUnit,
   quotePlanApps,
   quotePlanAppsShort,
+  parseQuotePlanOrigin,
   quotePlanData,
   quotePlanInternet,
   quotePlanMinutes,
+  quotePlanNameWithOrigin,
   quotePlanRoaming,
+  type QuotePlanOrigin,
 } from './quoteDiscount'
 import { getAppTimezone } from './appTimezone'
 
@@ -22,6 +25,8 @@ export {
   quoteDiscountedUnit,
   quoteLineTotal,
   normalizeQuoteDiscountPercent,
+  quotePlanNameWithOrigin,
+  type QuotePlanOrigin,
 } from './quoteDiscount'
 
 export type QuotePdfBenefit = { label: string; value: string }
@@ -44,6 +49,8 @@ export type QuotePdfPlanRow = {
   proposed: boolean
   benefits: QuotePdfBenefit[]
   colors?: QuotePdfColors | null
+  /** Frozen mix origin. Missing on quotes saved before per-row origin. */
+  origin?: QuotePlanOrigin
 }
 
 export type QuotePdfInput = {
@@ -249,6 +256,7 @@ export function normalizeQuotePlanRows(value: unknown): QuotePdfPlanRow[] {
         benefits.push({ label, value: cell })
       }
     }
+    const origin = parseQuotePlanOrigin(record.origin)
     rows.push({
       name,
       priceSoles,
@@ -257,6 +265,7 @@ export function normalizeQuotePlanRows(value: unknown): QuotePdfPlanRow[] {
       proposed: record.proposed === true,
       benefits,
       colors: parseColors(record.colors),
+      ...(origin ? { origin } : {}),
     })
   }
   return rows
@@ -446,7 +455,9 @@ function tableCellText(
   percent: number
 ): { text: string; color: string; strike?: boolean; font?: string } {
   if (key === 'cant') return { text: String(row.lines), color: INK, font: 'Helvetica-Bold' }
-  if (key === 'plan') return { text: row.name, color: INK, font: 'Helvetica-Bold' }
+  if (key === 'plan') {
+    return { text: quotePlanNameWithOrigin(row.name, row.origin), color: INK, font: 'Helvetica-Bold' }
+  }
   if (key === 'precio') {
     return {
       text: formatSoles(row.priceSoles),
@@ -462,8 +473,10 @@ function tableCellText(
     }
   }
   if (key === 'minutos') return { text: displayBenefit(quotePlanMinutes(row.benefits)), color: INK }
-  if (key === 'datos') return { text: displayBenefit(quotePlanData(row.benefits)), color: INK }
-  if (key === 'internet') return { text: displayBenefit(quotePlanInternet(row.benefits)), color: INK }
+  if (key === 'datos') return { text: displayBenefit(quotePlanData(row.benefits, row.origin)), color: INK }
+  if (key === 'internet') {
+    return { text: displayBenefit(quotePlanInternet(row.benefits, row.origin)), color: INK }
+  }
   if (key === 'apps') return { text: displayBenefit(quotePlanAppsShort(row.benefits)), color: ACCENT }
   return { text: '—', color: INK }
 }

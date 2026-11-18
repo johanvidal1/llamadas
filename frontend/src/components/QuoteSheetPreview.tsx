@@ -17,8 +17,10 @@ import {
   quotePlanData,
   quotePlanInternet,
   quotePlanMinutes,
+  quotePlanNameWithOrigin,
   quotePlanRoaming,
   quoteTableHeaders,
+  type QuotePlanOrigin,
 } from '../lib/quoteSheet'
 
 export type SheetRow = {
@@ -29,6 +31,7 @@ export type SheetRow = {
   proposed: boolean
   benefits: ProposalBenefit[]
   colors?: OfferPlanColors | null
+  origin?: QuotePlanOrigin
 }
 
 /** One portrait sheet. `panel` fills the quote panel; `wide` is the enlarged dialog. */
@@ -159,7 +162,7 @@ export default function QuoteSheetPreview({
               return (
                 <div key={`roam-${row.id}`} className="rounded-xl bg-slate-100 px-4 py-3">
                   <p className={wide ? 'text-sm font-bold' : 'text-xs font-bold'} style={{ color: accent }}>
-                    {row.name}
+                    {quotePlanNameWithOrigin(row.name, row.origin)}
                   </p>
                   <p className={wide ? 'mt-1 text-sm font-semibold text-slate-900' : 'mt-1 text-xs font-semibold text-slate-900'}>
                     {displayBenefit(roam.min)} | {displayBenefit(roam.internet)}
@@ -179,7 +182,7 @@ export default function QuoteSheetPreview({
             {rows.map((row) => (
               <div key={`apps-${row.id}`} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
                 <p className={wide ? 'w-44 shrink-0 text-sm font-bold' : 'w-36 shrink-0 text-xs font-bold'} style={{ color: accent }}>
-                  {row.name}
+                  {quotePlanNameWithOrigin(row.name, row.origin)}
                 </p>
                 <p className={wide ? 'min-w-0 flex-1 text-sm text-slate-800' : 'min-w-0 flex-1 text-xs text-slate-800'}>
                   {displayBenefit(quotePlanApps(row.benefits))}
@@ -272,7 +275,9 @@ function SheetTableCell({
   accent: string
 }) {
   if (column === 'cant') return <span className="font-semibold">{row.lines}</span>
-  if (column === 'plan') return <span className="font-semibold">{row.name}</span>
+  if (column === 'plan') {
+    return <span className="font-semibold">{quotePlanNameWithOrigin(row.name, row.origin)}</span>
+  }
   if (column === 'precio') {
     return (
       <span className={percent > 0 ? 'text-slate-400 line-through' : undefined}>{formatSoles(row.priceSoles)}</span>
@@ -286,8 +291,8 @@ function SheetTableCell({
     )
   }
   if (column === 'minutos') return <>{displayBenefit(quotePlanMinutes(row.benefits))}</>
-  if (column === 'datos') return <>{displayBenefit(quotePlanData(row.benefits))}</>
-  if (column === 'internet') return <>{displayBenefit(quotePlanInternet(row.benefits))}</>
+  if (column === 'datos') return <>{displayBenefit(quotePlanData(row.benefits, row.origin))}</>
+  if (column === 'internet') return <>{displayBenefit(quotePlanInternet(row.benefits, row.origin))}</>
   if (column === 'apps') {
     return (
       <span style={{ color: accent }}>{displayBenefit(quotePlanAppsShort(row.benefits))}</span>

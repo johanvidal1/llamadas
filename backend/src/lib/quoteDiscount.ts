@@ -10,6 +10,30 @@ export type QuoteDiscountOption = (typeof QUOTE_DISCOUNT_OPTIONS)[number]
 
 export type QuoteBenefit = { label: string; value: string }
 
+export type QuotePlanOrigin = 'nueva' | 'portabilidad'
+
+export function isQuotePlanOrigin(value: unknown): value is QuotePlanOrigin {
+  return value === 'nueva' || value === 'portabilidad'
+}
+
+/** Missing origin (legacy snapshots) has no PDF tag. Lookups still treat it as nueva. */
+export function parseQuotePlanOrigin(value: unknown): QuotePlanOrigin | undefined {
+  return isQuotePlanOrigin(value) ? value : undefined
+}
+
+export function defaultQuotePlanOrigin(contractedLines: number): QuotePlanOrigin {
+  return contractedLines > 0 ? 'portabilidad' : 'nueva'
+}
+
+export function quotePlanOriginTag(origin: QuotePlanOrigin): string {
+  return origin === 'portabilidad' ? 'porta' : 'nueva'
+}
+
+export function quotePlanNameWithOrigin(name: string, origin?: QuotePlanOrigin | null): string {
+  if (!isQuotePlanOrigin(origin)) return name
+  return `${name} · ${quotePlanOriginTag(origin)}`
+}
+
 export function isQuoteDiscountOption(value: number): value is QuoteDiscountOption {
   return (QUOTE_DISCOUNT_OPTIONS as readonly number[]).includes(value)
 }
@@ -70,7 +94,16 @@ export function quotePlanMinutes(benefits: QuoteBenefit[]): string {
   return benefitValue(benefits, ['Min/SMS nacionales'])
 }
 
-/** DATOS: keep old Full Claro headers plus the updated MAX Negocios names. */
+/** DATOS — línea nueva: old Full Claro plus updated MAX Negocios. */
+export const QUOTE_PLAN_DATA_LABELS_NUEVA = ['Full Claro (GB)', 'Lineass nuevas Internet'] as const
+
+/** DATOS — portabilidad. */
+export const QUOTE_PLAN_DATA_LABELS_PORTABILIDAD = [
+  'Portabilidad Full Claro (GB)',
+  'Portabilidad internet',
+] as const
+
+/** All DATOS headers (both origin groups). Prefer origin-aware helpers. */
 export const QUOTE_PLAN_DATA_LABELS = [
   'Full Claro (GB)',
   'Portabilidad Full Claro (GB)',
@@ -78,15 +111,28 @@ export const QUOTE_PLAN_DATA_LABELS = [
   'Portabilidad internet',
 ] as const
 
-/** INTERNET: keep old Internet base plus the updated MAX Negocios name. */
+/** INTERNET — línea nueva: old Internet base plus updated MAX Negocios. */
 export const QUOTE_PLAN_INTERNET_LABELS = ['Internet base (GB)', 'Lineas nueva Gbs'] as const
 
-export function quotePlanData(benefits: QuoteBenefit[]): string {
-  return benefitValue(benefits, [...QUOTE_PLAN_DATA_LABELS])
+/** INTERNET — portabilidad. */
+export const QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD = ['Portabilidad base (GB)'] as const
+
+function dataLabelsFor(origin?: QuotePlanOrigin | null): readonly string[] {
+  return origin === 'portabilidad' ? QUOTE_PLAN_DATA_LABELS_PORTABILIDAD : QUOTE_PLAN_DATA_LABELS_NUEVA
 }
 
-export function quotePlanInternet(benefits: QuoteBenefit[]): string {
-  return benefitValue(benefits, [...QUOTE_PLAN_INTERNET_LABELS])
+function internetLabelsFor(origin?: QuotePlanOrigin | null): readonly string[] {
+  return origin === 'portabilidad' ? QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD : QUOTE_PLAN_INTERNET_LABELS
+}
+
+/** DATOS for the chosen origin. Omit origin (legacy) → nueva, so old catalogs still fill. */
+export function quotePlanData(benefits: QuoteBenefit[], origin?: QuotePlanOrigin | null): string {
+  return benefitValue(benefits, [...dataLabelsFor(origin)])
+}
+
+/** INTERNET for the chosen origin. Omit origin (legacy) → nueva. */
+export function quotePlanInternet(benefits: QuoteBenefit[], origin?: QuotePlanOrigin | null): string {
+  return benefitValue(benefits, [...internetLabelsFor(origin)])
 }
 
 export function quotePlanApps(benefits: QuoteBenefit[]): string {

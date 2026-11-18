@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
 import {
+  defaultQuotePlanOrigin,
   mixHasRoaming,
   QUOTE_PLAN_DATA_LABELS,
   QUOTE_PLAN_INTERNET_LABELS,
+  QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD,
   quotePlanData,
   quotePlanInternet,
+  quotePlanNameWithOrigin,
 } from './quoteDiscount'
 
 function section(name: string) {
@@ -24,40 +27,48 @@ assert.deepEqual(
 )
 
 section('old labels fill INTERNET and DATOS')
-assert.equal(quotePlanInternet([{ label: 'Internet base (GB)', value: '20 GB' }]), '20 GB')
-assert.equal(quotePlanData([{ label: 'Full Claro (GB)', value: '45 GB' }]), '45 GB')
+assert.equal(quotePlanInternet([{ label: 'Internet base (GB)', value: '20 GB' }], 'nueva'), '20 GB')
+assert.equal(quotePlanData([{ label: 'Full Claro (GB)', value: '45 GB' }], 'nueva'), '45 GB')
 assert.equal(
-  quotePlanData([{ label: 'Portabilidad Full Claro (GB)', value: '30 GB' }]),
+  quotePlanData([{ label: 'Portabilidad Full Claro (GB)', value: '30 GB' }], 'portabilidad'),
   '30 GB'
 )
+assert.deepEqual([...QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD], ['Portabilidad base (GB)'])
 
 section('updated MAX Negocios labels fill INTERNET and DATOS')
-assert.equal(quotePlanInternet([{ label: 'Lineas nueva Gbs', value: '30 GB' }]), '30 GB')
+assert.equal(quotePlanInternet([{ label: 'Lineas nueva Gbs', value: '30 GB' }], 'nueva'), '30 GB')
 assert.equal(
-  quotePlanData([{ label: 'Lineass nuevas Internet', value: '30 GB' }]),
+  quotePlanData([{ label: 'Lineass nuevas Internet', value: '30 GB' }], 'nueva'),
   '30 GB'
 )
-assert.equal(quotePlanData([{ label: 'Portabilidad internet', value: '55 GB' }]), '55 GB')
+assert.equal(quotePlanData([{ label: 'Portabilidad internet', value: '55 GB' }], 'portabilidad'), '55 GB')
 assert.equal(
-  quotePlanData([{ label: 'Portabilidad  internet', value: '55 GB' }]),
+  quotePlanData([{ label: 'Portabilidad  internet', value: '55 GB' }], 'portabilidad'),
   '55 GB'
 )
+assert.equal(
+  quotePlanInternet([{ label: 'Portabilidad base (GB)', value: '52 GB' }], 'portabilidad'),
+  '52 GB'
+)
 
-section('Full Claro still wins over Portabilidad when both exist')
-assert.equal(
-  quotePlanData([
-    { label: 'Full Claro (GB)', value: '45 GB' },
-    { label: 'Portabilidad Full Claro (GB)', value: '30 GB' },
-  ]),
-  '45 GB'
-)
-assert.equal(
-  quotePlanData([
-    { label: 'Lineass nuevas Internet', value: '30 GB' },
-    { label: 'Portabilidad internet', value: '55 GB' },
-  ]),
-  '30 GB'
-)
+section('DATOS and INTERNET stay inside the chosen origin group')
+const mixed = [
+  { label: 'Full Claro (GB)', value: '45 GB' },
+  { label: 'Portabilidad Full Claro (GB)', value: '30 GB' },
+  { label: 'Lineass nuevas Internet', value: '31 GB' },
+  { label: 'Portabilidad internet', value: '55 GB' },
+  { label: 'Internet base (GB)', value: '20 GB' },
+  { label: 'Portabilidad base (GB)', value: '52 GB' },
+]
+assert.equal(quotePlanData(mixed, 'nueva'), '45 GB')
+assert.equal(quotePlanInternet(mixed, 'nueva'), '20 GB')
+assert.equal(quotePlanData(mixed, 'portabilidad'), '30 GB')
+assert.equal(quotePlanInternet(mixed, 'portabilidad'), '52 GB')
+assert.equal(quotePlanData(mixed), '45 GB')
+assert.equal(quotePlanInternet(mixed), '20 GB')
+assert.equal(defaultQuotePlanOrigin(0), 'nueva')
+assert.equal(defaultQuotePlanOrigin(2), 'portabilidad')
+assert.equal(quotePlanNameWithOrigin('MAX NEGOCIOS+ 29.9', 'portabilidad'), 'MAX NEGOCIOS+ 29.9 · porta')
 
 section('mixHasRoaming still keys off cobertura headers only')
 assert.equal(

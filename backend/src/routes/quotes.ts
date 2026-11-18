@@ -23,10 +23,12 @@ import {
   type QuotePdfPlanRow,
 } from '../lib/quotePdf'
 import {
+  defaultQuotePlanOrigin,
   normalizeQuoteDiscountPercent,
   quoteDiscountPercentsFromTenant,
   quoteDiscountedLineTotal,
   quoteLineTotal,
+  type QuotePlanOrigin,
 } from '../lib/quoteDiscount'
 import { resolveQuoteFile, toStoredPath } from '../lib/quoteFiles'
 import { getDefaultQuoteTemplate } from '../lib/quoteTemplates'
@@ -43,6 +45,7 @@ const currentPlanSchema = z.object({
 const quoteItemSchema = z.object({
   planId: z.string().trim().min(1, 'Elige un plan.').max(64),
   lines: z.number().int().min(1).max(999),
+  origin: z.enum(['nueva', 'portabilidad']).optional(),
 })
 
 const createSchema = z
@@ -67,11 +70,13 @@ const createSchema = z
     discountPercent: z.number().int().min(0).max(90).optional().default(0),
   })
   .superRefine((data, ctx) => {
-    const ids = data.items.map((item) => item.planId)
-    if (new Set(ids).size !== ids.length) {
+    const contracted = data.currentPlans.reduce((sum, group) => sum + group.count, 0)
+    const fallback = defaultQuotePlanOrigin(contracted)
+    const keys = data.items.map((item) => `${item.planId}:${item.origin ?? fallback}`)
+    if (new Set(keys).size !== keys.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'Cada plan solo puede ir una vez.',
+        message: 'Cada plan solo puede ir una vez por modalidad.',
         path: ['items'],
       })
     }
@@ -239,7 +244,8 @@ function snapshotPlan(
     benefits: Prisma.JsonValue
     colors?: Prisma.JsonValue | null
   },
-  lines: number
+  lines: number,
+  origin: QuotePlanOrigin
 ): QuotePdfPlanRow {
   const price = plan.priceSoles.toNumber()
   const rowLines = Math.min(999, Math.max(1, lines))
@@ -251,6 +257,7 @@ function snapshotPlan(
     proposed: false,
     benefits: normalizeOfferPlanBenefits(plan.benefits),
     colors: normalizeOfferPlanColors(plan.colors),
+    origin,
   }
 }
 
@@ -466,7 +473,7 @@ async function buildQuotePdf(body: QuoteDraftBody, tenantId: string, userId: str
   })
   if (!table) throw new QuoteRequestError(400, 'Esa tabla no está activa.')
 
-  const itemIds = body.items.map((item) => item.planId)
+  const itemIds = [...new Set(body.items.map((item) => item.planId))]
   const plans = await prisma.offerPlan.findMany({
     where: { id: { in: itemIds }, tableId: table.id },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
@@ -485,8 +492,14 @@ async function buildQuotePdf(body: QuoteDraftBody, tenantId: string, userId: str
   }
   const discountPercent = normalizeQuoteDiscountPercent(requested)
 
-  const linesById = new Map(body.items.map((item) => [item.planId, item.lines]))
-  const planRows = plans.map((plan) => snapshotPlan(plan, linesById.get(plan.id) ?? 1))
+  const planById = new Map(plans.map((plan) => [plan.id, plan]))
+  const contractedLines = body.currentPlans.reduce((sum, group) => sum + group.count, 0)
+  const fallbackOrigin = defaultQuotePlanOrigin(contractedLines)
+  const planRows = body.items.map((item) => {
+    const plan = planById.get(item.planId)
+    if (!plan) throw new QuoteRequestError(400, 'Los planes de la oferta deben ser de la misma tabla activa.')
+    return snapshotPlan(plan, item.lines, item.origin ?? fallbackOrigin)
+  })
   const lead = planRows[0]
   if (!lead) throw new QuoteRequestError(400, 'Elige al menos un plan.')
   const mixName = mixHistoryPlanName(planRows.map((row) => row.name))

@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import {
+  addMixItem,
+  addOtherOriginMixItem,
+  defaultQuotePlanOrigin,
   discountedLineTotal,
   discountedUnit,
   displayBenefit,
@@ -15,9 +18,12 @@ import {
   quotePlanAppsShort,
   quotePlanData,
   quotePlanInternet,
+  quotePlanNameWithOrigin,
   QUOTE_PLAN_DATA_LABELS,
   QUOTE_PLAN_INTERNET_LABELS,
+  QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD,
   quoteTableHeaders,
+  setMixItemOrigin,
 } from './quoteSheet.ts'
 import { lineTotal } from './proposalPlans.ts'
 
@@ -112,10 +118,20 @@ assert.deepEqual(
     'Portabilidad internet',
   ]
 )
-assert.equal(quotePlanInternet([{ label: 'Lineas nueva Gbs', value: '30 GB' }]), '30 GB')
-assert.equal(quotePlanData([{ label: 'Lineass nuevas Internet', value: '30 GB' }]), '30 GB')
-assert.equal(quotePlanData([{ label: 'Portabilidad internet', value: '55 GB' }]), '55 GB')
-assert.equal(quotePlanData([{ label: 'Portabilidad Full Claro (GB)', value: '30 GB' }]), '30 GB')
+assert.equal(quotePlanInternet([{ label: 'Lineas nueva Gbs', value: '30 GB' }], 'nueva'), '30 GB')
+assert.equal(quotePlanData([{ label: 'Lineass nuevas Internet', value: '30 GB' }], 'nueva'), '30 GB')
+assert.equal(quotePlanInternet([{ label: 'Internet base (GB)', value: '20 GB' }], 'nueva'), '20 GB')
+assert.equal(quotePlanData([{ label: 'Full Claro (GB)', value: '45 GB' }], 'nueva'), '45 GB')
+assert.equal(
+  quotePlanInternet([{ label: 'Portabilidad base (GB)', value: '52 GB' }], 'portabilidad'),
+  '52 GB'
+)
+assert.equal(quotePlanData([{ label: 'Portabilidad internet', value: '55 GB' }], 'portabilidad'), '55 GB')
+assert.equal(
+  quotePlanData([{ label: 'Portabilidad Full Claro (GB)', value: '30 GB' }], 'portabilidad'),
+  '30 GB'
+)
+assert.deepEqual([...QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD], ['Portabilidad base (GB)'])
 assert.equal(
   mixHasRoaming([
     {
@@ -128,5 +144,43 @@ assert.equal(
   ]),
   false
 )
+
+section('origin isolates DATOS and INTERNET; same plan can appear twice')
+const mixed = [
+  { label: 'Internet base (GB)', value: '21 GB' },
+  { label: 'Full Claro (GB)', value: '41 GB' },
+  { label: 'Portabilidad base (GB)', value: '52 GB' },
+  { label: 'Portabilidad Full Claro (GB)', value: '62 GB' },
+]
+assert.equal(quotePlanInternet(mixed, 'nueva'), '21 GB')
+assert.equal(quotePlanData(mixed, 'nueva'), '41 GB')
+assert.equal(quotePlanInternet(mixed, 'portabilidad'), '52 GB')
+assert.equal(quotePlanData(mixed, 'portabilidad'), '62 GB')
+assert.equal(quotePlanInternet(mixed), '21 GB')
+assert.equal(quotePlanData(mixed), '41 GB')
+assert.equal(quotePlanNameWithOrigin('MAX NEGOCIOS+ 29.9', 'nueva'), 'MAX NEGOCIOS+ 29.9 · nueva')
+assert.equal(quotePlanNameWithOrigin('MAX NEGOCIOS+ 29.9', 'portabilidad'), 'MAX NEGOCIOS+ 29.9 · porta')
+assert.equal(quotePlanNameWithOrigin('MAX NEGOCIOS+ 29.9'), 'MAX NEGOCIOS+ 29.9')
+
+section('default origin follows Plan actual; mix uniqueness is plan plus origin')
+assert.equal(defaultQuotePlanOrigin(0), 'nueva')
+assert.equal(defaultQuotePlanOrigin(3), 'portabilidad')
+const first = addMixItem([], 'plan-a', 'portabilidad')
+assert.equal(first.items.length, 1)
+assert.equal(first.items[0].origin, 'portabilidad')
+const both = addMixItem(first.items, 'plan-a', 'portabilidad')
+assert.equal(both.items.length, 2)
+assert.deepEqual(
+  both.items.map((item) => item.origin).sort(),
+  ['nueva', 'portabilidad']
+)
+const blocked = addMixItem(both.items, 'plan-a', 'portabilidad')
+assert.equal(blocked.items.length, 2)
+const switched = setMixItemOrigin(first.items, 'plan-a', 'portabilidad', 'nueva')
+assert.equal(switched[0].origin, 'nueva')
+const noSwap = setMixItemOrigin(both.items, 'plan-a', 'portabilidad', 'nueva')
+assert.equal(noSwap, both.items)
+const extra = addOtherOriginMixItem(first.items, 'plan-a')
+assert.equal(extra.items.length, 2)
 
 console.log('\nquote sheet mix helpers ok')
