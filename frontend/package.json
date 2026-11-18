@@ -17,7 +17,8 @@
     "test:client-admin-guard": "npx tsx src/lib/clientAdminGuard.test.ts",
     "test:clients-day-groups": "npx tsx src/lib/clientsDayGroups.test.ts",
     "test:proposal-plans": "npx tsx src/lib/proposalPlans.test.ts",
-    "test:quote-sheet": "npx tsx src/lib/quoteSheet.test.ts"
+    "test:quote-sheet": "npx tsx src/lib/quoteSheet.test.ts",
+    "test:download-file": "npx tsx src/lib/downloadFile.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.3.1",

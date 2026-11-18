@@ -45,6 +45,36 @@ function pageCount(pdf: Buffer): number {
   return matches?.length ?? 0
 }
 
+/** pdfkit Tm y is PDF space (origin bottom-left). Footer band is y < FOOTER_H. */
+function pdfTextAtY(pdf: Buffer): { text: string; y: number }[] {
+  const raw = pdf.toString('latin1')
+  const items: { text: string; y: number }[] = []
+  const headerRe = /<<\r?\n\/Length (\d+)\r?\n>>\r?\nstream\r?\n/g
+  let header: RegExpExecArray | null
+  while ((header = headerRe.exec(raw))) {
+    const stream = raw.slice(header.index + header[0].length, header.index + header[0].length + Number(header[1]))
+    let y = 0
+    const opRe = /1 0 0 1 [0-9.]+ ([0-9.]+) Tm|([0-9.]+) ([0-9.]+) Td|<([0-9A-Fa-f]{2,})>|\((?:\\\)|[^)])*\)/g
+    let match: RegExpExecArray | null
+    while ((match = opRe.exec(stream))) {
+      if (match[1]) {
+        y = Number(match[1])
+        continue
+      }
+      if (match[2] && match[3]) {
+        y += Number(match[3])
+        continue
+      }
+      if (match[4]) {
+        if (match[4].length % 2 === 0) items.push({ text: Buffer.from(match[4], 'hex').toString('latin1'), y })
+        continue
+      }
+      items.push({ text: match[0].slice(1, -1).replace(/\\(.)/g, '$1'), y })
+    }
+  }
+  return items
+}
+
 function mediaBox(pdf: Buffer): { width: number; height: number } {
   const match = pdf.toString('latin1').match(/\/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/)
   return { width: Number(match?.[1] ?? 0), height: Number(match?.[2] ?? 0) }
@@ -430,6 +460,61 @@ async function main() {
   const propuestaHits = tallText.split('PROPUESTA').length - 1
   assert.ok(propuestaHits <= 2, 'no second red header on the zones page')
   assert.ok(tallText.includes('EJECUTIVO') || tallText.includes('COMERCIAL'))
+
+  section('apps keep-together moves §3 off the footer')
+  const appsOverflowRows = Array.from({ length: 16 }, (_, index) => ({
+    name: `MAX NEGOCIOS+ ${String(29.9 + index)}`,
+    priceSoles: 29.9 + index,
+    lines: 1,
+    monthlySoles: 29.9 + index,
+    proposed: index === 0,
+    origin: (index % 2 === 0 ? 'portabilidad' : 'nueva') as 'portabilidad' | 'nueva',
+    colors,
+    benefits: CATALOG_BENEFITS,
+  }))
+  const appsOverflow = await renderQuotePdf(sample({ planRows: appsOverflowRows }), { compress: false })
+  const appsOverflowText = pdfText(appsOverflow)
+  const appsOverflowPages = pageCount(appsOverflow)
+  assert.ok(appsOverflowPages >= 2, 'many mix rows need a second page so apps do not cover the footer')
+  assert.ok(appsOverflowText.includes('Aplicaciones') || appsOverflowText.includes('ilimitadas'))
+  assert.ok(appsOverflowText.includes('EJECUTIVO') || appsOverflowText.includes('COMERCIAL'))
+  const footerBand = pdfTextAtY(appsOverflow).filter((item) => item.y > 0 && item.y < 36)
+  const footerBandText = footerBand.map((item) => item.text).join('')
+  if (footerBand.length > 0) {
+    assert.ok(
+      footerBandText.includes('EJECUTIVO') || footerBandText.includes('COMERCIAL') || footerBandText.includes('CEL'),
+      'footer band still has the navy bar text'
+    )
+    assert.equal(
+      /Facebook|WhatsApp|Aplicaciones|MAX NEGOCIOS/i.test(footerBandText),
+      false,
+      'apps rows must not paint into the footer y-range'
+    )
+  }
+  assert.ok((appsOverflowText.split('PROPUESTA').length - 1) <= 2, 'page 2 chrome is navy footer only')
+
+  section('roaming keep-together when leftover space is small')
+  const roamKeepRows = Array.from({ length: 12 }, (_, index) => ({
+    name: `MAX NEGOCIOS+ ${String(29.9 + index)}`,
+    priceSoles: 29.9 + index,
+    lines: 1,
+    monthlySoles: 29.9 + index,
+    proposed: index === 0,
+    origin: (index % 2 === 0 ? 'portabilidad' : 'nueva') as 'portabilidad' | 'nueva',
+    colors,
+    benefits: CATALOG_BENEFITS,
+  }))
+  const roamKeep = await renderQuotePdf(sample({ planRows: roamKeepRows }), { compress: false })
+  const roamKeepText = pdfText(roamKeep)
+  assert.ok(pageCount(roamKeep) >= 2, 'roaming block moves whole to the next page when leftover is small')
+  assert.ok(roamKeepText.includes('Roaming'))
+  assert.ok(roamKeepText.includes('Aplicaciones') || roamKeepText.includes('ilimitadas'))
+  assert.ok(roamKeepText.includes('EJECUTIVO') || roamKeepText.includes('COMERCIAL'))
+  const roamFooter = pdfTextAtY(roamKeep).filter((item) => item.y > 0 && item.y < 36)
+  const roamFooterText = roamFooter.map((item) => item.text).join('')
+  if (roamFooter.length > 0) {
+    assert.equal(/300 min|3 GB|300 SMS/i.test(roamFooterText), false, 'roaming cards stay above the footer')
+  }
 
   section('16 unique mix plans may paginate; zones title stays glued to the map')
   const sixteenRows = Array.from({ length: 16 }, (_, index) => ({

@@ -21,6 +21,45 @@ declare global {
   }
 }
 
+export const FILE_IN_USE_TOAST = 'Cierra el PDF abierto con ese nombre y vuelve a guardar.'
+
+export class FileInUseError extends Error {
+  readonly code = 'FILE_IN_USE' as const
+  constructor(message = FILE_IN_USE_TOAST) {
+    super(message)
+    this.name = 'FileInUseError'
+  }
+}
+
+export function isFileInUseError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  if (err instanceof FileInUseError) return true
+  const rec = err as { name?: string; code?: string }
+  return rec.name === 'FileInUseError' || rec.code === 'FILE_IN_USE'
+}
+
+function errorName(err: unknown): string {
+  if (!err || typeof err !== 'object') return ''
+  return String((err as { name?: unknown }).name ?? '')
+}
+
+function isAbortError(err: unknown): boolean {
+  return errorName(err) === 'AbortError'
+}
+
+function isLockedFileError(err: unknown): boolean {
+  const name = errorName(err)
+  if (
+    name === 'NotAllowedError' ||
+    name === 'NoModificationAllowedError' ||
+    name === 'InvalidStateError'
+  ) {
+    return true
+  }
+  const msg = err instanceof Error ? err.message : String(err ?? '')
+  return /in use|locked|being used|no modification allowed/i.test(msg)
+}
+
 function extensionFromFilename(filename: string): string {
   const dot = filename.lastIndexOf('.')
   return dot >= 0 ? filename.slice(dot + 1).toLowerCase() : ''
@@ -57,6 +96,7 @@ function pickerTypesForFilename(filename: string) {
 /**
  * Saves a blob using the File System Access API when available (user picks save location).
  * Falls back to a regular download link. Returns false if the user cancels the picker.
+ * Throws FileInUseError when the chosen file is open/locked — never silent <a download>.
  */
 export async function saveBlobWithPicker(blob: Blob, suggestedName: string): Promise<boolean> {
   if (typeof window.showSaveFilePicker === 'function') {
@@ -70,8 +110,11 @@ export async function saveBlobWithPicker(blob: Blob, suggestedName: string): Pro
       await writable.close()
       return true
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') {
+      if (isAbortError(err)) {
         return false
+      }
+      if (isLockedFileError(err)) {
+        throw err instanceof FileInUseError ? err : new FileInUseError()
       }
     }
   }

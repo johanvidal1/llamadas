@@ -103,6 +103,8 @@ const MARGIN_X = 40
 const HEADER_H = 96
 const FOOTER_H = 32
 const CONTENT_W = PAGE_W - MARGIN_X * 2
+const PAGE_TOP = 24
+const PAGE_BOTTOM = PAGE_H - FOOTER_H - 16
 
 function firstExisting(files: string[]): string | null {
   return files.find((file) => existsSync(file)) ?? null
@@ -562,21 +564,58 @@ function drawPlanTable(doc: PdfDoc, rows: QuotePdfPlanRow[], percent: number, yS
 }
 
 function ensureSpace(doc: PdfDoc, y: number, needed: number) {
-  const limit = PAGE_H - FOOTER_H - 16
-  if (y + needed <= limit) {
+  if (y + needed <= PAGE_BOTTOM) {
     doc.y = y
     return
   }
   doc.addPage()
-  doc.y = 24
+  doc.y = PAGE_TOP
+}
+
+/** Move the whole block to the next page when it does not fit. Do not add a blank page if already at the top. */
+function startKeepTogether(doc: PdfDoc, y: number, needed: number): number {
+  if (y + needed <= PAGE_BOTTOM) {
+    doc.y = y
+    return y
+  }
+  if (y <= PAGE_TOP + 0.5) {
+    doc.y = y
+    return y
+  }
+  doc.addPage()
+  doc.y = PAGE_TOP
+  return PAGE_TOP
 }
 
 const SECTION_BADGE = 24
 const SECTION_BADGE_R = 7
+const APPS_ROW_H = 26
+const APPS_BLOCK_PAD = 12
+const APPS_AFTER = 8
+const ROAM_GAP = 10
+const ROAM_CARD_H = 62
+const ROAM_AFTER = 12
 
-function sectionTitle(doc: PdfDoc, n: number, title: string, y: number): number {
-  ensureSpace(doc, y, SECTION_BADGE + 16)
-  y = doc.y
+function sectionTitleHeight(): number {
+  return SECTION_BADGE + 12
+}
+
+function roamingCardRowCount(planCount: number): number {
+  const cols = Math.min(3, Math.max(1, planCount))
+  return Math.ceil(planCount / cols)
+}
+
+function roamingCardsHeight(planCount: number): number {
+  const rows = roamingCardRowCount(planCount)
+  if (rows <= 0) return ROAM_AFTER
+  return rows * ROAM_CARD_H + (rows - 1) * ROAM_GAP + ROAM_AFTER
+}
+
+function appsListHeight(rowCount: number): number {
+  return rowCount * APPS_ROW_H + APPS_BLOCK_PAD + APPS_AFTER
+}
+
+function paintSectionTitle(doc: PdfDoc, n: number, title: string, y: number): number {
   doc.save()
   doc.fillColor(ACCENT)
   doc.roundedRect(MARGIN_X, y, SECTION_BADGE, SECTION_BADGE, SECTION_BADGE_R).fill()
@@ -598,26 +637,66 @@ function sectionTitle(doc: PdfDoc, n: number, title: string, y: number): number 
   return doc.y
 }
 
+function sectionTitle(doc: PdfDoc, n: number, title: string, y: number): number {
+  ensureSpace(doc, y, SECTION_BADGE + 16)
+  return paintSectionTitle(doc, n, title, doc.y)
+}
+
+function paintAppRows(doc: PdfDoc, rows: QuotePdfPlanRow[], y: number, from: number, count: number) {
+  const h = count * APPS_ROW_H + APPS_BLOCK_PAD
+  doc.save()
+  doc.fillColor(CARD_FILL)
+  doc.roundedRect(MARGIN_X, y, CONTENT_W, h, 10).fill()
+  doc.restore()
+  for (let i = 0; i < count; i++) {
+    const row = rows[from + i]
+    if (!row) continue
+    const top = y + 8 + i * APPS_ROW_H
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(ACCENT)
+    doc.text(row.name, MARGIN_X + 14, top + 6, { width: 150, lineBreak: false })
+    doc.font('Helvetica').fontSize(9).fillColor(INK)
+    doc.text(displayBenefit(quotePlanApps(row.benefits)), MARGIN_X + 172, top + 6, {
+      width: CONTENT_W - 196,
+      lineGap: 0,
+    })
+  }
+}
+
+function drawRoamingSection(doc: PdfDoc, rows: QuotePdfPlanRow[], y: number): number {
+  const needed = sectionTitleHeight() + roamingCardsHeight(rows.length)
+  y = startKeepTogether(doc, y, needed)
+  y = paintSectionTitle(doc, 2, 'Roaming internacional', y)
+  return drawRoaming(doc, rows, y)
+}
+
+function drawAppsSection(doc: PdfDoc, rows: QuotePdfPlanRow[], y: number): number {
+  const needed = sectionTitleHeight() + appsListHeight(rows.length)
+  y = startKeepTogether(doc, y, needed)
+  y = paintSectionTitle(doc, 3, 'Aplicaciones ilimitadas por plan', y)
+  return drawApps(doc, rows, y)
+}
+
 function drawRoaming(doc: PdfDoc, rows: QuotePdfPlanRow[], y: number): number {
-  ensureSpace(doc, y, 78)
-  y = doc.y
-  const gap = 10
   const cols = Math.min(3, Math.max(1, rows.length))
-  const cardW = (CONTENT_W - gap * (cols - 1)) / cols
-  const cardH = 62
+  const cardW = (CONTENT_W - ROAM_GAP * (cols - 1)) / cols
   let x = MARGIN_X
   let rowY = y
   rows.forEach((row, index) => {
-    if (index > 0 && index % cols === 0) {
-      rowY += cardH + gap
-      x = MARGIN_X
-      ensureSpace(doc, rowY, cardH + 4)
-      rowY = doc.y
+    if (index % cols === 0) {
+      if (index > 0) {
+        rowY += ROAM_CARD_H + ROAM_GAP
+        x = MARGIN_X
+      }
+      if (rowY + ROAM_CARD_H > PAGE_BOTTOM) {
+        doc.addPage()
+        rowY = PAGE_TOP
+        x = MARGIN_X
+      }
     }
     const roam = quotePlanRoaming(row.benefits)
     doc.save()
     doc.fillColor(CARD_FILL)
-    doc.roundedRect(x, rowY, cardW, cardH, 10).fill()
+    doc.roundedRect(x, rowY, cardW, ROAM_CARD_H, 10).fill()
     doc.restore()
     doc.font('Helvetica-Bold').fontSize(9).fillColor(ACCENT)
     doc.text(row.name, x + 12, rowY + 10, { width: cardW - 24, lineBreak: false })
@@ -627,33 +706,45 @@ function drawRoaming(doc: PdfDoc, rows: QuotePdfPlanRow[], y: number): number {
     doc.text(`${min}  |  ${inet}`, x + 12, rowY + 28, { width: cardW - 24, lineBreak: false })
     doc.font('Helvetica').fontSize(9).fillColor(MUTED)
     doc.text(displayBenefit(roam.sms), x + 12, rowY + 44, { width: cardW - 24, lineBreak: false })
-    x += cardW + gap
+    x += cardW + ROAM_GAP
   })
-  doc.y = rowY + cardH + 12
+  doc.y = rowY + ROAM_CARD_H + ROAM_AFTER
   return doc.y
 }
 
 function drawApps(doc: PdfDoc, rows: QuotePdfPlanRow[], y: number): number {
-  const rowH = 26
-  const blockH = rows.length * rowH + 12
-  ensureSpace(doc, y, Math.min(blockH, 90))
-  y = doc.y
-  doc.save()
-  doc.fillColor(CARD_FILL)
-  doc.roundedRect(MARGIN_X, y, CONTENT_W, rows.length * rowH + 12, 10).fill()
-  doc.restore()
-  rows.forEach((row, index) => {
-    const top = y + 8 + index * rowH
-    doc.font('Helvetica-Bold').fontSize(9).fillColor(ACCENT)
-    doc.text(row.name, MARGIN_X + 14, top + 6, { width: 150, lineBreak: false })
-    doc.font('Helvetica').fontSize(9).fillColor(INK)
-    doc.text(displayBenefit(quotePlanApps(row.benefits)), MARGIN_X + 172, top + 6, {
-      width: CONTENT_W - 196,
-      lineGap: 0,
-    })
-  })
-  doc.y = y + rows.length * rowH + 20
-  return doc.y
+  if (rows.length === 0) {
+    doc.y = y
+    return y
+  }
+  const fullH = rows.length * APPS_ROW_H + APPS_BLOCK_PAD
+  if (y + fullH <= PAGE_BOTTOM) {
+    paintAppRows(doc, rows, y, 0, rows.length)
+    doc.y = y + fullH + APPS_AFTER
+    return doc.y
+  }
+
+  let index = 0
+  while (index < rows.length) {
+    const available = PAGE_BOTTOM - y
+    const maxRows = Math.max(1, Math.floor((available - APPS_BLOCK_PAD) / APPS_ROW_H))
+    const count = Math.min(maxRows, rows.length - index)
+    const h = count * APPS_ROW_H + APPS_BLOCK_PAD
+    if (y + h > PAGE_BOTTOM) {
+      doc.addPage()
+      y = PAGE_TOP
+      continue
+    }
+    paintAppRows(doc, rows, y, index, count)
+    index += count
+    y = y + h + APPS_AFTER
+    if (index < rows.length) {
+      doc.addPage()
+      y = PAGE_TOP
+    }
+  }
+  doc.y = y
+  return y
 }
 
 function drawExtras(doc: PdfDoc, extras: string, y: number): number {
@@ -679,8 +770,6 @@ function drawExtras(doc: PdfDoc, extras: string, y: number): number {
 const ZONES_TITLE = 'Zonas de roaming internacional'
 const ZONES_TITLE_SIZE = 13
 const ZONES_TITLE_GAP = 8
-const PAGE_TOP = 24
-const PAGE_BOTTOM = PAGE_H - FOOTER_H - 16
 
 function pngPixelSize(file: string): { width: number; height: number } {
   const buf = readFileSync(file)
@@ -790,12 +879,10 @@ export function renderQuotePdf(input: QuotePdfInput, options?: { compress?: bool
     y = drawPlanTable(doc, rows, percent, y) + 14
     doc.y = y
 
-    y = sectionTitle(doc, 2, 'Roaming internacional', doc.y)
-    y = drawRoaming(doc, rows, y)
+    y = drawRoamingSection(doc, rows, doc.y)
     doc.y = y
 
-    y = sectionTitle(doc, 3, 'Aplicaciones ilimitadas por plan', doc.y)
-    y = drawApps(doc, rows, y)
+    y = drawAppsSection(doc, rows, doc.y)
     doc.y = y
 
     y = drawExtras(doc, extras, doc.y)

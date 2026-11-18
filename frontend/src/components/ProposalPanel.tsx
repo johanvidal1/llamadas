@@ -56,6 +56,7 @@ import {
   type MixDraftItem,
   type QuotePlanOrigin,
 } from '../lib/quoteSheet'
+import { FILE_IN_USE_TOAST, isFileInUseError } from '../lib/downloadFile'
 import QuoteSheetPreview from './QuoteSheetPreview'
 
 const NO_PLANS: OfferPlan[] = []
@@ -660,6 +661,14 @@ export default function ProposalPanel({
     }
   }
 
+  async function toastPdfError(err: unknown) {
+    if (isFileInUseError(err)) {
+      toast.error(FILE_IN_USE_TOAST)
+      return
+    }
+    toast.error(await readApiError(err, 'No se pudo descargar el PDF'))
+  }
+
   async function onPreview() {
     if (!canPreview || !draft) return
     setPreviewing(true)
@@ -667,7 +676,7 @@ export default function ProposalPanel({
       const saved = await downloadCommercialQuotePreview(draft)
       if (saved) toast.success('PDF descargado')
     } catch (err: unknown) {
-      toast.error(await readApiError(err, 'No se pudo descargar el PDF'))
+      await toastPdfError(err)
     } finally {
       setPreviewing(false)
     }
@@ -683,7 +692,7 @@ export default function ProposalPanel({
       onRegisteredRef.current?.()
       if (saved) toast.success('PDF guardado')
     } catch (err: unknown) {
-      toast.error(await readApiError(err, 'No se pudo descargar el PDF'))
+      await toastPdfError(err)
       await refreshCompanyQuotes()
     } finally {
       setDownloading(false)
