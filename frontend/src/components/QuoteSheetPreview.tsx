@@ -21,6 +21,7 @@ import {
   quotePlanNameWithOrigin,
   quotePlanRoaming,
   quoteTableHeaders,
+  sortQuoteMixRows,
   type QuotePlanOrigin,
 } from '../lib/quoteSheet'
 
@@ -65,8 +66,9 @@ export default function QuoteSheetPreview({
   const sender = senderName.trim()
   const phone = senderPhone.trim()
   const extrasText = extras.trim()
-  const totalLines = rows.reduce((sum, row) => sum + row.lines, 0)
-  const discountedTotal = rows.reduce((sum, row) => {
+  const ordered = sortQuoteMixRows(rows)
+  const totalLines = ordered.reduce((sum, row) => sum + row.lines, 0)
+  const discountedTotal = ordered.reduce((sum, row) => {
     const unit = discountedUnit(row.priceSoles, discountPercent)
     const cents = Math.round(unit * 100)
     return sum + (cents * row.lines) / 100
@@ -139,7 +141,7 @@ export default function QuoteSheetPreview({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {ordered.map((row) => (
                   <tr key={row.id} className="odd:bg-white even:bg-slate-50">
                     {headers.map((header) => (
                       <td key={`${row.id}:${header.key}`} className="px-1.5 py-1 align-top break-words text-slate-900">
@@ -158,7 +160,7 @@ export default function QuoteSheetPreview({
             Roaming internacional
           </SectionHeading>
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
-            {rows.map((row) => {
+            {ordered.map((row) => {
               const roam = quotePlanRoaming(row.benefits)
               return (
                 <div key={`roam-${row.id}`} className="rounded-xl bg-slate-100 px-4 py-3">
@@ -180,7 +182,7 @@ export default function QuoteSheetPreview({
             Aplicaciones ilimitadas por plan
           </SectionHeading>
           <div className="mt-3 space-y-1.5 rounded-xl bg-slate-100 px-4 py-3">
-            {rows.map((row) => (
+            {ordered.map((row) => (
               <div key={`apps-${row.id}`} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
                 <p className={wide ? 'w-44 shrink-0 text-sm font-bold' : 'w-36 shrink-0 text-xs font-bold'} style={{ color: accent }}>
                   {quotePlanNameWithOrigin(row.name, row.origin)}
@@ -210,7 +212,7 @@ export default function QuoteSheetPreview({
           </section>
         ) : null}
 
-        {mixHasRoaming(rows) ? (
+        {mixHasRoaming(ordered) ? (
           <section>
             <h3 className={wide ? 'text-lg font-bold leading-snug text-slate-900' : 'text-sm font-bold leading-snug text-slate-900'}>
               Zonas de roaming internacional

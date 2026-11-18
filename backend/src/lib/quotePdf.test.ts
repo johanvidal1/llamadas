@@ -501,6 +501,9 @@ async function main() {
   assert.ok(dualText.includes('41 GB'))
   assert.ok(dualText.includes('52 GB'))
   assert.ok(dualText.includes('62 GB'))
+  assert.ok(dualText.indexOf('62 GB') < dualText.indexOf('41 GB'), 'same plan: porta DATOS before nueva')
+  assert.ok(dualText.indexOf('52 GB') < dualText.indexOf('21 GB'), 'same plan: porta INTERNET before nueva')
+
   const stored = normalizeQuotePlanRows([
     {
       name: 'MAX NEGOCIOS+ 29.9',
@@ -524,6 +527,57 @@ async function main() {
   assert.equal(quotePlanInternet(mixedBenefits, stored[0]?.origin), '52 GB')
   assert.equal(quotePlanData(mixedBenefits, stored[1]?.origin), '41 GB')
   assert.equal(quotePlanInternet(mixedBenefits, stored[1]?.origin), '21 GB')
+
+  section('PDF mix table follows cheapest-first then porta before nueva')
+  const sortedMix = await renderQuotePdf(
+    sample({
+      planRows: [
+        {
+          name: 'PLAN-CARO',
+          priceSoles: 49.9,
+          lines: 1,
+          monthlySoles: 49.9,
+          proposed: false,
+          origin: 'nueva',
+          benefits: mixedBenefits,
+        },
+        {
+          name: 'PLAN-BARATO',
+          priceSoles: 29.9,
+          lines: 1,
+          monthlySoles: 29.9,
+          proposed: false,
+          origin: 'nueva',
+          benefits: mixedBenefits,
+        },
+        {
+          name: 'PLAN-MEDIO',
+          priceSoles: 39.9,
+          lines: 1,
+          monthlySoles: 39.9,
+          proposed: false,
+          origin: 'portabilidad',
+          benefits: mixedBenefits,
+        },
+        {
+          name: 'PLAN-BARATO',
+          priceSoles: 29.9,
+          lines: 1,
+          monthlySoles: 29.9,
+          proposed: false,
+          origin: 'portabilidad',
+          benefits: mixedBenefits,
+        },
+      ],
+    }),
+    { compress: false }
+  )
+  const sortedText = pdfText(sortedMix)
+  const barato = sortedText.indexOf('PLAN-BARATO')
+  const medio = sortedText.indexOf('PLAN-MEDIO')
+  const caro = sortedText.indexOf('PLAN-CARO')
+  assert.ok(barato >= 0 && medio >= 0 && caro >= 0)
+  assert.ok(barato < medio && medio < caro, 'PDF prints cheaper plans first')
 
   section('DATOS Ilimitado prints ILIMITADO; INTERNET stays as catalog')
   assert.equal(displayDatosBenefit('Ilimitado'), 'ILIMITADO')

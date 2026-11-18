@@ -36,6 +36,8 @@ import {
   addOtherOriginMixItem,
   applyOriginChip,
   CLARO_RED,
+  commitMixItemLines,
+  compactOriginShortLabel,
   defaultQuotePlanOrigin,
   discountLabel,
   discountedLineTotal,
@@ -43,10 +45,13 @@ import {
   mixOfferHeader,
   normalizeQuoteDiscountPercent,
   otherQuotePlanOrigin,
+  planMixLayout,
   QUOTE_EXTRAS_PLACEHOLDER,
   QUOTE_HEADLINE_SUFFIX_DEFAULT,
+  QUOTE_MIX_ORIGIN_DISPLAY_ORDER,
   quoteDiscountPercentsFromSettings,
   quotePlanOriginLabel,
+  sortQuoteMixRows,
   type MixDraftItem,
   type QuotePlanOrigin,
 } from '../lib/quoteSheet'
@@ -170,13 +175,15 @@ function OriginSegment({
 function MixLinesInput({
   id,
   value,
+  ariaLabel = 'Líneas',
   onValue,
   onCommit,
 }: {
   id: string
   value: string
+  ariaLabel?: string
   onValue: (value: string) => void
-  onCommit: () => void
+  onCommit: (value: string) => void
 }) {
   const ref = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -199,11 +206,11 @@ function MixLinesInput({
       min={1}
       max={999}
       inputMode="numeric"
-      aria-label="Líneas"
-      className={`${inputClass} h-7 w-[4.5rem] px-2 tabular-nums`}
+      aria-label={ariaLabel}
+      className={`${inputClass} h-7 w-[3.75rem] px-2 tabular-nums`}
       value={value}
       onChange={(e) => onValue(e.target.value)}
-      onBlur={onCommit}
+      onBlur={() => onCommit(ref.current?.value ?? value)}
     />
   )
 }
@@ -576,16 +583,18 @@ export default function ProposalPanel({
   const canRegister = Boolean(draft) && settingsSettled && !busy && !(shareEnabled && !ready)
   const canOpenSheet = hasOffer
 
-  const previewRows = mixRows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    lines: row.lines,
-    priceSoles: row.priceSoles,
-    proposed: false,
-    benefits: row.benefits,
-    colors: row.colors,
-    origin: row.origin,
-  }))
+  const previewRows = sortQuoteMixRows(
+    mixRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      lines: row.lines,
+      priceSoles: row.priceSoles,
+      proposed: false,
+      benefits: row.benefits,
+      colors: row.colors,
+      origin: row.origin,
+    })),
+  )
   const defaultOrigin = defaultQuotePlanOrigin(mobileLines.length)
 
   function togglePlan(id: string, checked: boolean) {
@@ -607,6 +616,10 @@ export default function ProposalPanel({
         item.planId === planId && item.origin === origin ? { ...item, linesInput: value } : item,
       ),
     )
+  }
+
+  function commitItemLines(planId: string, origin: QuotePlanOrigin, value: string) {
+    setItems((current) => commitMixItemLines(current, planId, origin, value))
   }
 
   function pickOriginChip(planId: string, rowOrigin: QuotePlanOrigin, clicked: QuotePlanOrigin) {
@@ -951,44 +964,68 @@ export default function ProposalPanel({
                           <span className="font-normal text-muted-foreground"> · {formatSoles(plan.priceSoles)}</span>
                         </span>
                       </label>
-                      {planItems.map((item) => {
-                        const lines = parseLines(item.linesInput)
-                        const otherTaken = planItems.some((row) => row.origin !== item.origin)
-                        const subtotal = lineTotal(plan.priceSoles, lines)
-                        const lineId = `proposal-lines-${plan.id}-${item.origin}`
-                        return (
-                          <div
-                            key={item.origin}
-                            className="mt-1.5 ml-6 flex flex-wrap items-center gap-2"
-                          >
-                            <OriginSegment
-                              value={item.origin}
-                              otherTaken={otherTaken}
-                              onPick={(origin) => pickOriginChip(plan.id, item.origin, origin)}
-                            />
-                            <MixLinesInput
-                              id={lineId}
-                              value={item.linesInput}
-                              onValue={(value) => setItemLines(plan.id, item.origin, value)}
-                              onCommit={() =>
-                                setItemLines(plan.id, item.origin, String(parseLines(item.linesInput)))
-                              }
-                            />
-                            <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
-                              {formatSoles(subtotal)}
-                            </span>
-                          </div>
-                        )
-                      })}
-                      {checked && planItems.length === 1 && items.length < MAX_MIX_PLANS ? (
-                        <button
-                          type="button"
-                          className="ml-6 mt-1 text-sm font-semibold text-primary transition-colors hover:text-primary/80"
-                          onClick={() => addOtherOrigin(plan.id)}
-                        >
-                          + {quotePlanOriginLabel(otherQuotePlanOrigin(planItems[0].origin))}
-                        </button>
-                      ) : null}
+                      {checked && planMixLayout(planItems.map((row) => row.origin)) === 'dual' ? (
+                        <div className="mt-1.5 ml-6 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                          {QUOTE_MIX_ORIGIN_DISPLAY_ORDER.map((origin, index) => {
+                            const item = planItems.find((row) => row.origin === origin)
+                            if (!item) return null
+                            const subtotal = lineTotal(plan.priceSoles, parseLines(item.linesInput))
+                            return (
+                              <span key={origin} className="inline-flex items-center gap-1.5">
+                                {index > 0 ? (
+                                  <span className="text-muted-foreground" aria-hidden="true">
+                                    ·
+                                  </span>
+                                ) : null}
+                                <span className="font-semibold tracking-tight text-foreground">
+                                  {compactOriginShortLabel(origin)}
+                                </span>
+                                <MixLinesInput
+                                  id={`proposal-lines-${plan.id}-${origin}`}
+                                  value={item.linesInput}
+                                  ariaLabel={`Líneas ${quotePlanOriginLabel(origin)}`}
+                                  onValue={(value) => setItemLines(plan.id, origin, value)}
+                                  onCommit={(value) => commitItemLines(plan.id, origin, value)}
+                                />
+                                <span className="tabular-nums text-muted-foreground">{formatSoles(subtotal)}</span>
+                              </span>
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        planItems.map((item) => {
+                          const subtotal = lineTotal(plan.priceSoles, parseLines(item.linesInput))
+                          return (
+                            <div key={item.origin}>
+                              <div className="mt-1.5 ml-6 flex flex-wrap items-center gap-2">
+                                <OriginSegment
+                                  value={item.origin}
+                                  otherTaken={false}
+                                  onPick={(origin) => pickOriginChip(plan.id, item.origin, origin)}
+                                />
+                                <MixLinesInput
+                                  id={`proposal-lines-${plan.id}-${item.origin}`}
+                                  value={item.linesInput}
+                                  onValue={(value) => setItemLines(plan.id, item.origin, value)}
+                                  onCommit={(value) => commitItemLines(plan.id, item.origin, value)}
+                                />
+                                <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
+                                  {formatSoles(subtotal)}
+                                </span>
+                              </div>
+                              {items.length < MAX_MIX_PLANS ? (
+                                <button
+                                  type="button"
+                                  className="ml-6 mt-1 text-sm font-semibold text-primary transition-colors hover:text-primary/80"
+                                  onClick={() => addOtherOrigin(plan.id)}
+                                >
+                                  + {quotePlanOriginLabel(otherQuotePlanOrigin(item.origin))}
+                                </button>
+                              ) : null}
+                            </div>
+                          )
+                        })
+                      )}
                     </li>
                   )
                 })}

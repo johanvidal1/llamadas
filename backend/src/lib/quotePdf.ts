@@ -17,6 +17,7 @@ import {
   quotePlanMinutes,
   quotePlanNameWithOrigin,
   quotePlanRoaming,
+  sortQuoteMixRows,
   type QuotePlanOrigin,
 } from './quoteDiscount'
 import { getAppTimezone } from './appTimezone'
@@ -274,18 +275,20 @@ export function normalizeQuotePlanRows(value: unknown): QuotePdfPlanRow[] {
 
 function rowsForPdf(input: QuotePdfInput): QuotePdfPlanRow[] {
   const stored = input.planRows?.filter((row) => row.name.trim()) ?? []
-  if (stored.length) return stored
-  return [
-    {
-      name: input.planName,
-      priceSoles: input.priceSoles,
-      lines: input.lines,
-      monthlySoles: input.totalSoles,
-      proposed: true,
-      benefits: input.benefits,
-      colors: null,
-    },
-  ]
+  const rows = stored.length
+    ? stored
+    : [
+        {
+          name: input.planName,
+          priceSoles: input.priceSoles,
+          lines: input.lines,
+          monthlySoles: input.totalSoles,
+          proposed: true,
+          benefits: input.benefits,
+          colors: null,
+        },
+      ]
+  return sortQuoteMixRows(rows)
 }
 
 function usableImagePath(value: string | null | undefined): string | null {

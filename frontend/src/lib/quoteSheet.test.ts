@@ -3,6 +3,8 @@ import {
   addMixItem,
   addOtherOriginMixItem,
   applyOriginChip,
+  commitMixItemLines,
+  compactOriginShortLabel,
   defaultQuotePlanOrigin,
   discountedLineTotal,
   discountedUnit,
@@ -21,6 +23,9 @@ import {
   quotePlanData,
   quotePlanInternet,
   quotePlanNameWithOrigin,
+  planMixLayout,
+  QUOTE_MIX_ORIGIN_DISPLAY_ORDER,
+  sortQuoteMixRows,
   QUOTE_PLAN_DATA_LABELS,
   QUOTE_PLAN_INTERNET_LABELS,
   QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD,
@@ -216,5 +221,43 @@ const atCap = Array.from({ length: MAX_MIX_PLANS }, (_, index) => ({
 const blockedCap = applyOriginChip(atCap, 'plan-0', 'portabilidad', 'nueva')
 assert.equal(blockedCap.items.length, MAX_MIX_PLANS)
 assert.ok(blockedCap.notice.includes('8'))
+
+section('mix preview order is cheapest first, then porta before nueva')
+const unsorted = [
+  { name: '49.9', priceSoles: 49.9, origin: 'nueva' as const },
+  { name: '29.9', priceSoles: 29.9, origin: 'nueva' as const },
+  { name: '39.9', priceSoles: 39.9, origin: 'portabilidad' as const },
+  { name: '29.9', priceSoles: 29.9, origin: 'portabilidad' as const },
+  { name: '49.9', priceSoles: 49.9, origin: 'portabilidad' as const },
+]
+assert.deepEqual(
+  sortQuoteMixRows(unsorted).map((row) => `${row.priceSoles}:${row.origin}`),
+  ['29.9:portabilidad', '29.9:nueva', '39.9:portabilidad', '49.9:portabilidad', '49.9:nueva']
+)
+assert.equal(sortQuoteMixRows([{ name: 'solo', priceSoles: 29.9 }])[0]?.origin, undefined)
+
+section('compact both-origins layout hides duplicate chips and empty qty drops origin')
+assert.equal(planMixLayout(['portabilidad']), 'single')
+assert.equal(planMixLayout(['nueva']), 'single')
+assert.equal(planMixLayout(['portabilidad', 'nueva']), 'dual')
+assert.equal(planMixLayout(['nueva', 'portabilidad']), 'dual')
+assert.deepEqual([...QUOTE_MIX_ORIGIN_DISPLAY_ORDER], ['portabilidad', 'nueva'])
+assert.equal(compactOriginShortLabel('portabilidad'), 'Porta')
+assert.equal(compactOriginShortLabel('nueva'), 'Nueva')
+const dualItems = [
+  { planId: 'plan-a', linesInput: '24', origin: 'portabilidad' as const },
+  { planId: 'plan-a', linesInput: '4', origin: 'nueva' as const },
+]
+const emptied = commitMixItemLines(dualItems, 'plan-a', 'nueva', '')
+assert.equal(emptied.length, 1)
+assert.equal(emptied[0]?.origin, 'portabilidad')
+assert.equal(planMixLayout(emptied.map((item) => item.origin)), 'single')
+const zeroed = commitMixItemLines(dualItems, 'plan-a', 'portabilidad', '0')
+assert.equal(zeroed.length, 1)
+assert.equal(zeroed[0]?.origin, 'nueva')
+const kept = commitMixItemLines(dualItems, 'plan-a', 'nueva', '8')
+assert.equal(kept.find((item) => item.origin === 'nueva')?.linesInput, '8')
+const lastGone = commitMixItemLines(emptied, 'plan-a', 'portabilidad', '   ')
+assert.equal(lastGone.length, 0)
 
 console.log('\nquote sheet mix helpers ok')

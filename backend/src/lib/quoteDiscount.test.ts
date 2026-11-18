@@ -10,6 +10,7 @@ import {
   quotePlanData,
   quotePlanInternet,
   quotePlanNameWithOrigin,
+  sortQuoteMixRows,
 } from './quoteDiscount'
 
 function section(name: string) {
@@ -113,6 +114,18 @@ assert.equal(quotePlanData([{ label: 'Full Claro (GB)', value: 'Ilimitado' }], '
 assert.equal(
   displayDatosBenefit(quotePlanData([{ label: 'Full Claro (GB)', value: 'Ilimitado' }], 'nueva')),
   'ILIMITADO'
+)
+
+section('mix PDF order is cheapest first, then porta before nueva')
+assert.deepEqual(
+  sortQuoteMixRows([
+    { name: '49.9', priceSoles: 49.9, origin: 'nueva' as const },
+    { name: '29.9', priceSoles: 29.9, origin: 'nueva' as const },
+    { name: '39.9', priceSoles: 39.9, origin: 'portabilidad' as const },
+    { name: '29.9', priceSoles: 29.9, origin: 'portabilidad' as const },
+    { name: '49.9', priceSoles: 49.9, origin: 'portabilidad' as const },
+  ]).map((row) => `${row.priceSoles}:${row.origin}`),
+  ['29.9:portabilidad', '29.9:nueva', '39.9:portabilidad', '49.9:portabilidad', '49.9:nueva']
 )
 
 console.log('\nquote discount catalog aliases ok')

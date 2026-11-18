@@ -34,6 +34,30 @@ export function quotePlanNameWithOrigin(name: string, origin?: QuotePlanOrigin |
   return `${name} · ${quotePlanOriginTag(origin)}`
 }
 
+/** Porta first, then nueva. Missing/legacy origin ranks with nueva. */
+export function quoteMixOriginRank(origin?: QuotePlanOrigin | null): number {
+  return origin === 'portabilidad' ? 0 : 1
+}
+
+/**
+ * Preview + PDF mix order: cheapest plan first; same price → portabilidad then nueva.
+ * Stable for equal price+origin.
+ */
+export function sortQuoteMixRows<T extends { priceSoles: number; origin?: QuotePlanOrigin | null }>(
+  rows: readonly T[]
+): T[] {
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      const price = a.row.priceSoles - b.row.priceSoles
+      if (price !== 0) return price
+      const origin = quoteMixOriginRank(a.row.origin) - quoteMixOriginRank(b.row.origin)
+      if (origin !== 0) return origin
+      return a.index - b.index
+    })
+    .map((item) => item.row)
+}
+
 export function isQuoteDiscountOption(value: number): value is QuoteDiscountOption {
   return (QUOTE_DISCOUNT_OPTIONS as readonly number[]).includes(value)
 }
