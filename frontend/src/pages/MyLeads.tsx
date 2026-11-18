@@ -128,6 +128,7 @@ import {
   MAX_NO_ANSWER_ATTEMPTS,
 } from '../config/responseOptions'
 import { shouldAdvanceToPropuestaPresentada } from '../lib/quoteDisposition'
+import { formatLineCount } from '../lib/proposalPlans'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -577,6 +578,10 @@ function isRescheduleOnlyChange(
   if (disposition !== snapshot.disposition) return false
   if (!isAgendaModified(snapshot, schedDate, schedTime)) return false
   return areCallNotesUnchanged(callNotes, snapshot.notes)
+}
+
+function companyMobileLineCountLabel(count: number): string {
+  return count === 0 ? 'Sin líneas' : formatLineCount(count)
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -1220,6 +1225,9 @@ export default function MyLeads() {
   const listRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map())
   const listHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [highlightedListCompanyId, setHighlightedListCompanyId] = useState<string | null>(null)
+  const mobileLinesSectionRef = useRef<HTMLDivElement | null>(null)
+  const mobileLinesHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [mobileLinesHighlight, setMobileLinesHighlight] = useState(false)
   const [showUltimaRegistradaNuevo, setShowUltimaRegistradaNuevo] = useState(() => {
     try {
       return localStorage.getItem(ULTIMA_REGISTRADA_NUEVO_KEY) !== '1'
@@ -1481,6 +1489,8 @@ export default function MyLeads() {
     () => dedupeMobileLinesByNumber(displayDetail?.mobileLines ?? []),
     [displayDetail?.mobileLines]
   )
+  const mobileLineCount = visibleMobileLines.length
+  const mobileLineCountLabel = companyMobileLineCountLabel(mobileLineCount)
   const showingStale = Boolean(displayDetail && currentClient && displayDetail.id !== currentClient.id)
   const isInitialDetailLoad = Boolean(
     !displayDetail && fetchingDetail && !loadingList && clients.length > 0
@@ -2161,6 +2171,27 @@ export default function MyLeads() {
     }, 3400)
   }, [])
 
+  const scrollToMobileLines = useCallback(() => {
+    const container = detailFormScrollRef.current
+    const section = mobileLinesSectionRef.current
+    if (container && section) {
+      const cRect = container.getBoundingClientRect()
+      const sRect = section.getBoundingClientRect()
+      container.scrollTo({
+        top: container.scrollTop + (sRect.top - cRect.top) - 8,
+        behavior: 'smooth',
+      })
+    } else {
+      section?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+    if (mobileLinesHighlightTimerRef.current) clearTimeout(mobileLinesHighlightTimerRef.current)
+    setMobileLinesHighlight(true)
+    mobileLinesHighlightTimerRef.current = setTimeout(() => {
+      setMobileLinesHighlight(false)
+      mobileLinesHighlightTimerRef.current = null
+    }, 1600)
+  }, [])
+
   const returnToList = useCallback(() => {
     navEpochRef.current += 1
     listClickCompanyRef.current = null
@@ -2664,6 +2695,7 @@ export default function MyLeads() {
     return () => {
       if (saveNoticeTimerRef.current) clearTimeout(saveNoticeTimerRef.current)
       if (listHighlightTimerRef.current) clearTimeout(listHighlightTimerRef.current)
+      if (mobileLinesHighlightTimerRef.current) clearTimeout(mobileLinesHighlightTimerRef.current)
     }
   }, [])
 
@@ -3792,6 +3824,17 @@ export default function MyLeads() {
                     inputClassName="truncate"
                     nuevo={nuevoDetail}
                   />
+                  <button
+                    type="button"
+                    onClick={scrollToMobileLines}
+                    title={mobileLineCountLabel}
+                    aria-label={`${mobileLineCountLabel}. Ir a líneas móviles`}
+                    className={nuevoDetail
+                      ? 'shrink-0 self-end mb-[3px] inline-flex items-center h-6 px-2 rounded-full text-[11px] font-medium whitespace-nowrap tabular-nums text-muted-foreground bg-muted/70 border border-border/60 hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring'
+                      : 'shrink-0 self-end mb-[3px] inline-flex items-center h-6 px-2 rounded-full text-[11px] font-medium whitespace-nowrap tabular-nums text-gray-500 bg-gray-100 border border-gray-200 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400'}
+                  >
+                    {mobileLineCountLabel}
+                  </button>
                   <div className="flex items-center gap-1.5 shrink-0 self-end pb-[3px]">
                     {!showingStale && displayDetail.otherOperatorPresence && (
                       <OtherOperatorRucBanner
@@ -4141,13 +4184,30 @@ export default function MyLeads() {
                   </div>
 
                   {/* Líneas móviles */}
-                  <div className={nuevoDetail
-                    ? 'rounded-xl border border-border/50 bg-card text-card-foreground shadow-sm overflow-hidden'
-                    : 'bg-white border border-gray-200 rounded-lg overflow-hidden'}>
+                  <div
+                    ref={mobileLinesSectionRef}
+                    id="mis-clientes-lineas-moviles"
+                    className={`${nuevoDetail
+                      ? 'rounded-xl border border-border/50 bg-card text-card-foreground shadow-sm overflow-hidden scroll-mt-2'
+                      : 'bg-white border border-gray-200 rounded-lg overflow-hidden scroll-mt-2'} transition-shadow duration-300 ${
+                      mobileLinesHighlight
+                        ? nuevoDetail
+                          ? 'ring-2 ring-ring ring-offset-2'
+                          : 'ring-2 ring-blue-400 ring-offset-2'
+                        : ''
+                    }`}
+                  >
                     <div className={nuevoDetail
                       ? 'bg-muted/60 border-b border-border/60 px-4 py-2'
                       : 'bg-gray-100 border-b border-gray-200 px-4 py-2'}>
-                      <span className="text-sm font-semibold text-gray-600">Líneas móviles</span>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="text-sm font-semibold text-gray-600">Líneas móviles</span>
+                        <span className={nuevoDetail
+                          ? 'text-xs tabular-nums text-muted-foreground'
+                          : 'text-xs tabular-nums text-gray-500'}>
+                          {mobileLineCountLabel}
+                        </span>
+                      </div>
                     </div>
                     <div className="p-4 overflow-x-auto">
                       {visibleMobileLines.length === 0 ? (

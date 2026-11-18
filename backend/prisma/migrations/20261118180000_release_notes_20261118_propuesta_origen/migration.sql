@@ -13,7 +13,8 @@ VALUES (
     "El listado de oferta en **Generar propuesta** hace scroll con la columna; la rueda no cambia el número de líneas.",
     "**Generar propuesta** admite hasta 16 planes (porta y nueva del mismo no cuentan doble).",
     "El PDF no tapa el pie; **Aplicaciones** y roaming pasan enteros a la hoja 2 si no caben.",
-    "Si el PDF está abierto, se vuelve a abrir **Guardar como**."
+    "Si el PDF está abierto, se vuelve a abrir **Guardar como**.",
+    "En **Mis clientes** se ve cuántas **Líneas móviles** tiene la empresa; la pastilla lleva a esa tabla."
   ]$json$::jsonb,
   CURRENT_TIMESTAMP,
   CURRENT_TIMESTAMP
