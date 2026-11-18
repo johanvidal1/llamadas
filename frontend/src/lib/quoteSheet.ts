@@ -7,7 +7,17 @@ import {
   type ProposalBenefit,
 } from './proposalPlans'
 
-export const MAX_MIX_PLANS = 8
+/** Unique catalog plans in the mix. Porta + nueva of the same plan count as one. */
+export const MAX_MIX_UNIQUE_PLANS = 16
+/** Hard row ceiling: 16 unique plans × two origins. */
+export const MAX_MIX_ROWS = 32
+/** Alias: unique plans, not mix rows. */
+export const MAX_MIX_PLANS = MAX_MIX_UNIQUE_PLANS
+export const MIX_CAP_NOTICE = 'Puedes incluir hasta 16 planes en la oferta.'
+
+export function uniqueMixPlanCount(items: { planId: string }[]): number {
+  return new Set(items.map((item) => item.planId)).size
+}
 
 export type QuotePlanOrigin = 'nueva' | 'portabilidad'
 
@@ -56,14 +66,18 @@ export function addMixItem(
   planId: string,
   preferredOrigin: QuotePlanOrigin,
   linesInput = '1',
-  max = MAX_MIX_PLANS
+  max = MAX_MIX_UNIQUE_PLANS
 ): { items: MixDraftItem[]; notice: string } {
   const hasPreferred = items.some((item) => item.planId === planId && item.origin === preferredOrigin)
   const other = otherQuotePlanOrigin(preferredOrigin)
   const hasOther = items.some((item) => item.planId === planId && item.origin === other)
   if (hasPreferred && hasOther) return { items, notice: '' }
-  if (items.length >= max) {
-    return { items, notice: 'Puedes incluir hasta 8 planes en la oferta.' }
+  const isNewPlan = !items.some((item) => item.planId === planId)
+  if (isNewPlan && uniqueMixPlanCount(items) >= max) {
+    return { items, notice: MIX_CAP_NOTICE }
+  }
+  if (items.length >= MAX_MIX_ROWS) {
+    return { items, notice: MIX_CAP_NOTICE }
   }
   const origin = hasPreferred ? other : preferredOrigin
   return { items: [...items, { planId, linesInput, origin }], notice: '' }
@@ -72,14 +86,13 @@ export function addMixItem(
 export function addOtherOriginMixItem(
   items: MixDraftItem[],
   planId: string,
-  linesInput = '1',
-  max = MAX_MIX_PLANS
+  linesInput = '1'
 ): { items: MixDraftItem[]; notice: string } {
   const present = items.filter((item) => item.planId === planId)
   if (present.length === 0) return { items, notice: '' }
   if (present.length >= 2) return { items, notice: '' }
-  if (items.length >= max) {
-    return { items, notice: 'Puedes incluir hasta 8 planes en la oferta.' }
+  if (items.length >= MAX_MIX_ROWS) {
+    return { items, notice: MIX_CAP_NOTICE }
   }
   const origin = otherQuotePlanOrigin(present[0].origin)
   if (items.some((item) => item.planId === planId && item.origin === origin)) {
@@ -94,11 +107,10 @@ export function applyOriginChip(
   planId: string,
   rowOrigin: QuotePlanOrigin,
   clicked: QuotePlanOrigin,
-  linesInput = '1',
-  max = MAX_MIX_PLANS
+  linesInput = '1'
 ): { items: MixDraftItem[]; notice: string } {
   if (clicked === rowOrigin) return { items, notice: '' }
-  return addOtherOriginMixItem(items, planId, linesInput, max)
+  return addOtherOriginMixItem(items, planId, linesInput)
 }
 
 /** Porta first, then nueva. Missing/legacy origin ranks with nueva. */

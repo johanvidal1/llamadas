@@ -41,11 +41,12 @@ import {
   defaultQuotePlanOrigin,
   discountLabel,
   discountedLineTotal,
-  MAX_MIX_PLANS,
+  MAX_MIX_UNIQUE_PLANS,
   mixOfferHeader,
   normalizeQuoteDiscountPercent,
   otherQuotePlanOrigin,
   planMixLayout,
+  uniqueMixPlanCount,
   QUOTE_EXTRAS_PLACEHOLDER,
   QUOTE_HEADLINE_SUFFIX_DEFAULT,
   QUOTE_MIX_ORIGIN_DISPLAY_ORDER,
@@ -596,6 +597,7 @@ export default function ProposalPanel({
     })),
   )
   const defaultOrigin = defaultQuotePlanOrigin(mobileLines.length)
+  const uniquePlansInMix = uniqueMixPlanCount(items)
 
   function togglePlan(id: string, checked: boolean) {
     if (!checked) {
@@ -817,7 +819,7 @@ export default function ProposalPanel({
             {hasOffer ? (
               <>
                 <p className="text-sm font-semibold leading-snug text-foreground">
-                  {mixOfferHeader(mixRows.length, totalLines)}
+                  {mixOfferHeader(uniquePlansInMix, totalLines)}
                 </p>
                 <p className="text-2xl font-bold tabular-nums tracking-tight text-primary">{formatSoles(total)}</p>
                 {discountPercent > 0 ? (
@@ -913,7 +915,7 @@ export default function ProposalPanel({
         <div className="min-h-0 min-w-0 space-y-4 overflow-y-auto overscroll-contain p-4" data-offer-scroll>
           <div className="space-y-1.5">
             <p className={labelClass}>Oferta</p>
-            <p className={`text-xs ${mutedClass}`}>Hasta 8 filas de esta tabla, cada una con sus líneas.</p>
+            <p className={`text-xs ${mutedClass}`}>Hasta 16 planes de esta tabla, cada uno con sus líneas.</p>
             <p className={`text-xs ${mutedClass}`}>
               GB de datos e internet salen solo del grupo elegido.
             </p>
@@ -957,6 +959,7 @@ export default function ProposalPanel({
                           type="checkbox"
                           className="mt-0.5 accent-primary"
                           checked={checked}
+                          disabled={!checked && uniquePlansInMix >= MAX_MIX_UNIQUE_PLANS}
                           onChange={(e) => togglePlan(plan.id, e.target.checked)}
                         />
                         <span className="min-w-0 leading-snug">
@@ -1013,15 +1016,13 @@ export default function ProposalPanel({
                                   {formatSoles(subtotal)}
                                 </span>
                               </div>
-                              {items.length < MAX_MIX_PLANS ? (
-                                <button
-                                  type="button"
-                                  className="ml-6 mt-1 text-sm font-semibold text-primary transition-colors hover:text-primary/80"
-                                  onClick={() => addOtherOrigin(plan.id)}
-                                >
-                                  + {quotePlanOriginLabel(otherQuotePlanOrigin(item.origin))}
-                                </button>
-                              ) : null}
+                              <button
+                                type="button"
+                                className="ml-6 mt-1 text-sm font-semibold text-primary transition-colors hover:text-primary/80"
+                                onClick={() => addOtherOrigin(plan.id)}
+                              >
+                                + {quotePlanOriginLabel(otherQuotePlanOrigin(item.origin))}
+                              </button>
                             </div>
                           )
                         })

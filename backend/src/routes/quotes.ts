@@ -42,6 +42,10 @@ const currentPlanSchema = z.object({
   count: z.number().int().min(1).max(9999),
 })
 
+const MAX_QUOTE_UNIQUE_PLANS = 16
+const MAX_QUOTE_MIX_ROWS = 32
+const MIX_CAP_NOTICE = 'Puedes incluir hasta 16 planes en la oferta.'
+
 const quoteItemSchema = z.object({
   planId: z.string().trim().min(1, 'Elige un plan.').max(64),
   lines: z.number().int().min(1).max(999),
@@ -54,7 +58,7 @@ const createSchema = z
     items: z
       .array(quoteItemSchema)
       .min(1, 'Elige al menos un plan.')
-      .max(8, 'Puedes incluir hasta 8 planes en la oferta.'),
+      .max(MAX_QUOTE_MIX_ROWS, MIX_CAP_NOTICE),
     companyId: z.string().trim().max(64).optional().default(''),
     companyName: z.string().trim().max(300).optional().default(''),
     contactName: z.string().trim().max(200).optional().default(''),
@@ -77,6 +81,14 @@ const createSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Cada plan solo puede ir una vez por modalidad.',
+        path: ['items'],
+      })
+    }
+    const uniquePlanIds = new Set(data.items.map((item) => item.planId))
+    if (uniquePlanIds.size > MAX_QUOTE_UNIQUE_PLANS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: MIX_CAP_NOTICE,
         path: ['items'],
       })
     }

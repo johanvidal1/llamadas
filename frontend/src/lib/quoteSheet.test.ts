@@ -32,6 +32,9 @@ import {
   quoteTableHeaders,
   setMixItemOrigin,
   MAX_MIX_PLANS,
+  MAX_MIX_ROWS,
+  MAX_MIX_UNIQUE_PLANS,
+  uniqueMixPlanCount,
 } from './quoteSheet.ts'
 import { lineTotal } from './proposalPlans.ts'
 
@@ -213,14 +216,54 @@ assert.equal(noDupChip.items, both.items)
 const noDupAdd = addOtherOriginMixItem(both.items, 'plan-a')
 assert.equal(noDupAdd.items.length, 2)
 assert.equal(noDupAdd.items, both.items)
-const atCap = Array.from({ length: MAX_MIX_PLANS }, (_, index) => ({
+
+section('mix cap is 16 unique plans; porta+nueva of the same plan count as one')
+assert.equal(MAX_MIX_PLANS, 16)
+assert.equal(MAX_MIX_UNIQUE_PLANS, 16)
+assert.equal(MAX_MIX_ROWS, 32)
+const sixteenUnique = Array.from({ length: MAX_MIX_UNIQUE_PLANS }, (_, index) => ({
   planId: `plan-${index}`,
   linesInput: '1',
   origin: 'portabilidad' as const,
 }))
-const blockedCap = applyOriginChip(atCap, 'plan-0', 'portabilidad', 'nueva')
-assert.equal(blockedCap.items.length, MAX_MIX_PLANS)
-assert.ok(blockedCap.notice.includes('8'))
+assert.equal(uniqueMixPlanCount(sixteenUnique), 16)
+const extraOriginAt16 = addOtherOriginMixItem(sixteenUnique, 'plan-0')
+assert.equal(extraOriginAt16.items.length, 17)
+assert.equal(extraOriginAt16.notice, '')
+assert.equal(uniqueMixPlanCount(extraOriginAt16.items), 16)
+const viaChipAt16 = applyOriginChip(sixteenUnique, 'plan-0', 'portabilidad', 'nueva')
+assert.equal(viaChipAt16.items.length, 17)
+assert.equal(viaChipAt16.notice, '')
+const seventeenth = addMixItem(sixteenUnique, 'plan-16', 'portabilidad')
+assert.equal(seventeenth.items.length, 16)
+assert.ok(seventeenth.notice.includes('16'))
+assert.equal(seventeenth.notice.includes('8 filas'), false)
+assert.equal(seventeenth.notice.includes('hasta 8'), false)
+
+const sixteenBothOrigins = sixteenUnique.flatMap((item) => [
+  item,
+  { planId: item.planId, linesInput: '1', origin: 'nueva' as const },
+])
+assert.equal(sixteenBothOrigins.length, 32)
+assert.equal(uniqueMixPlanCount(sixteenBothOrigins), 16)
+const stillOk32 = addMixItem(sixteenBothOrigins, 'plan-0', 'portabilidad')
+assert.equal(stillOk32.items.length, 32)
+assert.equal(stillOk32.notice, '')
+const blockedRowCap = addMixItem(sixteenBothOrigins, 'plan-99', 'nueva')
+assert.equal(blockedRowCap.items.length, 32)
+assert.ok(blockedRowCap.notice.includes('16'))
+
+const eightBothOrigins = Array.from({ length: 8 }, (_, index) => [
+  { planId: `plan-${index}`, linesInput: '1', origin: 'portabilidad' as const },
+  { planId: `plan-${index}`, linesInput: '1', origin: 'nueva' as const },
+]).flat()
+assert.equal(eightBothOrigins.length, 16)
+assert.equal(uniqueMixPlanCount(eightBothOrigins), 8)
+const ninthUnique = addMixItem(eightBothOrigins, 'plan-8', 'portabilidad')
+assert.equal(ninthUnique.items.length, 17)
+assert.equal(ninthUnique.notice, '')
+assert.equal(ninthUnique.notice.includes('8 filas'), false)
+assert.equal(ninthUnique.notice.includes('hasta 8'), false)
 
 section('mix preview order is cheapest first, then porta before nueva')
 const unsorted = [

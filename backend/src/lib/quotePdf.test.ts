@@ -431,6 +431,24 @@ async function main() {
   assert.ok(propuestaHits <= 2, 'no second red header on the zones page')
   assert.ok(tallText.includes('EJECUTIVO') || tallText.includes('COMERCIAL'))
 
+  section('16 unique mix plans may paginate; zones title stays glued to the map')
+  const sixteenRows = Array.from({ length: 16 }, (_, index) => ({
+    name: `MAX NEGOCIOS+ ${String(29.9 + index)}`,
+    priceSoles: 29.9 + index,
+    lines: 1,
+    monthlySoles: 29.9 + index,
+    proposed: index === 0,
+    origin: (index % 2 === 0 ? 'portabilidad' : 'nueva') as 'portabilidad' | 'nueva',
+    colors,
+    benefits: CATALOG_BENEFITS,
+  }))
+  const sixteenPdf = await renderQuotePdf(sample({ planRows: sixteenRows }), { compress: false })
+  const sixteenText = pdfText(sixteenPdf)
+  const sixteenPages = pageCount(sixteenPdf)
+  assert.ok(sixteenPages >= 2, '16 unique plans may paginate')
+  assert.ok(sixteenText.includes('Zonas de roaming') || sixteenText.includes('Zonas'))
+  assert.ok((sixteenText.split('PROPUESTA').length - 1) <= 2, 'zones page keeps the navy footer, no second red header')
+
   section('sample with roaming prints the zones title')
   assert.ok(text.includes('Zonas de roaming') || text.includes('Zonas'))
 
