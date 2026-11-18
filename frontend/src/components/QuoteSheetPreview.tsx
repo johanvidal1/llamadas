@@ -8,6 +8,7 @@ import {
   CLARO_ROAMING_ZONES_SRC,
   discountedUnit,
   displayBenefit,
+  displayDatosBenefit,
   formatQuoteCel,
   formatQuoteDate,
   mixHasRoaming,
@@ -291,7 +292,7 @@ function SheetTableCell({
     )
   }
   if (column === 'minutos') return <>{displayBenefit(quotePlanMinutes(row.benefits))}</>
-  if (column === 'datos') return <>{displayBenefit(quotePlanData(row.benefits, row.origin))}</>
+  if (column === 'datos') return <>{displayDatosBenefit(quotePlanData(row.benefits, row.origin))}</>
   if (column === 'internet') return <>{displayBenefit(quotePlanInternet(row.benefits, row.origin))}</>
   if (column === 'apps') {
     return (

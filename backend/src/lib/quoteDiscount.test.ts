@@ -5,6 +5,8 @@ import {
   QUOTE_PLAN_DATA_LABELS,
   QUOTE_PLAN_INTERNET_LABELS,
   QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD,
+  displayBenefit,
+  displayDatosBenefit,
   quotePlanData,
   quotePlanInternet,
   quotePlanNameWithOrigin,
@@ -98,6 +100,19 @@ assert.equal(
     },
   ]),
   false
+)
+
+section('DATOS cell uppercases ilimitado; INTERNET stays as catalog')
+assert.equal(displayDatosBenefit('Ilimitado'), 'ILIMITADO')
+assert.equal(displayDatosBenefit('ilimitado'), 'ILIMITADO')
+assert.equal(displayDatosBenefit('ILIMITADO'), 'ILIMITADO')
+assert.equal(displayDatosBenefit('45 GB'), '45 GB')
+assert.equal(displayBenefit('Ilimitado'), 'Ilimitado')
+assert.equal(quotePlanInternet([{ label: 'Internet base (GB)', value: 'Ilimitado' }], 'nueva'), 'Ilimitado')
+assert.equal(quotePlanData([{ label: 'Full Claro (GB)', value: 'Ilimitado' }], 'nueva'), 'Ilimitado')
+assert.equal(
+  displayDatosBenefit(quotePlanData([{ label: 'Full Claro (GB)', value: 'Ilimitado' }], 'nueva')),
+  'ILIMITADO'
 )
 
 console.log('\nquote discount catalog aliases ok')

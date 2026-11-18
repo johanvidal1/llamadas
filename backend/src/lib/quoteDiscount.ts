@@ -166,3 +166,10 @@ export function mixHasRoaming(rows: { benefits: QuoteBenefit[] }[]): boolean {
 export function displayBenefit(value: string): string {
   return value.trim() || '—'
 }
+
+/** DATOS cell only: catalog "Ilimitado" (any case) prints as ILIMITADO. */
+export function displayDatosBenefit(value: string): string {
+  const shown = displayBenefit(value)
+  if (shown !== '—' && shown.toLowerCase() === 'ilimitado') return 'ILIMITADO'
+  return shown
+}

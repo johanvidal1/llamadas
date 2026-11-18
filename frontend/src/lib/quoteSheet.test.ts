@@ -2,10 +2,12 @@ import assert from 'node:assert/strict'
 import {
   addMixItem,
   addOtherOriginMixItem,
+  applyOriginChip,
   defaultQuotePlanOrigin,
   discountedLineTotal,
   discountedUnit,
   displayBenefit,
+  displayDatosBenefit,
   formatQuoteCel,
   mixHasRoaming,
   mixOfferHeader,
@@ -24,6 +26,7 @@ import {
   QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD,
   quoteTableHeaders,
   setMixItemOrigin,
+  MAX_MIX_PLANS,
 } from './quoteSheet.ts'
 import { lineTotal } from './proposalPlans.ts'
 
@@ -80,6 +83,12 @@ assert.equal(quotePlanApps(benefits).includes('Waze'), false)
 assert.equal(quotePlanAppsShort(benefits), 'Ilimitadas')
 assert.equal(quotePlanAppsShort([{ label: 'Apps incluidas', value: 'Ilimitadas' }]), 'Ilimitadas')
 assert.equal(displayBenefit(''), '—')
+assert.equal(displayDatosBenefit('Ilimitado'), 'ILIMITADO')
+assert.equal(displayDatosBenefit('ilimitado'), 'ILIMITADO')
+assert.equal(displayDatosBenefit('ILIMITADO'), 'ILIMITADO')
+assert.equal(displayDatosBenefit('45 GB'), '45 GB')
+assert.equal(displayDatosBenefit(''), '—')
+assert.equal(displayBenefit('Ilimitado'), 'Ilimitado')
 assert.equal(quotePlanInternet([]), '')
 assert.equal(formatQuoteCel('999111222'), '999 111 222')
 assert.equal(
@@ -182,5 +191,30 @@ const noSwap = setMixItemOrigin(both.items, 'plan-a', 'portabilidad', 'nueva')
 assert.equal(noSwap, both.items)
 const extra = addOtherOriginMixItem(first.items, 'plan-a')
 assert.equal(extra.items.length, 2)
+
+section('inactive origin chip adds the other row and does not duplicate')
+const viaChip = applyOriginChip(first.items, 'plan-a', 'portabilidad', 'nueva')
+assert.equal(viaChip.items.length, 2)
+assert.deepEqual(
+  viaChip.items.map((item) => item.origin).sort(),
+  ['nueva', 'portabilidad']
+)
+const sameChip = applyOriginChip(first.items, 'plan-a', 'portabilidad', 'portabilidad')
+assert.equal(sameChip.items, first.items)
+assert.equal(sameChip.items.length, 1)
+const noDupChip = applyOriginChip(both.items, 'plan-a', 'portabilidad', 'nueva')
+assert.equal(noDupChip.items.length, 2)
+assert.equal(noDupChip.items, both.items)
+const noDupAdd = addOtherOriginMixItem(both.items, 'plan-a')
+assert.equal(noDupAdd.items.length, 2)
+assert.equal(noDupAdd.items, both.items)
+const atCap = Array.from({ length: MAX_MIX_PLANS }, (_, index) => ({
+  planId: `plan-${index}`,
+  linesInput: '1',
+  origin: 'portabilidad' as const,
+}))
+const blockedCap = applyOriginChip(atCap, 'plan-0', 'portabilidad', 'nueva')
+assert.equal(blockedCap.items.length, MAX_MIX_PLANS)
+assert.ok(blockedCap.notice.includes('8'))
 
 console.log('\nquote sheet mix helpers ok')

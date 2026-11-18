@@ -4,6 +4,7 @@ import PDFDocument from 'pdfkit'
 import { inkOnFill, type OfferPlanColors } from './offerPlanWorkbook'
 import {
   displayBenefit,
+  displayDatosBenefit,
   mixHasRoaming,
   normalizeQuoteDiscountPercent,
   quoteDiscountedLineTotal,
@@ -473,7 +474,9 @@ function tableCellText(
     }
   }
   if (key === 'minutos') return { text: displayBenefit(quotePlanMinutes(row.benefits)), color: INK }
-  if (key === 'datos') return { text: displayBenefit(quotePlanData(row.benefits, row.origin)), color: INK }
+  if (key === 'datos') {
+    return { text: displayDatosBenefit(quotePlanData(row.benefits, row.origin)), color: INK }
+  }
   if (key === 'internet') {
     return { text: displayBenefit(quotePlanInternet(row.benefits, row.origin)), color: INK }
   }

@@ -34,6 +34,7 @@ import {
 import {
   addMixItem,
   addOtherOriginMixItem,
+  applyOriginChip,
   CLARO_RED,
   defaultQuotePlanOrigin,
   discountLabel,
@@ -46,7 +47,6 @@ import {
   QUOTE_HEADLINE_SUFFIX_DEFAULT,
   quoteDiscountPercentsFromSettings,
   quotePlanOriginLabel,
-  setMixItemOrigin,
   type MixDraftItem,
   type QuotePlanOrigin,
 } from '../lib/quoteSheet'
@@ -123,12 +123,12 @@ function contractedLinesLabel(count: number): string {
 
 function OriginSegment({
   value,
-  disabledOrigin,
-  onChange,
+  otherTaken,
+  onPick,
 }: {
   value: QuotePlanOrigin
-  disabledOrigin?: QuotePlanOrigin
-  onChange: (origin: QuotePlanOrigin) => void
+  otherTaken: boolean
+  onPick: (origin: QuotePlanOrigin) => void
 }) {
   const options: { origin: QuotePlanOrigin; label: string }[] = [
     { origin: 'nueva', label: 'Línea nueva' },
@@ -136,23 +136,26 @@ function OriginSegment({
   ]
   return (
     <div
-      role="radiogroup"
+      role="group"
       aria-label="Modalidad de la fila"
       className="inline-flex h-7 shrink-0 rounded-md border border-border/60 bg-muted/30 p-0.5"
     >
       {options.map((option) => {
         const selected = value === option.origin
-        const disabled = option.origin === disabledOrigin
+        const disabled = !selected && otherTaken
         return (
           <button
             key={option.origin}
             type="button"
-            role="radio"
-            aria-checked={selected}
+            aria-pressed={selected}
+            aria-label={selected ? option.label : `Añadir ${option.label}`}
             disabled={disabled}
-            onClick={() => onChange(option.origin)}
+            onClick={() => {
+              if (selected) return
+              onPick(option.origin)
+            }}
             className={`rounded px-2 text-[10px] font-medium leading-none tracking-tight transition-colors ${
-              selected ? 'text-white shadow-sm' : 'text-muted-foreground hover:text-foreground disabled:opacity-40'
+              selected ? 'text-white shadow-sm' : 'text-foreground hover:bg-background disabled:opacity-40'
             }`}
             style={selected ? { backgroundColor: CLARO_RED } : undefined}
           >
@@ -161,6 +164,47 @@ function OriginSegment({
         )
       })}
     </div>
+  )
+}
+
+function MixLinesInput({
+  id,
+  value,
+  onValue,
+  onCommit,
+}: {
+  id: string
+  value: string
+  onValue: (value: string) => void
+  onCommit: () => void
+}) {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      el.blur()
+      const scroller = el.closest('[data-offer-scroll]')
+      if (scroller) scroller.scrollTop += event.deltaY
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+  return (
+    <input
+      ref={ref}
+      id={id}
+      type="number"
+      min={1}
+      max={999}
+      inputMode="numeric"
+      aria-label="Líneas"
+      className={`${inputClass} h-7 w-[4.5rem] px-2 tabular-nums`}
+      value={value}
+      onChange={(e) => onValue(e.target.value)}
+      onBlur={onCommit}
+    />
   )
 }
 
@@ -565,8 +609,12 @@ export default function ProposalPanel({
     )
   }
 
-  function setItemOrigin(planId: string, from: QuotePlanOrigin, to: QuotePlanOrigin) {
-    setItems((current) => setMixItemOrigin(current, planId, from, to))
+  function pickOriginChip(planId: string, rowOrigin: QuotePlanOrigin, clicked: QuotePlanOrigin) {
+    setItems((current) => {
+      const result = applyOriginChip(current, planId, rowOrigin, clicked)
+      setMixNotice(result.notice)
+      return result.items
+    })
   }
 
   function addOtherOrigin(planId: string) {
@@ -849,7 +897,7 @@ export default function ProposalPanel({
           </div>
         </div>
 
-        <div className="min-h-0 min-w-0 space-y-4 overflow-y-auto p-4">
+        <div className="min-h-0 min-w-0 space-y-4 overflow-y-auto overscroll-contain p-4" data-offer-scroll>
           <div className="space-y-1.5">
             <p className={labelClass}>Oferta</p>
             <p className={`text-xs ${mutedClass}`}>Hasta 8 filas de esta tabla, cada una con sus líneas.</p>
@@ -882,7 +930,7 @@ export default function ProposalPanel({
             {plans.length === 0 ? (
               <p className={`text-xs ${mutedClass}`}>Elige una tabla para armar la oferta.</p>
             ) : (
-              <ul className="space-y-0.5 overflow-y-auto overscroll-contain rounded-xl border border-border/40 bg-muted/20 p-2">
+              <ul className="space-y-0.5 rounded-xl border border-border/40 bg-muted/20 p-2">
                 {plans.map((plan) => {
                   const planItems = items.filter((row) => row.planId === plan.id)
                   const checked = planItems.length > 0
@@ -915,24 +963,14 @@ export default function ProposalPanel({
                           >
                             <OriginSegment
                               value={item.origin}
-                              disabledOrigin={
-                                otherTaken ? otherQuotePlanOrigin(item.origin) : undefined
-                              }
-                              onChange={(origin) => setItemOrigin(plan.id, item.origin, origin)}
+                              otherTaken={otherTaken}
+                              onPick={(origin) => pickOriginChip(plan.id, item.origin, origin)}
                             />
-                            <label className={`${labelClass} shrink-0`} htmlFor={lineId}>
-                              Líneas
-                            </label>
-                            <input
+                            <MixLinesInput
                               id={lineId}
-                              type="number"
-                              min={1}
-                              max={999}
-                              inputMode="numeric"
-                              className={`${inputClass} h-7 w-[4.5rem] px-2 tabular-nums`}
                               value={item.linesInput}
-                              onChange={(e) => setItemLines(plan.id, item.origin, e.target.value)}
-                              onBlur={() =>
+                              onValue={(value) => setItemLines(plan.id, item.origin, value)}
+                              onCommit={() =>
                                 setItemLines(plan.id, item.origin, String(parseLines(item.linesInput)))
                               }
                             />
@@ -945,10 +983,10 @@ export default function ProposalPanel({
                       {checked && planItems.length === 1 && items.length < MAX_MIX_PLANS ? (
                         <button
                           type="button"
-                          className="ml-6 mt-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+                          className="ml-6 mt-1 text-sm font-semibold text-primary transition-colors hover:text-primary/80"
                           onClick={() => addOtherOrigin(plan.id)}
                         >
-                          Añadir {quotePlanOriginLabel(otherQuotePlanOrigin(planItems[0].origin)).toLowerCase()}
+                          + {quotePlanOriginLabel(otherQuotePlanOrigin(planItems[0].origin))}
                         </button>
                       ) : null}
                     </li>

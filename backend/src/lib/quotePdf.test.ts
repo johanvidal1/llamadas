@@ -26,6 +26,7 @@ import {
   quoteDiscountPercentsFromTenant,
   quotePlanApps,
   quotePlanAppsShort,
+  displayDatosBenefit,
   quotePlanData,
   quotePlanInternet,
 } from './quoteDiscount'
@@ -523,6 +524,25 @@ async function main() {
   assert.equal(quotePlanInternet(mixedBenefits, stored[0]?.origin), '52 GB')
   assert.equal(quotePlanData(mixedBenefits, stored[1]?.origin), '41 GB')
   assert.equal(quotePlanInternet(mixedBenefits, stored[1]?.origin), '21 GB')
+
+  section('DATOS Ilimitado prints ILIMITADO; INTERNET stays as catalog')
+  assert.equal(displayDatosBenefit('Ilimitado'), 'ILIMITADO')
+  const datosIlimitado = await renderQuotePdf(
+    sample({
+      benefits: [
+        { label: 'Min/SMS nacionales', value: '300 min' },
+        { label: 'Internet base (GB)', value: 'Ilimitado' },
+        { label: 'Full Claro (GB)', value: 'Ilimitado' },
+        { label: 'Apps incluidas', value: 'WhatsApp' },
+      ],
+    }),
+    { compress: false }
+  )
+  const datosText = pdfText(datosIlimitado)
+  assert.ok(datosText.includes('ILIMITADO'), 'DATOS Ilimitado becomes ILIMITADO')
+  assert.ok(datosText.includes('Ilimitado'), 'INTERNET Ilimitado is not uppercased')
+  assert.equal(quotePlanInternet([{ label: 'Internet base (GB)', value: 'Ilimitado' }], 'nueva'), 'Ilimitado')
+  assert.equal(quotePlanData([{ label: 'Full Claro (GB)', value: 'Ilimitado' }], 'nueva'), 'Ilimitado')
 
   section('extras print only when the agent typed them')
   const withExtras = await renderQuotePdf(

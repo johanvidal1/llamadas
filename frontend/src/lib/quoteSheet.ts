@@ -82,7 +82,23 @@ export function addOtherOriginMixItem(
     return { items, notice: 'Puedes incluir hasta 8 planes en la oferta.' }
   }
   const origin = otherQuotePlanOrigin(present[0].origin)
+  if (items.some((item) => item.planId === planId && item.origin === origin)) {
+    return { items, notice: '' }
+  }
   return { items: [...items, { planId, linesInput, origin }], notice: '' }
+}
+
+/** Inactive origin chip adds the other mix row. Selected chip is a no-op. Never switches. */
+export function applyOriginChip(
+  items: MixDraftItem[],
+  planId: string,
+  rowOrigin: QuotePlanOrigin,
+  clicked: QuotePlanOrigin,
+  linesInput = '1',
+  max = MAX_MIX_PLANS
+): { items: MixDraftItem[]; notice: string } {
+  if (clicked === rowOrigin) return { items, notice: '' }
+  return addOtherOriginMixItem(items, planId, linesInput, max)
 }
 
 export function setMixItemOrigin(
@@ -305,6 +321,13 @@ export function mixHasRoaming(rows: { benefits: ProposalBenefit[] }[]): boolean 
 
 export function displayBenefit(value: string): string {
   return value.trim() || '—'
+}
+
+/** DATOS cell only: catalog "Ilimitado" (any case) prints as ILIMITADO. */
+export function displayDatosBenefit(value: string): string {
+  const shown = displayBenefit(value)
+  if (shown !== '—' && shown.toLowerCase() === 'ilimitado') return 'ILIMITADO'
+  return shown
 }
 
 export function mobileLineCountPhrase(lines: number): string {

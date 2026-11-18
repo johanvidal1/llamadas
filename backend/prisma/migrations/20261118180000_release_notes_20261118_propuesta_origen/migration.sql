@@ -7,8 +7,9 @@ VALUES (
   '2026-11-18',
   '18 de noviembre de 2026',
   $json$[
-    "En **Generar propuesta**, cada plan se marca **Línea nueva** o **Portabilidad**; el mismo plan puede ir dos veces.",
-    "DATOS e INTERNET de cada fila salen solo del grupo elegido (**Línea nueva** o **Portabilidad**)."
+    "En **Generar propuesta**, cada plan se marca **Línea nueva** o **Portabilidad**; el chip inactivo o **+ Línea nueva** / **+ Portabilidad** suma la otra fila del mismo plan, sin duplicar origen.",
+    "DATOS e INTERNET de cada fila salen solo del grupo elegido; si DATOS es ilimitado se imprime **ILIMITADO**.",
+    "El listado de oferta en **Generar propuesta** hace scroll con la columna; la rueda no cambia el número de líneas."
   ]$json$::jsonb,
   CURRENT_TIMESTAMP,
   CURRENT_TIMESTAMP
