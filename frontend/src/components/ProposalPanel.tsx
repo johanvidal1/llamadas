@@ -923,11 +923,27 @@ export default function ProposalPanel({
 
         <div className="min-h-0 min-w-0 space-y-4 overflow-y-auto overscroll-contain p-4" data-offer-scroll>
           <div className="space-y-1.5">
-            <p className={labelClass}>Oferta</p>
-            <p className={`text-xs ${mutedClass}`}>Hasta 16 planes de esta tabla, cada uno con sus líneas.</p>
-            <p className={`text-xs ${mutedClass}`}>
-              GB de datos e internet salen solo del grupo elegido.
-            </p>
+            <div className="flex items-center gap-0.5">
+              <p className={labelClass}>Oferta</p>
+              <div className="group relative shrink-0">
+                <button
+                  type="button"
+                  className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  title="Hasta 16 planes, cada uno con sus líneas. Los GB de datos e internet salen solo del grupo elegido (nueva o porta)."
+                  aria-label="Información sobre la oferta"
+                >
+                  <CircleHelp size={16} />
+                </button>
+                <span
+                  role="tooltip"
+                  className="pointer-events-none absolute top-full left-0 z-20 mt-1 hidden w-64 rounded-lg border border-border/60 bg-background px-2.5 py-2 text-left text-xs font-normal normal-case tracking-normal leading-snug text-muted-foreground shadow-md group-hover:block group-focus-within:block"
+                >
+                  Hasta 16 planes, cada uno con sus líneas.
+                  <br />
+                  Los GB de datos e internet salen solo del grupo elegido (nueva o porta).
+                </span>
+              </div>
+            </div>
             <div className="space-y-1">
               <label className={labelClass} htmlFor="proposal-discount">
                 Descuento

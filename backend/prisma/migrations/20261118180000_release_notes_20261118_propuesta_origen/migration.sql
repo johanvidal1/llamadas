@@ -14,7 +14,8 @@ VALUES (
     "**Generar propuesta** admite hasta 16 planes (porta y nueva del mismo no cuentan doble).",
     "El PDF no tapa el pie; **Aplicaciones** y roaming pasan enteros a la hoja 2 si no caben.",
     "Si el PDF está abierto, se vuelve a abrir **Guardar como**.",
-    "En **Mis clientes** se ve cuántas **Líneas móviles** tiene la empresa; la pastilla lleva a esa tabla."
+    "En **Mis clientes** se ve cuántas **Líneas móviles** tiene la empresa; la pastilla lleva a esa tabla.",
+    "En **Generar propuesta** las notas de oferta pasan a un icono i."
   ]$json$::jsonb,
   CURRENT_TIMESTAMP,
   CURRENT_TIMESTAMP
