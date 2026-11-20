@@ -15,6 +15,7 @@ import {
   quoteDiscountedUnit,
   quoteLineTotal,
   quotePdfFilename,
+  quoteHeaderMetrics,
   QUOTE_HEADLINE_SUFFIX_DEFAULT,
   renderQuotePdf,
   type QuotePdfInput,
@@ -436,6 +437,78 @@ async function main() {
   assert.ok(noRoamText.includes('Roaming'))
   assert.ok(noRoamText.includes('Aplicaciones') || noRoamText.includes('ilimitadas'))
 
+  section('long company name wraps above RUC and grows the header')
+  const LONG_COMPANY =
+    'INVERSIONES BOSTON FOODS EMPRESA INDIVIDUAL DE RESPONSABILIDAD LIMITADA'
+  const shortHeader = quoteHeaderMetrics('ACME SAC')
+  const longHeader = quoteHeaderMetrics(LONG_COMPANY)
+  assert.equal(shortHeader.height, 96)
+  assert.equal(shortHeader.companyLineCount, 1)
+  assert.ok(longHeader.companyLineCount === 2, 'Boston Foods wraps to two lines')
+  assert.equal(longHeader.lines.join(' '), LONG_COMPANY)
+  assert.ok(longHeader.height > shortHeader.height, 'red band grows for the second company line')
+  assert.ok(
+    longHeader.rucY > longHeader.companyY + longHeader.companyHeight - 0.01,
+    'RUC sits below the last company line'
+  )
+  const longPdf = await renderQuotePdf(
+    sample({
+      companyName: LONG_COMPANY,
+      ruc: '20613798049',
+      issuedAt: new Date('2026-11-20T12:00:00-05:00'),
+      benefits: noRoamingBenefits,
+    }),
+    { compress: false }
+  )
+  const longPdfText = pdfText(longPdf)
+  assert.ok(longPdfText.includes('INVERSIONES'))
+  assert.ok(longPdfText.includes('BOSTON'))
+  assert.ok(longPdfText.includes('RESPONSABILIDAD'))
+  assert.ok(longPdfText.includes('LIMITADA'))
+  assert.equal(longPdfText.includes('...'), false, 'two-line razón social is not truncated')
+  assert.ok(longPdfText.includes('20613798049'))
+  const longPlaced = pdfTextAtY(longPdf)
+  const rucPlaced = longPlaced.filter((item) => /RUC|20613798049/.test(item.text))
+  const companyPlaced = longPlaced.filter((item) =>
+    /INVERSIONES|BOSTON|FOODS|EMPRESA|INDIVIDUAL|RESPONSABILIDAD|LIMITADA/.test(item.text)
+  )
+  assert.ok(rucPlaced.length > 0, 'RUC is painted')
+  assert.ok(companyPlaced.length > 0, 'company name is painted')
+  const companyBottomPdfY = Math.min(...companyPlaced.map((item) => item.y))
+  const rucPdfY = Math.max(...rucPlaced.map((item) => item.y))
+  assert.ok(
+    companyBottomPdfY > rucPdfY,
+    `company last line (pdf y ${companyBottomPdfY}) must sit above RUC (pdf y ${rucPdfY})`
+  )
+  assert.equal(pageCount(longPdf), 1)
+
+  section('company name longer than two lines ellipsizes the second line')
+  const hugeCompany = Array.from({ length: 24 }, () => 'RESPONSABILIDAD').join(' ')
+  const hugeHeader = quoteHeaderMetrics(hugeCompany)
+  assert.equal(hugeHeader.companyLineCount, 2)
+  assert.ok(hugeHeader.lines[1]?.includes('...'))
+  assert.ok(hugeHeader.rucY > hugeHeader.companyY + hugeHeader.companyHeight - 0.01)
+
+  section('short mix of 2–3 plans without roaming stays on one page')
+  const threeNoRoam = await renderQuotePdf(
+    sample({
+      benefits: noRoamingBenefits,
+      planRows: ['MAX NEGOCIOS+ 29.9', 'MAX NEGOCIOS+ 39.9', 'MAX NEGOCIOS+ 49.9'].map((name, index) => ({
+        name,
+        priceSoles: 29.9 + index,
+        lines: 1,
+        monthlySoles: 29.9 + index,
+        proposed: index === 0,
+        benefits: noRoamingBenefits,
+      })),
+    }),
+    { compress: false }
+  )
+  assert.equal(pageCount(threeNoRoam), 1)
+  const threeText = pdfText(threeNoRoam)
+  assert.ok(threeText.includes('MAX NEGOCIOS+ 49.9'))
+  assert.equal(threeText.includes('Zonas'), false)
+
   section('zones map keep-together on page 2 when mix is tall')
   const tallRows = names.map((name, index) => ({
     name,
@@ -461,8 +534,24 @@ async function main() {
   assert.ok(tallText.includes('Zonas de roaming') || tallText.includes('Zonas'))
   assert.ok(tallText.includes('Roaming'))
   const propuestaHits = tallText.split('PROPUESTA').length - 1
-  assert.ok(propuestaHits <= 2, 'no second red header on the zones page')
+  assert.equal(propuestaHits, tallPages, 'each page including zones has red header chrome (PROPUESTA COMERCIAL)')
+  assert.ok(tallText.includes('4Zonas'), 'zones title uses section badge 4')
+  assert.equal(tallText.includes('2Zonas'), false, 'zones is sequential section 4, not badge 2')
+  assert.equal(
+    tallText.split('PORTABILIDAD').length - 1,
+    1,
+    'continuation header stays one-line (PORTABILIDAD MÓVIL only on page 1)'
+  )
   assert.ok(tallText.includes('EJECUTIVO') || tallText.includes('COMERCIAL'))
+  const tallFooter = pdfTextAtY(tall).filter((item) => item.y > 0 && item.y < 36)
+  const tallFooterText = tallFooter.map((item) => item.text).join('')
+  if (tallFooter.length > 0) {
+    assert.equal(
+      /Zonas|Andina|Europa/i.test(tallFooterText),
+      false,
+      'zones title+map stay above the footer'
+    )
+  }
 
   section('apps keep-together moves §3 off the footer')
   const appsOverflowRows = Array.from({ length: 16 }, (_, index) => ({
@@ -494,7 +583,11 @@ async function main() {
       'apps rows must not paint into the footer y-range'
     )
   }
-  assert.ok((appsOverflowText.split('PROPUESTA').length - 1) <= 2, 'page 2 chrome is navy footer only')
+  assert.equal(
+    appsOverflowText.split('PROPUESTA').length - 1,
+    appsOverflowPages,
+    'continuation pages get compact red header chrome'
+  )
 
   section('roaming keep-together when leftover space is small')
   const roamKeepRows = Array.from({ length: 12 }, (_, index) => ({
@@ -535,7 +628,13 @@ async function main() {
   const sixteenPages = pageCount(sixteenPdf)
   assert.ok(sixteenPages >= 2, '16 unique plans may paginate')
   assert.ok(sixteenText.includes('Zonas de roaming') || sixteenText.includes('Zonas'))
-  assert.ok((sixteenText.split('PROPUESTA').length - 1) <= 2, 'zones page keeps the navy footer, no second red header')
+  assert.ok(sixteenText.includes('4Zonas'), '16-plan zones title still uses badge 4')
+  assert.equal(sixteenText.includes('2Zonas'), false)
+  assert.equal(
+    sixteenText.split('PROPUESTA').length - 1,
+    sixteenPages,
+    'zones continuation page has compact red header'
+  )
 
   section('sample with roaming prints the zones title')
   assert.ok(text.includes('Zonas de roaming') || text.includes('Zonas'))

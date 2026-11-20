@@ -75,26 +75,44 @@ export default function QuoteSheetPreview({
   }, 0)
   const headers = quoteTableHeaders(discountPercent)
   const dateLabel = formatQuoteDate()
+  const companyLabel = companyName.trim() || '—'
+  const shortMix = ordered.length > 0 && ordered.length <= 3
+  const bodyClass = wide
+    ? shortMix
+      ? 'space-y-7 px-8 py-6'
+      : 'space-y-5 px-8 py-6'
+    : shortMix
+      ? 'space-y-6 px-5 py-5'
+      : 'space-y-4 px-5 py-5'
 
   return (
     <div className="w-full min-w-0 overflow-hidden rounded-md border border-slate-200 bg-white text-slate-900 shadow-md">
-      <div className="flex items-stretch gap-4 px-5 py-4 text-white" style={{ backgroundColor: accent }}>
+      <div className="flex items-start gap-4 px-5 py-4 text-white" style={{ backgroundColor: accent }}>
         <div className="flex h-16 w-[7.75rem] shrink-0 items-center justify-center rounded-xl bg-white p-1">
           <img src={CLARO_LOGO_SRC} alt="Claro empresas" className="max-h-full max-w-full object-contain" />
         </div>
-        <div className="min-w-0 py-0.5">
+        <div className="min-w-0 flex-1 py-0.5">
           <p className={wide ? 'text-lg font-bold uppercase tracking-wide' : 'text-sm font-bold uppercase tracking-wide'}>
             Propuesta comercial
           </p>
           <p className={wide ? 'text-sm font-semibold uppercase' : 'text-xs font-semibold uppercase'}>Portabilidad móvil</p>
-          <p className={wide ? 'text-sm font-semibold' : 'text-xs font-semibold'}>{companyName.trim() || '—'}</p>
-          <p className={wide ? 'text-xs text-white/90' : 'text-[11px] text-white/90'}>
+          <p
+            className={
+              wide
+                ? 'text-sm font-semibold leading-snug line-clamp-2 break-words'
+                : 'text-xs font-semibold leading-snug line-clamp-2 break-words'
+            }
+            title={companyName.trim() || undefined}
+          >
+            {companyLabel}
+          </p>
+          <p className={wide ? 'mt-1.5 text-xs text-white/90' : 'mt-1.5 text-[11px] text-white/90'}>
             RUC {ruc.trim() || '—'} | {dateLabel}
           </p>
         </div>
       </div>
 
-      <div className={wide ? 'space-y-5 px-8 py-6' : 'space-y-4 px-5 py-5'}>
+      <div className={bodyClass}>
         <div>
           <p className={wide ? 'text-xl font-bold text-slate-900' : 'text-base font-bold text-slate-900'}>
             Conectividad y beneficios para tu empresa
@@ -214,13 +232,13 @@ export default function QuoteSheetPreview({
 
         {mixHasRoaming(ordered) ? (
           <section>
-            <h3 className={wide ? 'text-lg font-bold leading-snug text-slate-900' : 'text-sm font-bold leading-snug text-slate-900'}>
+            <SectionHeading n={4} accent={accent} wide={wide}>
               Zonas de roaming internacional
-            </h3>
+            </SectionHeading>
             <img
               src={CLARO_ROAMING_ZONES_SRC}
               alt="Zonas de roaming internacional: Zona Andina, América, EE.UU. y Canadá, Europa x 18 meses"
-              className="mt-2 w-full rounded-md"
+              className="mt-3 w-full rounded-md"
             />
           </section>
         ) : null}
