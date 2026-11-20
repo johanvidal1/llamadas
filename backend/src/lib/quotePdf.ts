@@ -327,8 +327,8 @@ function layoutTableColumns(width: number, percent: number): TableCol[] {
   }
   cols.push(
     { key: 'minutos', header: 'MINUTOS', weight: 0.85, align: 'center' },
-    { key: 'datos', header: 'DATOS', weight: 0.75, align: 'center' },
-    { key: 'internet', header: 'INTERNET', weight: 0.85, align: 'center' },
+    { key: 'datos', header: 'INTERNET', weight: 0.75, align: 'center' },
+    { key: 'internet', header: 'DATOS', weight: 0.85, align: 'center' },
     { key: 'apps', header: 'APPS', weight: 1.15 }
   )
   const sum = cols.reduce((total, col) => total + col.weight, 0)

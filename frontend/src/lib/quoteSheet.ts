@@ -418,8 +418,8 @@ export function quoteTableHeaders(percent: number): { key: string; label: string
   if (percent > 0) cols.push({ key: 'dcto', label: `${percent}% DCTO.` })
   cols.push(
     { key: 'minutos', label: 'MINUTOS' },
-    { key: 'datos', label: 'DATOS' },
-    { key: 'internet', label: 'INTERNET' },
+    { key: 'datos', label: 'INTERNET' },
+    { key: 'internet', label: 'DATOS' },
     { key: 'apps', label: 'APPS' }
   )
   return cols

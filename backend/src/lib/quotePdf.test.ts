@@ -238,6 +238,9 @@ async function main() {
   assert.equal(text.includes('BENEFICIOS ADICIONALES'), false)
   assert.ok(text.includes('corporativas'))
   assert.ok(text.includes('portabilidad'))
+  assert.ok(text.includes('INTERNET'))
+  assert.ok(text.includes('DATOS'))
+  assert.ok(text.indexOf('INTERNET') < text.indexOf('DATOS'), 'headers: INTERNET then DATOS')
 
   section('50% snapshot shows badge, DCTO column and discounted mix total')
   const discounted = await renderQuotePdf(sample({ discountPercent: 50 }), { compress: false })
