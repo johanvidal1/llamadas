@@ -409,10 +409,10 @@ export function mobileHeadline(lines: number, suffix?: string | null): string {
   return `${count} ${extra}`
 }
 
-export function quoteTableHeaders(percent: number): { key: string; label: string }[] {
-  const cols = [
+export function quoteTableHeaders(percent: number): { key: string; label: string; headerAlign?: 'left' | 'center' | 'right' }[] {
+  const cols: { key: string; label: string; headerAlign?: 'left' | 'center' | 'right' }[] = [
     { key: 'cant', label: 'CANT.' },
-    { key: 'plan', label: 'PLAN' },
+    { key: 'plan', label: 'PLAN', headerAlign: 'center' },
     { key: 'precio', label: 'PRECIO' },
   ]
   if (percent > 0) cols.push({ key: 'dcto', label: `${percent}% DCTO.` })
@@ -447,4 +447,31 @@ export function formatQuoteCel(phone: string): string {
   const digits = phone.replace(/\D/g, '')
   if (digits.length === 9) return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`
   return phone.trim()
+}
+
+export const QUOTE_DEFAULT_CARGO = 'Ejecutivo de ventas'
+export const QUOTE_CARGO_MAX = 80
+
+export function sanitizeQuoteCargo(raw: string | null | undefined): string {
+  return String(raw ?? '')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, QUOTE_CARGO_MAX)
+}
+
+export function quoteDisplayCargo(raw: string | null | undefined): string {
+  return sanitizeQuoteCargo(raw) || QUOTE_DEFAULT_CARGO
+}
+
+/** Natural / title-case name for the client stamp. Mixed case is left as typed. */
+export function formatQuoteAgentName(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) return '—'
+  const hasLower = /[a-záéíóúüñ]/.test(trimmed)
+  const hasUpper = /[A-ZÁÉÍÓÚÜÑ]/.test(trimmed)
+  if (hasLower && hasUpper) return trimmed
+  return trimmed
+    .toLocaleLowerCase('es-PE')
+    .replace(/(^|[\s'-])(\S)/g, (_match, prefix: string, letter: string) => prefix + letter.toLocaleUpperCase('es-PE'))
 }

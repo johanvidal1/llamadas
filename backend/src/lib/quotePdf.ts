@@ -15,7 +15,6 @@ import {
   quotePlanData,
   quotePlanInternet,
   quotePlanMinutes,
-  quotePlanNameWithOrigin,
   quotePlanRoaming,
   sortQuoteMixRows,
   type QuotePlanOrigin,
@@ -84,6 +83,8 @@ export type QuotePdfInput = {
   issuedAt?: Date
   senderName?: string
   senderPhone?: string
+  /** Agent job title snapshotted at register. Empty → Ejecutivo de ventas. */
+  senderCargo?: string
   letterheadPath?: string | null
   signaturePath?: string | null
   promoPaths?: string[]
@@ -124,10 +125,14 @@ const CONT_HEADER_AFTER = 16
 const CONT_TITLE_SIZE = 11
 const CONT_COMPANY_SIZE = 10
 const CONT_TITLE_COMPANY_GAP = 14
-const FOOTER_H = 32
 const CONTENT_W = PAGE_W - MARGIN_X * 2
 const PAGE_TOP = 24
-const PAGE_BOTTOM = PAGE_H - FOOTER_H - 16
+/** Raised now that the navy footer bar is gone; last page still reserves the stamp. */
+const PAGE_MARGIN_BOTTOM = 20
+const PAGE_BOTTOM = PAGE_H - PAGE_MARGIN_BOTTOM
+const STAMP_LINE_W = 150
+const STAMP_MARGIN_BOTTOM = 28
+const STAMP_CONTENT_GAP = 10
 /** Per-document y where body starts (below the page header). */
 const pageContentTop = new WeakMap<PdfDoc, number>()
 
@@ -205,6 +210,44 @@ export function formatQuoteCel(phone: string): string {
   const digits = phone.replace(/\D/g, '')
   if (digits.length === 9) return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`
   return phone.trim()
+}
+
+export const QUOTE_DEFAULT_CARGO = 'Ejecutivo de ventas'
+export const QUOTE_CARGO_MAX = 80
+
+/** Trim, drop controls, cap length. Empty means the PDF falls back to the default cargo. */
+export function sanitizeQuoteCargo(raw: string | null | undefined): string {
+  return String(raw ?? '')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, QUOTE_CARGO_MAX)
+}
+
+export function quoteDisplayCargo(raw: string | null | undefined): string {
+  return sanitizeQuoteCargo(raw) || QUOTE_DEFAULT_CARGO
+}
+
+/** Natural / title-case name for the client stamp. Mixed case is left as typed. */
+export function formatQuoteAgentName(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) return '—'
+  const hasLower = /[a-záéíóúüñ]/.test(trimmed)
+  const hasUpper = /[A-ZÁÉÍÓÚÜÑ]/.test(trimmed)
+  if (hasLower && hasUpper) return trimmed
+  return trimmed
+    .toLocaleLowerCase('es-PE')
+    .replace(/(^|[\s'-])(\S)/g, (_match, prefix: string, letter: string) => prefix + letter.toLocaleUpperCase('es-PE'))
+}
+
+export function quoteStampBlockHeight(hasPhone: boolean): number {
+  const line = 1
+  const afterLine = 8
+  const nameH = 12
+  const cargoH = 11
+  const between = 3
+  const celH = hasPhone ? 11 : 0
+  return line + afterLine + nameH + between + cargoH + (hasPhone ? between + celH : 0) + 4
 }
 
 export function formatSoles(amount: number): string {
@@ -359,7 +402,7 @@ function layoutTableColumns(width: number, percent: number): TableCol[] {
   const showDcto = percent > 0
   const cols: { key: string; header: string; weight: number; align?: TableCol['align'] }[] = [
     { key: 'cant', header: 'CANT.', weight: 0.55, align: 'center' },
-    { key: 'plan', header: 'PLAN', weight: 1.85 },
+    { key: 'plan', header: 'PLAN', weight: 1.85, align: 'center' },
     { key: 'precio', header: 'PRECIO', weight: 0.9, align: 'right' },
   ]
   if (showDcto) {
@@ -388,6 +431,10 @@ function layoutTableColumns(width: number, percent: number): TableCol[] {
     })
   }
   return out
+}
+
+export function quotePlanTableColumns(width: number, percent: number): TableCol[] {
+  return layoutTableColumns(width, percent)
 }
 
 function cellHeight(doc: PdfDoc, text: string, width: number, font: string, size: number): number {
@@ -597,34 +644,50 @@ function drawWordmark(doc: PdfDoc, x: number, y: number, w: number, h: number) {
   doc.text('empresas', x, y + h / 2 + 2, { width: w, align: 'center', lineBreak: false })
 }
 
-function drawFooter(doc: PdfDoc, sender: string, phone: string) {
-  const y = PAGE_H - FOOTER_H
+function drawSignatureStamp(doc: PdfDoc, sender: string, cargo: string, phone: string) {
+  const cel = phone.trim()
+  const height = quoteStampBlockHeight(Boolean(cel))
+  const y = PAGE_H - STAMP_MARGIN_BOTTOM - height
   const bottom = doc.page.margins.bottom
   const top = doc.page.margins.top
   doc.page.margins.bottom = 0
   doc.page.margins.top = 0
   doc.save()
-  doc.fillColor(NAVY)
-  doc.rect(0, y, PAGE_W, FOOTER_H).fill()
+  doc.strokeColor('#9AA3AE')
+  doc.lineWidth(0.8)
+  doc.moveTo(MARGIN_X, y).lineTo(MARGIN_X + STAMP_LINE_W, y).stroke()
   doc.restore()
-  doc.font('Helvetica-Bold').fontSize(9).fillColor('#FFFFFF')
-  const who = (sender.trim() || '—').toUpperCase()
-  doc.text(`EJECUTIVO COMERCIAL: ${who}`, MARGIN_X, y + 11, {
-    width: CONTENT_W * 0.62,
+  let textY = y + 8
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(INK)
+  doc.text(formatQuoteAgentName(sender), MARGIN_X, textY, {
+    width: CONTENT_W * 0.55,
     lineBreak: false,
-    height: 14,
   })
-  const cel = phone.trim()
+  textY += 15
+  doc.font('Helvetica').fontSize(9).fillColor(MUTED)
+  doc.text(quoteDisplayCargo(cargo), MARGIN_X, textY, {
+    width: CONTENT_W * 0.55,
+    lineBreak: false,
+  })
   if (cel) {
-    doc.text(`CEL. ${formatQuoteCel(cel)}`, MARGIN_X + CONTENT_W * 0.62, y + 11, {
-      width: CONTENT_W * 0.38,
-      align: 'right',
+    textY += 13
+    doc.font('Helvetica').fontSize(9).fillColor(MUTED)
+    doc.text(`Cel. ${formatQuoteCel(cel)}`, MARGIN_X, textY, {
+      width: CONTENT_W * 0.55,
       lineBreak: false,
-      height: 14,
     })
   }
   doc.page.margins.bottom = bottom
   doc.page.margins.top = top
+}
+
+function finishWithSignatureStamp(doc: PdfDoc, sender: string, cargo: string, phone: string) {
+  const cel = phone.trim()
+  const stampTop = PAGE_H - STAMP_MARGIN_BOTTOM - quoteStampBlockHeight(Boolean(cel))
+  if (doc.y > stampTop - STAMP_CONTENT_GAP) {
+    doc.addPage()
+  }
+  drawSignatureStamp(doc, sender, cargo, phone)
 }
 
 function drawKpiBand(doc: PdfDoc, y: number, total: number, percent: number): number {
@@ -658,7 +721,7 @@ function tableCellText(
 ): { text: string; color: string; strike?: boolean; font?: string } {
   if (key === 'cant') return { text: String(row.lines), color: INK, font: 'Helvetica-Bold' }
   if (key === 'plan') {
-    return { text: quotePlanNameWithOrigin(row.name, row.origin), color: INK, font: 'Helvetica-Bold' }
+    return { text: row.name, color: INK, font: 'Helvetica-Bold' }
   }
   if (key === 'precio') {
     return {
@@ -774,7 +837,7 @@ function drawPlanTable(doc: PdfDoc, rows: QuotePdfPlanRow[], percent: number, yS
       doc.font(cell.font || 'Helvetica').fontSize(bodySize).fillColor(cell.color)
       doc.text(cell.text, x + padX, y + padY, {
         width: Math.max(10, col.width - padX * 2),
-        align: col.align ?? 'left',
+        align: col.key === 'plan' ? 'left' : col.align ?? 'left',
         lineGap: 0,
         strike: cell.strike === true,
       })
@@ -1126,6 +1189,7 @@ export function renderQuotePdf(input: QuotePdfInput, options?: { compress?: bool
     const letterhead = bundledClaroLogoPath() ?? usableImagePath(input.letterheadPath)
     const sender = (input.senderName || '').trim()
     const senderPhone = (input.senderPhone || '').trim()
+    const senderCargo = input.senderCargo ?? ''
     const extras = (input.extras || '').trim()
     const zonesPath = bundledRoamingZonesPath()
 
@@ -1138,7 +1202,6 @@ export function renderQuotePdf(input: QuotePdfInput, options?: { compress?: bool
         const contH = drawContinuationHeader(doc, input.companyName, letterhead)
         setContentTop(doc, contH + CONT_HEADER_AFTER)
       }
-      drawFooter(doc, sender, senderPhone)
     }
     paintPageChrome(true)
     doc.on('pageAdded', () => paintPageChrome(false))
@@ -1176,6 +1239,8 @@ export function renderQuotePdf(input: QuotePdfInput, options?: { compress?: bool
     if (mixHasRoaming(rows) && zonesPath) {
       drawRoamingZones(doc, doc.y, zonesPath)
     }
+
+    finishWithSignatureStamp(doc, sender, senderCargo, senderPhone)
 
     doc.end()
   })

@@ -17,8 +17,9 @@ import {
   quotePlanAppsShort,
   quotePlanData,
   quotePlanInternet,
+  formatQuoteAgentName,
+  quoteDisplayCargo,
   quotePlanMinutes,
-  quotePlanNameWithOrigin,
   quotePlanRoaming,
   quoteTableHeaders,
   sortQuoteMixRows,
@@ -46,6 +47,7 @@ export default function QuoteSheetPreview({
   headlineSuffix,
   senderName,
   senderPhone,
+  senderCargo,
   onExtras,
   size = 'panel',
 }: {
@@ -57,6 +59,7 @@ export default function QuoteSheetPreview({
   headlineSuffix?: string | null
   senderName: string
   senderPhone: string
+  senderCargo?: string | null
   onExtras: (value: string) => void
   size?: 'panel' | 'wide'
 }) {
@@ -150,7 +153,9 @@ export default function QuoteSheetPreview({
                   {headers.map((header) => (
                     <th
                       key={header.key}
-                      className="px-1.5 py-1 text-left align-bottom font-semibold uppercase first:rounded-l-md last:rounded-r-md"
+                      className={`px-1.5 py-1 align-bottom font-semibold uppercase first:rounded-l-md last:rounded-r-md ${
+                        header.headerAlign === 'center' ? 'text-center' : 'text-left'
+                      }`}
                       style={{ backgroundColor: navy, color: '#FFFFFF' }}
                     >
                       {header.label}
@@ -162,7 +167,12 @@ export default function QuoteSheetPreview({
                 {ordered.map((row) => (
                   <tr key={row.id} className="odd:bg-white even:bg-slate-50">
                     {headers.map((header) => (
-                      <td key={`${row.id}:${header.key}`} className="px-1.5 py-1 align-top break-words text-slate-900">
+                      <td
+                        key={`${row.id}:${header.key}`}
+                        className={`px-1.5 py-1 align-top break-words text-slate-900 ${
+                          header.key === 'plan' ? 'text-left' : ''
+                        }`}
+                      >
                         <SheetTableCell row={row} column={header.key} percent={discountPercent} accent={accent} />
                       </td>
                     ))}
@@ -183,7 +193,7 @@ export default function QuoteSheetPreview({
               return (
                 <div key={`roam-${row.id}`} className="rounded-xl bg-slate-100 px-4 py-3">
                   <p className={wide ? 'text-sm font-bold' : 'text-xs font-bold'} style={{ color: accent }}>
-                    {quotePlanNameWithOrigin(row.name, row.origin)}
+                    {row.name}
                   </p>
                   <p className={wide ? 'mt-1 text-sm font-semibold text-slate-900' : 'mt-1 text-xs font-semibold text-slate-900'}>
                     {displayBenefit(roam.min)} | {displayBenefit(roam.internet)}
@@ -203,7 +213,7 @@ export default function QuoteSheetPreview({
             {ordered.map((row) => (
               <div key={`apps-${row.id}`} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
                 <p className={wide ? 'w-44 shrink-0 text-sm font-bold' : 'w-36 shrink-0 text-xs font-bold'} style={{ color: accent }}>
-                  {quotePlanNameWithOrigin(row.name, row.origin)}
+                  {row.name}
                 </p>
                 <p className={wide ? 'min-w-0 flex-1 text-sm text-slate-800' : 'min-w-0 flex-1 text-xs text-slate-800'}>
                   {displayBenefit(quotePlanApps(row.benefits))}
@@ -244,14 +254,14 @@ export default function QuoteSheetPreview({
         ) : null}
       </div>
 
-      <div className="flex items-center justify-between gap-3 px-5 py-2.5 text-white" style={{ backgroundColor: navy }}>
-        <p className={wide ? 'min-w-0 text-sm font-semibold uppercase' : 'min-w-0 text-[11px] font-semibold uppercase'}>
-          Ejecutivo comercial: {sender || '—'}
+      <div className={wide ? 'px-8 pb-6 pt-2' : 'px-5 pb-5 pt-2'}>
+        <div className="w-[9.5rem] border-t border-slate-400" aria-hidden />
+        <p className={wide ? 'mt-2 text-sm font-semibold text-slate-900' : 'mt-2 text-xs font-semibold text-slate-900'}>
+          {formatQuoteAgentName(sender)}
         </p>
+        <p className={wide ? 'text-sm text-slate-500' : 'text-xs text-slate-500'}>{quoteDisplayCargo(senderCargo)}</p>
         {phone ? (
-          <p className={wide ? 'text-sm font-semibold uppercase' : 'text-[11px] font-semibold uppercase'}>
-            Cel. {formatQuoteCel(phone)}
-          </p>
+          <p className={wide ? 'text-sm text-slate-500' : 'text-xs text-slate-500'}>Cel. {formatQuoteCel(phone)}</p>
         ) : null}
       </div>
     </div>
@@ -297,7 +307,7 @@ function SheetTableCell({
 }) {
   if (column === 'cant') return <span className="font-semibold">{row.lines}</span>
   if (column === 'plan') {
-    return <span className="font-semibold">{quotePlanNameWithOrigin(row.name, row.origin)}</span>
+    return <span className="font-semibold">{row.name}</span>
   }
   if (column === 'precio') {
     return (

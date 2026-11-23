@@ -74,6 +74,8 @@ export type AuthUser = {
   hasAvatar?: boolean
   /** Peru mobile, 9 digits, or null when unset. */
   phone?: string | null
+  /** Peru job title for the quote stamp. Null/empty prints Ejecutivo de ventas. */
+  cargo?: string | null
   /** Client-only cache buster after avatar upload. */
   avatarVersion?: number
   batchQueueMode?: BatchQueueMode
@@ -92,6 +94,7 @@ export const patchMe = (data: {
   workingBatchIdMovistar?: string | null
   operator?: 'ENTEL' | 'MOVISTAR'
   phone?: string
+  cargo?: string
 }) => api.patch<AuthUser>('/auth/me', data).then((r) => r.data)
 
 export const uploadAvatar = (file: File) => {

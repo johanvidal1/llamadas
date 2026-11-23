@@ -85,6 +85,8 @@ model User {
   email            String
   /// Peru mobile, 9 digits, no country code. Null when the agent has not set one.
   phone            String?
+  /// Peru job title for the quote stamp. Null/empty prints Ejecutivo de ventas.
+  cargo            String?
   password         String
   role             String   @default("AGENT")
   // Relative path under process.cwd(), e.g. uploads/avatars/{userId}/avatar.jpg
@@ -548,6 +550,8 @@ model CommercialQuote {
   senderName   String   @default("")
   /// Agent phone at register time, 9 digits or empty.
   senderPhone  String   @default("")
+  /// Agent job title at register time. Empty prints Ejecutivo de ventas on the PDF.
+  senderCargo  String   @default("")
   /// Relative path under process cwd, e.g. uploads/quotes/{tenantId}/pdfs/{id}.pdf
   pdfPath      String
   /// Paths snapshotted from the format at creation. Relative, same rules as pdfPath.

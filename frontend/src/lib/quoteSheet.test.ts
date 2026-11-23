@@ -23,6 +23,9 @@ import {
   quotePlanData,
   quotePlanInternet,
   quotePlanNameWithOrigin,
+  quoteDisplayCargo,
+  formatQuoteAgentName,
+  QUOTE_DEFAULT_CARGO,
   planMixLayout,
   QUOTE_MIX_ORIGIN_DISPLAY_ORDER,
   sortQuoteMixRows,
@@ -186,6 +189,11 @@ assert.equal(quotePlanData(mixed), '41 GB')
 assert.equal(quotePlanNameWithOrigin('MAX NEGOCIOS+ 29.9', 'nueva'), 'MAX NEGOCIOS+ 29.9 · nueva')
 assert.equal(quotePlanNameWithOrigin('MAX NEGOCIOS+ 29.9', 'portabilidad'), 'MAX NEGOCIOS+ 29.9 · porta')
 assert.equal(quotePlanNameWithOrigin('MAX NEGOCIOS+ 29.9'), 'MAX NEGOCIOS+ 29.9')
+assert.equal(quoteTableHeaders(0).find((col) => col.key === 'plan')?.headerAlign, 'center')
+assert.equal(quoteDisplayCargo(''), QUOTE_DEFAULT_CARGO)
+assert.equal(quoteDisplayCargo('Consultor senior'), 'Consultor senior')
+assert.equal(formatQuoteAgentName('Ana Pérez'), 'Ana Pérez')
+assert.equal(formatQuoteAgentName('ANA PEREZ'), 'Ana Perez')
 
 section('default origin follows Plan actual; mix uniqueness is plan plus origin')
 assert.equal(defaultQuotePlanOrigin(0), 'nueva')

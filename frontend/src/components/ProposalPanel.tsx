@@ -785,6 +785,7 @@ export default function ProposalPanel({
         headlineSuffix={headlineSuffix}
         senderName={user?.name?.trim() ?? ''}
         senderPhone={senderPhone}
+        senderCargo={user?.cargo ?? ''}
         onExtras={setExtras}
       />
     )

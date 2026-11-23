@@ -16,7 +16,11 @@ import {
   quoteLineTotal,
   quotePdfFilename,
   quoteHeaderMetrics,
+  quotePlanTableColumns,
+  quoteDisplayCargo,
+  formatQuoteAgentName,
   QUOTE_HEADLINE_SUFFIX_DEFAULT,
+  QUOTE_DEFAULT_CARGO,
   renderQuotePdf,
   type QuotePdfInput,
 } from './quotePdf'
@@ -74,6 +78,45 @@ function pdfTextAtY(pdf: Buffer): { text: string; y: number }[] {
     }
   }
   return items
+}
+
+function pdfPageTexts(pdf: Buffer): string[] {
+  const raw = pdf.toString('latin1')
+  const pages: string[] = []
+  const headerRe = /<<\r?\n\/Length (\d+)\r?\n>>\r?\nstream\r?\n/g
+  let header: RegExpExecArray | null
+  const tokenRe = /<([0-9A-Fa-f]{2,})>|\((?:\\\)|[^)])*\)/g
+  while ((header = headerRe.exec(raw))) {
+    const stream = raw.slice(header.index + header[0].length, header.index + header[0].length + Number(header[1]))
+    const parts: string[] = []
+    tokenRe.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = tokenRe.exec(stream))) {
+      if (match[1]) {
+        if (match[1].length % 2 === 0) parts.push(Buffer.from(match[1], 'hex').toString('latin1'))
+        continue
+      }
+      parts.push(match[0].slice(1, -1).replace(/\\(.)/g, '$1'))
+    }
+    const text = parts.join('')
+    if (/PROPUESTA|FACTUR|Ejecutivo|PLAN/.test(text)) pages.push(text)
+  }
+  return pages
+}
+
+function shortStampLines(pdf: Buffer): { y: number; width: number }[] {
+  const raw = pdf.toString('latin1')
+  const re = /([0-9.]+) ([0-9.]+) m\r?\n([0-9.]+) ([0-9.]+) l/g
+  const out: { y: number; width: number }[] = []
+  let match: RegExpExecArray | null
+  while ((match = re.exec(raw))) {
+    const y1 = Number(match[2])
+    const y2 = Number(match[4])
+    if (Math.abs(y2 - y1) > 0.5) continue
+    const width = Math.abs(Number(match[3]) - Number(match[1]))
+    if (width >= 140 && width <= 160) out.push({ y: y1, width })
+  }
+  return out
 }
 
 function mediaBox(pdf: Buffer): { width: number; height: number } {
@@ -223,6 +266,11 @@ async function main() {
   assert.ok(text.includes('MAX NEGOCIOS+ 29.9'))
   assert.ok(text.includes('Ana') || text.includes('ANA'))
   assert.ok(text.includes('999111222') || text.includes('999 111 222'))
+  assert.ok(text.includes(QUOTE_DEFAULT_CARGO))
+  assert.equal(text.includes('EJECUTIVO COMERCIAL'), false)
+  assert.equal(text.includes('EJECUTIVO'), false)
+  assert.equal(text.includes(' · porta'), false)
+  assert.equal(text.includes(' · nueva'), false)
   assert.equal(text.includes('999888777'), false)
   assert.equal(text.includes('Empresa PRO'), false)
   assert.equal(text.includes('Plan actual'), false)
@@ -542,14 +590,19 @@ async function main() {
     1,
     'continuation header stays one-line (PORTABILIDAD MÓVIL only on page 1)'
   )
-  assert.ok(tallText.includes('EJECUTIVO') || tallText.includes('COMERCIAL'))
+  assert.equal(tallText.includes('EJECUTIVO COMERCIAL'), false)
+  assert.ok(tallText.includes(QUOTE_DEFAULT_CARGO))
+  const tallPagesText = pdfPageTexts(tall)
+  assert.ok(tallPagesText.length >= 2, 'tall mix exposes at least two page text streams')
+  assert.equal(tallPagesText[0]?.includes(QUOTE_DEFAULT_CARGO), false, 'page 1 of a 2-page quote has no stamp')
+  assert.ok(tallPagesText[tallPagesText.length - 1]?.includes(QUOTE_DEFAULT_CARGO), 'stamp is on the last page')
   const tallFooter = pdfTextAtY(tall).filter((item) => item.y > 0 && item.y < 36)
   const tallFooterText = tallFooter.map((item) => item.text).join('')
   if (tallFooter.length > 0) {
     assert.equal(
       /Zonas|Andina|Europa/i.test(tallFooterText),
       false,
-      'zones title+map stay above the footer'
+      'zones title+map stay above the stamp'
     )
   }
 
@@ -569,18 +622,15 @@ async function main() {
   const appsOverflowPages = pageCount(appsOverflow)
   assert.ok(appsOverflowPages >= 2, 'many mix rows need a second page so apps do not cover the footer')
   assert.ok(appsOverflowText.includes('Aplicaciones') || appsOverflowText.includes('ilimitadas'))
-  assert.ok(appsOverflowText.includes('EJECUTIVO') || appsOverflowText.includes('COMERCIAL'))
+  assert.equal(appsOverflowText.includes('EJECUTIVO COMERCIAL'), false)
+  assert.ok(appsOverflowText.includes(QUOTE_DEFAULT_CARGO))
   const footerBand = pdfTextAtY(appsOverflow).filter((item) => item.y > 0 && item.y < 36)
   const footerBandText = footerBand.map((item) => item.text).join('')
   if (footerBand.length > 0) {
-    assert.ok(
-      footerBandText.includes('EJECUTIVO') || footerBandText.includes('COMERCIAL') || footerBandText.includes('CEL'),
-      'footer band still has the navy bar text'
-    )
     assert.equal(
       /Facebook|WhatsApp|Aplicaciones|MAX NEGOCIOS/i.test(footerBandText),
       false,
-      'apps rows must not paint into the footer y-range'
+      'apps rows must not paint into the stamp y-range'
     )
   }
   assert.equal(
@@ -605,7 +655,8 @@ async function main() {
   assert.ok(pageCount(roamKeep) >= 2, 'roaming block moves whole to the next page when leftover is small')
   assert.ok(roamKeepText.includes('Roaming'))
   assert.ok(roamKeepText.includes('Aplicaciones') || roamKeepText.includes('ilimitadas'))
-  assert.ok(roamKeepText.includes('EJECUTIVO') || roamKeepText.includes('COMERCIAL'))
+  assert.equal(roamKeepText.includes('EJECUTIVO COMERCIAL'), false)
+  assert.ok(roamKeepText.includes(QUOTE_DEFAULT_CARGO))
   const roamFooter = pdfTextAtY(roamKeep).filter((item) => item.y > 0 && item.y < 36)
   const roamFooterText = roamFooter.map((item) => item.text).join('')
   if (roamFooter.length > 0) {
@@ -700,8 +751,10 @@ async function main() {
   )
   const dualText = pdfText(dual)
   assert.ok(dualText.includes('PORTABILIDAD'))
-  assert.ok(dualText.includes('nueva'))
-  assert.ok(dualText.includes('porta'))
+  assert.equal(dualText.includes(' · nueva'), false)
+  assert.equal(dualText.includes(' · porta'), false)
+  assert.equal(dualText.includes('· nueva'), false)
+  assert.equal(dualText.includes('· porta'), false)
   assert.ok(dualText.includes('21 GB'))
   assert.ok(dualText.includes('41 GB'))
   assert.ok(dualText.includes('52 GB'))
@@ -814,6 +867,52 @@ async function main() {
   assert.equal(extrasText.includes('OPTICK'), false)
   assert.equal(extrasText.includes('Estimado'), false)
   assert.equal(extrasText.includes('Quedamos atentos'), false)
+
+  section('PLAN header is centered; plan names stay left and omit origin tags')
+  const planCol = quotePlanTableColumns(515, 0).find((col) => col.key === 'plan')
+  assert.equal(planCol?.align, 'center')
+  const cantCol = quotePlanTableColumns(515, 0).find((col) => col.key === 'cant')
+  assert.equal(cantCol?.align, 'center')
+
+  section('signature stamp is last-page only, with default or custom cargo')
+  assert.equal(quoteDisplayCargo(''), QUOTE_DEFAULT_CARGO)
+  assert.equal(quoteDisplayCargo('   '), QUOTE_DEFAULT_CARGO)
+  assert.equal(quoteDisplayCargo('Consultor senior'), 'Consultor senior')
+  assert.equal(formatQuoteAgentName('Ana Pérez'), 'Ana Pérez')
+  assert.equal(formatQuoteAgentName('ANA PEREZ'), 'Ana Perez')
+  const onePage = await renderQuotePdf(sample({ benefits: noRoamingBenefits }), { compress: false })
+  const onePageText = pdfText(onePage)
+  assert.equal(pageCount(onePage), 1)
+  assert.ok(onePageText.includes('Ana'))
+  assert.ok(onePageText.includes(QUOTE_DEFAULT_CARGO))
+  assert.ok(onePageText.includes('Cel.') || onePageText.includes('999 111 222'))
+  assert.equal(onePageText.includes('EJECUTIVO COMERCIAL'), false)
+  assert.equal(onePageText.includes('Firma'), false)
+  assert.ok(shortStampLines(onePage).length >= 1, 'short muted signature line (~150 pt)')
+  const customCargoPdf = await renderQuotePdf(
+    sample({ benefits: noRoamingBenefits, senderCargo: 'Consultor senior' }),
+    { compress: false }
+  )
+  const customCargoText = pdfText(customCargoPdf)
+  assert.ok(customCargoText.includes('Consultor senior'))
+  assert.equal(customCargoText.includes(QUOTE_DEFAULT_CARGO), false)
+  const twoPage = await renderQuotePdf(
+    sample({
+      extras: 'Asesor posventa · Nota de crédito en el tercer mes · Portabilidad asistida',
+      discountPercent: 50,
+      planRows: tallRows,
+    }),
+    { compress: false }
+  )
+  assert.ok(pageCount(twoPage) >= 2)
+  const twoPageTexts = pdfPageTexts(twoPage)
+  assert.ok(twoPageTexts.length >= 2)
+  assert.equal(twoPageTexts[0]?.includes(QUOTE_DEFAULT_CARGO), false, 'first page has no cargo stamp')
+  assert.equal(twoPageTexts[0]?.includes('Ana'), false, 'first page has no agent name stamp')
+  assert.ok(twoPageTexts[twoPageTexts.length - 1]?.includes(QUOTE_DEFAULT_CARGO))
+  assert.ok(twoPageTexts[twoPageTexts.length - 1]?.includes('Ana'))
+  assert.equal(pdfText(twoPage).includes('EJECUTIVO COMERCIAL'), false)
+  assert.ok(shortStampLines(twoPage).length >= 1)
 
   console.log('\nquote PDF smoke test ok')
 }

@@ -69,6 +69,8 @@ export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
   const [phone, setPhone] = useState('')
   const [phoneError, setPhoneError] = useState('')
   const [savingPhone, setSavingPhone] = useState(false)
+  const [cargo, setCargo] = useState('')
+  const [savingCargo, setSavingCargo] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -109,6 +111,10 @@ export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
     setPhone(user?.phone ?? '')
     setPhoneError('')
   }, [user?.phone, user?.id])
+
+  useEffect(() => {
+    setCargo(user?.cargo ?? '')
+  }, [user?.cargo, user?.id])
 
   useEffect(() => {
     if (!open) return
@@ -154,6 +160,20 @@ export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
     } finally {
       setUploading(false)
       if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  const handleSaveCargo = async () => {
+    setSavingCargo(true)
+    try {
+      const next = await patchMe({ cargo })
+      updateUser({ cargo: next.cargo ?? null })
+      toast.success(next.cargo ? 'Cargo guardado' : 'Cargo quitado')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(msg ?? 'No se pudo guardar el cargo')
+    } finally {
+      setSavingCargo(false)
     }
   }
 
@@ -305,6 +325,29 @@ export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
               className="mt-2 h-8 w-full rounded-md border border-blue-600 bg-white text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
             >
               {savingPhone ? 'Guardando…' : 'Guardar celular'}
+            </button>
+          </div>
+
+          <div className="px-3 py-2" role="group" aria-label="Cargo">
+            <label className="block text-[11px] font-semibold uppercase tracking-wide text-gray-500" htmlFor="avatar-menu-cargo">
+              Cargo
+            </label>
+            <input
+              id="avatar-menu-cargo"
+              className="mt-1 h-8 w-full rounded-md border border-gray-200 px-2 text-sm text-gray-900 outline-none focus:border-blue-500"
+              maxLength={80}
+              placeholder="Ejecutivo de ventas"
+              value={cargo}
+              onChange={(e) => setCargo(e.target.value)}
+            />
+            <p className="mt-1 text-[11px] text-gray-400">Vacío usa Ejecutivo de ventas en la propuesta.</p>
+            <button
+              type="button"
+              disabled={savingCargo}
+              onClick={() => void handleSaveCargo()}
+              className="mt-2 h-8 w-full rounded-md border border-blue-600 bg-white text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+            >
+              {savingCargo ? 'Guardando…' : 'Guardar cargo'}
             </button>
           </div>
 

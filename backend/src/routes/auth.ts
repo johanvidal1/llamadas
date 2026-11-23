@@ -17,6 +17,7 @@ import {
 } from '../lib/elevateAdminRateLimit'
 import { prisma } from '../lib/prisma'
 import { agentPhoneOrNull } from '../lib/telefono2'
+import { sanitizeQuoteCargo } from '../lib/quotePdf'
 import { runWithTenant } from '../lib/tenantContext'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
@@ -74,6 +75,7 @@ const authUserPublicSelect = {
   isSystemOwner: true,
   avatarUrl: true,
   phone: true,
+  cargo: true,
   batchQueueMode: true,
   workingBatchId: true,
   workingBatchIdEntel: true,
@@ -89,6 +91,7 @@ function publicUserFields(user: {
   isSystemOwner: boolean
   avatarUrl?: string | null
   phone?: string | null
+  cargo?: string | null
   batchQueueMode?: string | null
   workingBatchId?: string | null
   workingBatchIdEntel?: string | null
@@ -104,6 +107,7 @@ function publicUserFields(user: {
     isSystemOwner: user.isSystemOwner,
     hasAvatar: Boolean(user.avatarUrl),
     phone: user.phone ?? null,
+    cargo: user.cargo ?? null,
     batchQueueMode: user.batchQueueMode === 'LIFO' || user.batchQueueMode === 'ALL' ? user.batchQueueMode : 'FIFO',
     workingBatchId: workingBatchIdEntel,
     workingBatchIdEntel,
@@ -122,6 +126,7 @@ const patchMeSchema = z.object({
   workingBatchIdMovistar: z.union([z.string().min(1), z.null()]).optional(),
   operator: z.enum(['ENTEL', 'MOVISTAR']).optional(),
   phone: z.string().max(40).optional(),
+  cargo: z.string().max(80).optional(),
 })
 
 /** Password required; email optional (legacy path when provided). */
@@ -158,6 +163,7 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
       tokenVersion: true,
       avatarUrl: true,
       phone: true,
+      cargo: true,
       batchQueueMode: true,
       workingBatchId: true,
       workingBatchIdEntel: true,
@@ -295,7 +301,8 @@ router.patch('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     data.workingBatchId !== undefined ||
     data.workingBatchIdEntel !== undefined ||
     data.workingBatchIdMovistar !== undefined ||
-    data.phone !== undefined
+    data.phone !== undefined ||
+    data.cargo !== undefined
   if (!hasAny) {
     res.status(400).json({ error: 'Nada que actualizar' })
     return
@@ -306,6 +313,7 @@ router.patch('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     workingBatchIdEntel?: string | null
     workingBatchIdMovistar?: string | null
     phone?: string | null
+    cargo?: string | null
   } = {}
 
   if (data.phone !== undefined) {
@@ -315,6 +323,10 @@ router.patch('/me', requireAuth, async (req: AuthRequest, res: Response) => {
       return
     }
     updateData.phone = parsedPhone.phone
+  }
+
+  if (data.cargo !== undefined) {
+    updateData.cargo = sanitizeQuoteCargo(data.cargo) || null
   }
 
   if (data.workingBatchIdEntel !== undefined) {
@@ -357,6 +369,7 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
       active: true,
       avatarUrl: true,
       phone: true,
+      cargo: true,
       batchQueueMode: true,
       workingBatchId: true,
       workingBatchIdEntel: true,

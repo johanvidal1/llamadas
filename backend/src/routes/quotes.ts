@@ -18,6 +18,7 @@ import {
   quotePdfFilename,
   QUOTE_HEADLINE_SUFFIX_DEFAULT,
   renderQuotePdf,
+  sanitizeQuoteCargo,
   type QuotePdfBenefit,
   type QuotePdfCurrentPlan,
   type QuotePdfPlanRow,
@@ -175,6 +176,7 @@ type StoredQuote = {
   tableName: string
   senderName: string
   senderPhone: string
+  senderCargo: string
   letterheadPath: string | null
   signaturePath: string | null
   promoPaths: Prisma.JsonValue
@@ -230,6 +232,7 @@ async function renderStoredQuote(quote: StoredQuote): Promise<Buffer> {
     issuedAt: quote.createdAt,
     senderName: quote.senderName,
     senderPhone: quote.senderPhone,
+    senderCargo: quote.senderCargo,
     letterheadPath: bundledClaroLogoPath(),
   })
 }
@@ -277,12 +280,13 @@ async function senderForQuote(userId: string | undefined, typedName: string | un
   const user = userId
     ? await prisma.user.findUnique({
         where: { id: userId },
-        select: { name: true, phone: true },
+        select: { name: true, phone: true, cargo: true },
       })
     : null
   return {
     senderName: (typedName ?? '').trim() || user?.name?.trim() || '',
     senderPhone: user?.phone?.trim() || '',
+    senderCargo: sanitizeQuoteCargo(user?.cargo),
   }
 }
 
@@ -552,6 +556,7 @@ async function buildQuotePdf(body: QuoteDraftBody, tenantId: string, userId: str
       issuedAt,
       senderName: sender.senderName,
       senderPhone: sender.senderPhone,
+      senderCargo: sender.senderCargo,
       letterheadPath: bundledClaroLogoPath(),
     })
   } catch (err) {
@@ -667,6 +672,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
       tableName: table.name,
       senderName: sender.senderName,
       senderPhone: sender.senderPhone,
+      senderCargo: sender.senderCargo,
       pdfPath: 'pending',
       letterheadPath: template.letterheadPath,
       signaturePath: template.signaturePath,
