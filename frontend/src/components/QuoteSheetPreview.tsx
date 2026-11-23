@@ -254,15 +254,17 @@ export default function QuoteSheetPreview({
         ) : null}
       </div>
 
-      <div className={wide ? 'px-8 pb-6 pt-2' : 'px-5 pb-5 pt-2'}>
-        <div className="w-[9.5rem] border-t border-slate-400" aria-hidden />
-        <p className={wide ? 'mt-2 text-sm font-semibold text-slate-900' : 'mt-2 text-xs font-semibold text-slate-900'}>
-          {formatQuoteAgentName(sender)}
-        </p>
-        <p className={wide ? 'text-sm text-slate-500' : 'text-xs text-slate-500'}>{quoteDisplayCargo(senderCargo)}</p>
-        {phone ? (
-          <p className={wide ? 'text-sm text-slate-500' : 'text-xs text-slate-500'}>Cel. {formatQuoteCel(phone)}</p>
-        ) : null}
+      <div className={wide ? 'flex justify-end px-8 pb-7 pt-10' : 'flex justify-end px-5 pb-5 pt-9'}>
+        <div className="w-[11.75rem] text-left">
+          <div className="w-[9.5rem] border-t border-[#9AA3AE]" aria-hidden />
+          <p className={wide ? 'mt-2 text-sm font-semibold text-slate-900' : 'mt-2 text-xs font-semibold text-slate-900'}>
+            {formatQuoteAgentName(sender)}
+          </p>
+          <p className={wide ? 'text-sm text-slate-500' : 'text-xs text-slate-500'}>{quoteDisplayCargo(senderCargo)}</p>
+          {phone ? (
+            <p className={wide ? 'text-sm text-slate-500' : 'text-xs text-slate-500'}>Cel. {formatQuoteCel(phone)}</p>
+          ) : null}
+        </div>
       </div>
     </div>
   )

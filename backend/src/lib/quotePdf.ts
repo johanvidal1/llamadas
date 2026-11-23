@@ -131,8 +131,15 @@ const PAGE_TOP = 24
 const PAGE_MARGIN_BOTTOM = 20
 const PAGE_BOTTOM = PAGE_H - PAGE_MARGIN_BOTTOM
 const STAMP_LINE_W = 150
-const STAMP_MARGIN_BOTTOM = 28
-const STAMP_CONTENT_GAP = 10
+/** Right-anchored block: right edge = PAGE_W - MARGIN_X, text left-aligned inside. */
+export const STAMP_BLOCK_W = 190
+export const STAMP_X = PAGE_W - MARGIN_X - STAMP_BLOCK_W
+/** Never closer than this to the sheet floor. */
+export const STAMP_MARGIN_BOTTOM = 28
+/** Air kept between the last content and the signing space (floor of the placement rule). */
+export const STAMP_CONTENT_GAP = 32
+/** Clear space above the signature line, measured from the last content cursor (doc.y). */
+export const STAMP_SIGN_SPACE = 40
 /** Per-document y where body starts (below the page header). */
 const pageContentTop = new WeakMap<PdfDoc, number>()
 
@@ -248,6 +255,29 @@ export function quoteStampBlockHeight(hasPhone: boolean): number {
   const between = 3
   const celH = hasPhone ? 11 : 0
   return line + afterLine + nameH + between + cargoH + (hasPhone ? between + celH : 0) + 4
+}
+
+/** Height of the whole keep-together unit: signing space + line + text. */
+export function quoteStampUnitHeight(hasPhone: boolean): number {
+  return Math.max(STAMP_SIGN_SPACE, STAMP_CONTENT_GAP) + quoteStampBlockHeight(hasPhone)
+}
+
+/**
+ * Top-down placement rule. The line sits `max(gap, signSpace)` (40 pt) below the last content
+ * cursor, so it rises under the content instead of hugging the page floor. If the whole unit
+ * does not fit above the floor margin, it moves to a new page (below the continuation header).
+ */
+export function quoteStampPlacement(
+  contentY: number,
+  nextPageTop: number,
+  hasPhone: boolean
+): { newPage: boolean; lineY: number } {
+  const sign = Math.max(STAMP_SIGN_SPACE, STAMP_CONTENT_GAP)
+  const block = quoteStampBlockHeight(hasPhone)
+  if (contentY + sign + block <= PAGE_H - STAMP_MARGIN_BOTTOM) {
+    return { newPage: false, lineY: contentY + sign }
+  }
+  return { newPage: true, lineY: nextPageTop + sign }
 }
 
 export function formatSoles(amount: number): string {
@@ -644,10 +674,9 @@ function drawWordmark(doc: PdfDoc, x: number, y: number, w: number, h: number) {
   doc.text('empresas', x, y + h / 2 + 2, { width: w, align: 'center', lineBreak: false })
 }
 
-function drawSignatureStamp(doc: PdfDoc, sender: string, cargo: string, phone: string) {
+function drawSignatureStamp(doc: PdfDoc, lineY: number, sender: string, cargo: string, phone: string) {
   const cel = phone.trim()
-  const height = quoteStampBlockHeight(Boolean(cel))
-  const y = PAGE_H - STAMP_MARGIN_BOTTOM - height
+  const y = lineY
   const bottom = doc.page.margins.bottom
   const top = doc.page.margins.top
   doc.page.margins.bottom = 0
@@ -655,25 +684,28 @@ function drawSignatureStamp(doc: PdfDoc, sender: string, cargo: string, phone: s
   doc.save()
   doc.strokeColor('#9AA3AE')
   doc.lineWidth(0.8)
-  doc.moveTo(MARGIN_X, y).lineTo(MARGIN_X + STAMP_LINE_W, y).stroke()
+  doc.moveTo(STAMP_X, y).lineTo(STAMP_X + STAMP_LINE_W, y).stroke()
   doc.restore()
   let textY = y + 8
   doc.font('Helvetica-Bold').fontSize(10).fillColor(INK)
-  doc.text(formatQuoteAgentName(sender), MARGIN_X, textY, {
-    width: CONTENT_W * 0.55,
+  doc.text(formatQuoteAgentName(sender), STAMP_X, textY, {
+    width: STAMP_BLOCK_W,
+    align: 'left',
     lineBreak: false,
   })
   textY += 15
   doc.font('Helvetica').fontSize(9).fillColor(MUTED)
-  doc.text(quoteDisplayCargo(cargo), MARGIN_X, textY, {
-    width: CONTENT_W * 0.55,
+  doc.text(quoteDisplayCargo(cargo), STAMP_X, textY, {
+    width: STAMP_BLOCK_W,
+    align: 'left',
     lineBreak: false,
   })
   if (cel) {
     textY += 13
     doc.font('Helvetica').fontSize(9).fillColor(MUTED)
-    doc.text(`Cel. ${formatQuoteCel(cel)}`, MARGIN_X, textY, {
-      width: CONTENT_W * 0.55,
+    doc.text(`Cel. ${formatQuoteCel(cel)}`, STAMP_X, textY, {
+      width: STAMP_BLOCK_W,
+      align: 'left',
       lineBreak: false,
     })
   }
@@ -681,13 +713,17 @@ function drawSignatureStamp(doc: PdfDoc, sender: string, cargo: string, phone: s
   doc.page.margins.top = top
 }
 
+/** One unit under the last content (right-aligned). Moves whole to a new page when it does not fit. */
 function finishWithSignatureStamp(doc: PdfDoc, sender: string, cargo: string, phone: string) {
-  const cel = phone.trim()
-  const stampTop = PAGE_H - STAMP_MARGIN_BOTTOM - quoteStampBlockHeight(Boolean(cel))
-  if (doc.y > stampTop - STAMP_CONTENT_GAP) {
+  const hasPhone = Boolean(phone.trim())
+  const placement = quoteStampPlacement(doc.y, contentTop(doc), hasPhone)
+  if (placement.newPage) {
     doc.addPage()
+    const again = quoteStampPlacement(contentTop(doc), contentTop(doc), hasPhone)
+    drawSignatureStamp(doc, again.lineY, sender, cargo, phone)
+    return
   }
-  drawSignatureStamp(doc, sender, cargo, phone)
+  drawSignatureStamp(doc, placement.lineY, sender, cargo, phone)
 }
 
 function drawKpiBand(doc: PdfDoc, y: number, total: number, percent: number): number {
