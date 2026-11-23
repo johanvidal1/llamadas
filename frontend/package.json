@@ -18,6 +18,7 @@
     "test:clients-day-groups": "npx tsx src/lib/clientsDayGroups.test.ts",
     "test:proposal-plans": "npx tsx src/lib/proposalPlans.test.ts",
     "test:quote-sheet": "npx tsx src/lib/quoteSheet.test.ts",
+    "test:offer-plan-sheet": "npx tsx src/lib/offerPlanSheet.test.ts",
     "test:download-file": "npx tsx src/lib/downloadFile.test.ts"
   },
   "dependencies": {
@@ -31,6 +32,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^3.6.0",
     "framer-motion": "^14.10.1",
+    "html-to-image": "^1.11.13",
     "lucide-react": "^0.395.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

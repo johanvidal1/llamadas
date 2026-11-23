@@ -99,6 +99,8 @@ function mimeTypeForExtension(ext: string): string {
       return 'application/zip'
     case 'pdf':
       return 'application/pdf'
+    case 'png':
+      return 'image/png'
     default:
       return 'application/octet-stream'
   }

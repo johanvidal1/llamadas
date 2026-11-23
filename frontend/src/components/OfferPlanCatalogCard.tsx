@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { FileSpreadsheet, Star, Upload } from 'lucide-react'
+import { FileSpreadsheet, Sheet, Star, Upload } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,6 +12,7 @@ import {
   type OfferPlanTable,
 } from '../api/client'
 import { formatSoles } from '../lib/proposalPlans'
+import OfferPlanSheetModal from './OfferPlanSheetModal'
 
 function apiError(err: unknown, fallback: string): string {
   const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
@@ -27,6 +28,7 @@ function formatTableDate(iso: string): string {
 export default function OfferPlanCatalogCard() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [name, setName] = useState('')
+  const [sheetTable, setSheetTable] = useState<OfferPlanTable | null>(null)
   const qc = useQueryClient()
 
   const { data: tables = [], isLoading } = useQuery({
@@ -41,6 +43,7 @@ export default function OfferPlanCatalogCard() {
     onSuccess: (table) => {
       setName('')
       refresh()
+      setSheetTable(table)
       toast.success(
         table.isPrincipal
           ? `Tabla «${table.name}» creada con ${table.planCount} planes. Quedó activa y principal.`
@@ -113,6 +116,7 @@ export default function OfferPlanCatalogCard() {
               key={table.id}
               table={table}
               busy={patch.isPending}
+              onViewSheet={() => setSheetTable(table)}
               onActivate={() => patch.mutate({ id: table.id, data: { isActive: true } })}
               onDeactivate={() => patch.mutate({ id: table.id, data: { isActive: false } })}
               onPrincipal={() => patch.mutate({ id: table.id, data: { isPrincipal: true } })}
@@ -120,6 +124,14 @@ export default function OfferPlanCatalogCard() {
           ))}
         </ul>
       )}
+
+      <OfferPlanSheetModal
+        table={sheetTable}
+        open={sheetTable != null}
+        onOpenChange={(open) => {
+          if (!open) setSheetTable(null)
+        }}
+      />
     </div>
   )
 }
@@ -127,12 +139,14 @@ export default function OfferPlanCatalogCard() {
 function TableRow({
   table,
   busy,
+  onViewSheet,
   onActivate,
   onDeactivate,
   onPrincipal,
 }: {
   table: OfferPlanTable
   busy: boolean
+  onViewSheet: () => void
   onActivate: () => void
   onDeactivate: () => void
   onPrincipal: () => void
@@ -164,6 +178,10 @@ function TableRow({
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
+          <Button type="button" size="sm" variant="outline" onClick={onViewSheet}>
+            <Sheet />
+            Ver hoja
+          </Button>
           {!table.isPrincipal ? (
             <Button type="button" size="sm" variant="outline" disabled={busy} onClick={onPrincipal}>
               Hacer principal
