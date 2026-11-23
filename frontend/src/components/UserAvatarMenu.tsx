@@ -9,9 +9,6 @@ import {
 } from '../api/client'
 import { peruMobileDigits } from '../lib/mobileLine'
 import { useAuth } from '../contexts/AuthContext'
-import { useUiTheme } from '../lib/uiTheme'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 
 type PresenceTone = 'online' | 'recent' | 'offline'
 
@@ -36,33 +33,8 @@ function presenceLabel(tone: PresenceTone): string {
   return 'Desconectado'
 }
 
-function ThemeChoice({
-  label,
-  selected,
-  onSelect,
-}: {
-  label: string
-  selected: boolean
-  onSelect: () => void
-}) {
-  return (
-    <Button
-      type="button"
-      size="sm"
-      variant={selected ? 'default' : 'outline'}
-      className="h-8 px-2 shadow-none"
-      role="menuitemradio"
-      aria-checked={selected}
-      onClick={onSelect}
-    >
-      {label}
-    </Button>
-  )
-}
-
 export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
   const { user, updateUser } = useAuth()
-  const [uiTheme, setUiTheme] = useUiTheme()
   const [open, setOpen] = useState(false)
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -349,31 +321,6 @@ export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
             >
               {savingCargo ? 'Guardando…' : 'Guardar cargo'}
             </button>
-          </div>
-
-          <div className="my-1 border-t border-gray-100" />
-
-          <div className="px-3 py-2" role="group" aria-label="Interfaz">
-            <div className="mb-1.5 flex items-center justify-between gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                Interfaz
-              </span>
-              <Badge variant="secondary" className="h-5 px-1.5 text-[10px] font-medium shadow-none">
-                {uiTheme === 'new' ? 'Nuevo' : 'Clásico'}
-              </Badge>
-            </div>
-            <div className="grid grid-cols-2 gap-1">
-              <ThemeChoice
-                label="Clásico"
-                selected={uiTheme === 'classic'}
-                onSelect={() => setUiTheme('classic')}
-              />
-              <ThemeChoice
-                label="Nuevo"
-                selected={uiTheme === 'new'}
-                onSelect={() => setUiTheme('new')}
-              />
-            </div>
           </div>
 
           <div className="my-1 border-t border-gray-100" />

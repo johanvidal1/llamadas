@@ -19,7 +19,8 @@
     "test:proposal-plans": "npx tsx src/lib/proposalPlans.test.ts",
     "test:quote-sheet": "npx tsx src/lib/quoteSheet.test.ts",
     "test:offer-plan-sheet": "npx tsx src/lib/offerPlanSheet.test.ts",
-    "test:download-file": "npx tsx src/lib/downloadFile.test.ts"
+    "test:download-file": "npx tsx src/lib/downloadFile.test.ts",
+    "test:ui-theme": "npx tsx src/lib/uiTheme.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.3.1",

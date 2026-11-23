@@ -1,51 +1,37 @@
-import { useEffect, useState } from 'react'
-
+/**
+ * The Clásico/Nuevo selector was removed: every user gets the classic UI.
+ * The Nuevo skin code (CSS `[data-ui=new]`, MyLeads/Dashboard branches) stays dormant.
+ */
 export const UI_THEME_STORAGE_KEY = 'optickUiTheme'
 
 export type UiTheme = 'classic' | 'new'
 
+/** Always classic; any stored `new` is ignored. */
 export function readUiTheme(): UiTheme {
-  try {
-    return localStorage.getItem(UI_THEME_STORAGE_KEY) === 'new' ? 'new' : 'classic'
-  } catch {
-    return 'classic'
-  }
+  return 'classic'
 }
 
-export function applyUiTheme(theme: UiTheme) {
+export function applyUiTheme(theme: UiTheme = 'classic') {
   document.documentElement.setAttribute('data-ui', theme)
 }
 
-export function writeUiTheme(theme: UiTheme) {
+/** Best-effort removal of the stale preference key (silent migration to Clásico). */
+export function clearLegacyUiTheme(storage?: Pick<Storage, 'removeItem'>) {
   try {
-    localStorage.setItem(UI_THEME_STORAGE_KEY, theme)
+    const s = storage ?? (typeof localStorage !== 'undefined' ? localStorage : undefined)
+    s?.removeItem(UI_THEME_STORAGE_KEY)
   } catch {
-    // Storage can be blocked; the attribute still applies for this document.
+    // Storage can be blocked; nothing to clean.
   }
-  applyUiTheme(theme)
-  window.dispatchEvent(new CustomEvent('optick-ui-theme-change'))
 }
 
+/** Run once on load: drop stale key and force `data-ui="classic"`. */
+export function bootClassicUi() {
+  clearLegacyUiTheme()
+  applyUiTheme('classic')
+}
+
+/** Kept for API compatibility; the setter is a no-op and the theme is always classic. */
 export function useUiTheme(): [UiTheme, (theme: UiTheme) => void] {
-  const [theme, setTheme] = useState<UiTheme>(() => readUiTheme())
-
-  useEffect(() => {
-    const sync = () => setTheme(readUiTheme())
-    const onStorage = (event: StorageEvent) => {
-      if (event.key === UI_THEME_STORAGE_KEY) sync()
-    }
-    window.addEventListener('storage', onStorage)
-    window.addEventListener('optick-ui-theme-change', sync)
-    return () => {
-      window.removeEventListener('storage', onStorage)
-      window.removeEventListener('optick-ui-theme-change', sync)
-    }
-  }, [])
-
-  const setUiTheme = (next: UiTheme) => {
-    writeUiTheme(next)
-    setTheme(next)
-  }
-
-  return [theme, setUiTheme]
+  return ['classic', () => {}]
 }

@@ -6,15 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Optick Cloud — CRM Llamadas</title>
     <script>
+      document.documentElement.setAttribute('data-ui', 'classic')
       try {
-        var optickUiTheme = localStorage.getItem('optickUiTheme')
-        document.documentElement.setAttribute(
-          'data-ui',
-          optickUiTheme === 'new' ? 'new' : 'classic'
-        )
-      } catch (e) {
-        document.documentElement.setAttribute('data-ui', 'classic')
-      }
+        localStorage.removeItem('optickUiTheme')
+      } catch (e) {}
     </script>
   </head>
   <body>
