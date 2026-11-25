@@ -353,8 +353,8 @@ async function main() {
   assert.ok(text.includes('corporativas'))
   assert.ok(text.includes('portabilidad'))
   assert.ok(text.includes('INTERNET'))
-  assert.ok(text.includes('DATOS'))
-  assert.ok(text.indexOf('INTERNET') < text.indexOf('DATOS'), 'headers: INTERNET then DATOS')
+  assert.ok(text.includes('TETHERING'))
+  assert.ok(text.indexOf('INTERNET') < text.indexOf('TETHERING'), 'headers: INTERNET then TETHERING')
 
   section('50% snapshot shows badge, DCTO column and discounted mix total')
   const discounted = await renderQuotePdf(sample({ discountPercent: 50 }), { compress: false })

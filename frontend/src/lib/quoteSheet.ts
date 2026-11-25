@@ -428,7 +428,7 @@ export function quoteTableHeaders(percent: number): { key: string; label: string
   cols.push(
     { key: 'minutos', label: 'MINUTOS' },
     { key: 'datos', label: 'INTERNET' },
-    { key: 'internet', label: 'DATOS' },
+    { key: 'internet', label: 'TETHERING' },
     { key: 'apps', label: 'APPS' }
   )
   return cols
