@@ -87,6 +87,8 @@ model User {
   phone            String?
   /// Peru job title for the quote stamp. Null/empty prints Ejecutivo de ventas.
   cargo            String?
+  /// Public email for the quote header. Null/empty uses the login email.
+  contactEmail     String?
   password         String
   role             String   @default("AGENT")
   // Relative path under process.cwd(), e.g. uploads/avatars/{userId}/avatar.jpg
@@ -552,6 +554,8 @@ model CommercialQuote {
   senderPhone  String   @default("")
   /// Agent job title at register time. Empty prints Ejecutivo de ventas on the PDF.
   senderCargo  String   @default("")
+  /// Agent contact email at register time (profile Correo, else login email). Empty omits the line.
+  senderEmail  String   @default("")
   /// Relative path under process cwd, e.g. uploads/quotes/{tenantId}/pdfs/{id}.pdf
   pdfPath      String
   /// Paths snapshotted from the format at creation. Relative, same rules as pdfPath.

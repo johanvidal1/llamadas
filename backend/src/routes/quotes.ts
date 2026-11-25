@@ -18,6 +18,7 @@ import {
   quotePdfFilename,
   QUOTE_HEADLINE_SUFFIX_DEFAULT,
   renderQuotePdf,
+  resolveQuoteSenderEmail,
   sanitizeQuoteCargo,
   type QuotePdfBenefit,
   type QuotePdfCurrentPlan,
@@ -177,6 +178,7 @@ type StoredQuote = {
   senderName: string
   senderPhone: string
   senderCargo: string
+  senderEmail: string
   letterheadPath: string | null
   signaturePath: string | null
   promoPaths: Prisma.JsonValue
@@ -233,6 +235,7 @@ async function renderStoredQuote(quote: StoredQuote): Promise<Buffer> {
     senderName: quote.senderName,
     senderPhone: quote.senderPhone,
     senderCargo: quote.senderCargo,
+    senderEmail: quote.senderEmail,
     letterheadPath: bundledClaroLogoPath(),
   })
 }
@@ -280,13 +283,14 @@ async function senderForQuote(userId: string | undefined, typedName: string | un
   const user = userId
     ? await prisma.user.findUnique({
         where: { id: userId },
-        select: { name: true, phone: true, cargo: true },
+        select: { name: true, phone: true, cargo: true, email: true, contactEmail: true },
       })
     : null
   return {
     senderName: (typedName ?? '').trim() || user?.name?.trim() || '',
     senderPhone: user?.phone?.trim() || '',
     senderCargo: sanitizeQuoteCargo(user?.cargo),
+    senderEmail: resolveQuoteSenderEmail(user?.contactEmail, user?.email),
   }
 }
 
@@ -557,6 +561,7 @@ async function buildQuotePdf(body: QuoteDraftBody, tenantId: string, userId: str
       senderName: sender.senderName,
       senderPhone: sender.senderPhone,
       senderCargo: sender.senderCargo,
+      senderEmail: sender.senderEmail,
       letterheadPath: bundledClaroLogoPath(),
     })
   } catch (err) {
@@ -673,6 +678,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
       senderName: sender.senderName,
       senderPhone: sender.senderPhone,
       senderCargo: sender.senderCargo,
+      senderEmail: sender.senderEmail,
       pdfPath: 'pending',
       letterheadPath: template.letterheadPath,
       signaturePath: template.signaturePath,

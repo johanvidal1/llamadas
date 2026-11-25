@@ -63,6 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           hasAvatar: me.hasAvatar,
           phone: me.phone ?? null,
           cargo: me.cargo ?? null,
+          contactEmail: me.contactEmail ?? null,
           avatarVersion: prev?.avatarVersion,
           batchQueueMode: me.batchQueueMode,
           workingBatchId: me.workingBatchId ?? null,

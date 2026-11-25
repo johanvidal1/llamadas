@@ -85,6 +85,8 @@ export type QuotePdfInput = {
   senderPhone?: string
   /** Agent job title snapshotted at register. Empty → Ejecutivo de ventas. */
   senderCargo?: string
+  /** Profile Correo (or login email) snapshotted at register. Empty omits the line. */
+  senderEmail?: string
   letterheadPath?: string | null
   signaturePath?: string | null
   promoPaths?: string[]
@@ -101,7 +103,7 @@ const MUTED = '#5B6775'
 const PAGE_W = 595.28
 const PAGE_H = 841.89
 const MARGIN_X = 40
-/** Minimum red band; grows when the razón social wraps to a second line. */
+/** Minimum red band; grows when the razón social wraps or the sender block is taller than the logo. */
 const HEADER_H = 96
 const HEADER_BOX_Y = 16
 const HEADER_BOX_W = 122
@@ -111,11 +113,29 @@ const HEADER_TITLE_Y = 20
 const HEADER_SUBTITLE_Y = 40
 const HEADER_COMPANY_Y = 58
 const HEADER_COMPANY_SIZE = 11
+/** Used instead of 11 pt when the razón social needs a third line, so the band stays light. */
+const HEADER_COMPANY_SIZE_SMALL = 10
 const HEADER_RUC_SIZE = 9
 const HEADER_COMPANY_RUC_GAP = 5
 const HEADER_PAD_BOTTOM = 10
-const HEADER_COMPANY_MAX_LINES = 2
+const HEADER_COMPANY_MAX_LINES = 3
 const HEADER_AFTER = 20
+/** White 0.6 pt divider between the title column and the sender block (page-1 header only). */
+export const HEADER_DIVIDER_X = 450
+export const HEADER_DIVIDER_W = 0.6
+/** Right end of the left text column (leaves 10 pt before the divider). */
+const HEADER_TEXT_RIGHT = HEADER_DIVIDER_X - 10
+/** Sender block: starts 12 pt right of the divider; full-bleed band, so it may run to 24 pt from the page edge. */
+export const HEADER_SENDER_X = HEADER_DIVIDER_X + 12
+const HEADER_SENDER_RIGHT_PAD = 24
+export const HEADER_SENDER_W = 595.28 - HEADER_SENDER_RIGHT_PAD - HEADER_SENDER_X
+const SENDER_NAME_SIZE = 10
+const SENDER_CARGO_SIZE = 9
+const SENDER_EMAIL_SIZE = 8
+const SENDER_EMAIL_SIZE_MIN = 7.5
+const SENDER_CEL_SIZE = 9
+const SENDER_NAME_MAX_LINES = 2
+const SENDER_LINE_GAP = 2.5
 /** Compact one-line red band on continuation pages (logo + title + razón social). */
 const CONT_HEADER_H = 44
 const CONT_HEADER_BOX_W = 86
@@ -127,19 +147,9 @@ const CONT_COMPANY_SIZE = 10
 const CONT_TITLE_COMPANY_GAP = 14
 const CONTENT_W = PAGE_W - MARGIN_X * 2
 const PAGE_TOP = 24
-/** Raised now that the navy footer bar is gone; last page still reserves the stamp. */
+/** The navy footer bar and the last-page signature stamp are gone; content may run to this floor. */
 const PAGE_MARGIN_BOTTOM = 20
 const PAGE_BOTTOM = PAGE_H - PAGE_MARGIN_BOTTOM
-const STAMP_LINE_W = 150
-/** Right-anchored block: right edge = PAGE_W - MARGIN_X, text left-aligned inside. */
-export const STAMP_BLOCK_W = 190
-export const STAMP_X = PAGE_W - MARGIN_X - STAMP_BLOCK_W
-/** Never closer than this to the sheet floor. */
-export const STAMP_MARGIN_BOTTOM = 28
-/** Air kept between the last content and the signing space (floor of the placement rule). */
-export const STAMP_CONTENT_GAP = 32
-/** Clear space above the signature line, measured from the last content cursor (doc.y). */
-export const STAMP_SIGN_SPACE = 40
 /** Per-document y where body starts (below the page header). */
 const pageContentTop = new WeakMap<PdfDoc, number>()
 
@@ -151,10 +161,50 @@ function setContentTop(doc: PdfDoc, y: number) {
   pageContentTop.set(doc, y)
 }
 
-const AFTER_TITLE = 6
-const AFTER_HEADLINE = 16
-const AFTER_KPI = 16
-const AFTER_TABLE = 14
+/** Vertical gaps between page-1 blocks. `TIGHT` is used only when it lets the flags map stay on page 1. */
+export type PageSpacing = {
+  afterTitle: number
+  afterHeadline: number
+  afterKpi: number
+  afterTable: number
+  /** Space between a section title badge and its body. */
+  titleGap: number
+  roamGap: number
+  roamAfter: number
+  appsAfter: number
+}
+
+const SPACING_NORMAL: PageSpacing = {
+  afterTitle: 6,
+  afterHeadline: 16,
+  afterKpi: 16,
+  afterTable: 14,
+  titleGap: 12,
+  roamGap: 10,
+  roamAfter: 12,
+  appsAfter: 8,
+}
+
+const SPACING_TIGHT: PageSpacing = {
+  afterTitle: 4,
+  afterHeadline: 10,
+  afterKpi: 8,
+  afterTable: 8,
+  titleGap: 8,
+  roamGap: 8,
+  roamAfter: 6,
+  appsAfter: 4,
+}
+
+/** Never shrink the flags map below this share of its natural width/height. */
+export const QUOTE_MAP_MIN_SCALE = 0.85
+
+const pageSpacing = new WeakMap<PdfDoc, PageSpacing>()
+
+function spacingOf(doc: PdfDoc): PageSpacing {
+  return pageSpacing.get(doc) ?? SPACING_NORMAL
+}
+
 /** Extra gap between KPI / table / roaming / apps when page 1 still has slack. */
 const PAGE1_BREATHING_PT = 12
 
@@ -247,37 +297,32 @@ export function formatQuoteAgentName(name: string): string {
     .replace(/(^|[\s'-])(\S)/g, (_match, prefix: string, letter: string) => prefix + letter.toLocaleUpperCase('es-PE'))
 }
 
-export function quoteStampBlockHeight(hasPhone: boolean): number {
-  const line = 1
-  const afterLine = 8
-  const nameH = 12
-  const cargoH = 11
-  const between = 3
-  const celH = hasPhone ? 11 : 0
-  return line + afterLine + nameH + between + cargoH + (hasPhone ? between + celH : 0) + 4
+export const QUOTE_EMAIL_MAX = 120
+const CONTACT_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+/** Profile Correo input. Empty → null (falls back to the login email). Lowercased and trimmed. */
+export function parseContactEmail(raw: string | null | undefined): { email: string | null } | { error: string } {
+  const value = String(raw ?? '').trim().toLowerCase()
+  if (!value) return { email: null }
+  if (value.length > QUOTE_EMAIL_MAX) return { error: `El correo no puede superar ${QUOTE_EMAIL_MAX} caracteres.` }
+  if (!CONTACT_EMAIL_RE.test(value)) return { error: 'Correo inválido.' }
+  return { email: value }
 }
 
-/** Height of the whole keep-together unit: signing space + line + text. */
-export function quoteStampUnitHeight(hasPhone: boolean): number {
-  return Math.max(STAMP_SIGN_SPACE, STAMP_CONTENT_GAP) + quoteStampBlockHeight(hasPhone)
+/** Drop controls and whitespace, lowercase, cap length. Used for the PDF snapshot, never throws. */
+export function sanitizeQuoteSenderEmail(raw: string | null | undefined): string {
+  return String(raw ?? '')
+    .replace(/[\u0000-\u001F\u007F\s]/g, '')
+    .toLowerCase()
+    .slice(0, QUOTE_EMAIL_MAX)
 }
 
-/**
- * Top-down placement rule. The line sits `max(gap, signSpace)` (40 pt) below the last content
- * cursor, so it rises under the content instead of hugging the page floor. If the whole unit
- * does not fit above the floor margin, it moves to a new page (below the continuation header).
- */
-export function quoteStampPlacement(
-  contentY: number,
-  nextPageTop: number,
-  hasPhone: boolean
-): { newPage: boolean; lineY: number } {
-  const sign = Math.max(STAMP_SIGN_SPACE, STAMP_CONTENT_GAP)
-  const block = quoteStampBlockHeight(hasPhone)
-  if (contentY + sign + block <= PAGE_H - STAMP_MARGIN_BOTTOM) {
-    return { newPage: false, lineY: contentY + sign }
-  }
-  return { newPage: true, lineY: nextPageTop + sign }
+/** Snapshot at register: profile Correo, else the login email. */
+export function resolveQuoteSenderEmail(
+  contactEmail: string | null | undefined,
+  loginEmail: string | null | undefined
+): string {
+  return sanitizeQuoteSenderEmail(contactEmail) || sanitizeQuoteSenderEmail(loginEmail)
 }
 
 export function formatSoles(amount: number): string {
@@ -474,7 +519,7 @@ function cellHeight(doc: PdfDoc, text: string, width: number, font: string, size
 
 function headerTextFrame(): { textX: number; textW: number } {
   const textX = MARGIN_X + HEADER_BOX_W + HEADER_TEXT_GAP
-  return { textX, textW: PAGE_W - textX - MARGIN_X }
+  return { textX, textW: HEADER_TEXT_RIGHT - textX }
 }
 
 function ellipsizeToWidth(doc: PdfDoc, text: string, width: number): string {
@@ -491,14 +536,16 @@ function ellipsizeToWidth(doc: PdfDoc, text: string, width: number): string {
   return `${text.slice(0, lo)}${ellipsis}`
 }
 
-/** Word-wrap the razón social to at most two lines; ellipsis only if it still overflows. */
-export function wrapQuoteCompanyLines(
+/** Word-wrap to at most `maxLines`; ellipsis only if it still overflows. Sets the font first. */
+function wrapTextLines(
   doc: PdfDoc,
   raw: string,
   width: number,
-  maxLines = HEADER_COMPANY_MAX_LINES
+  maxLines: number,
+  font: string,
+  size: number
 ): string[] {
-  doc.font('Helvetica-Bold').fontSize(HEADER_COMPANY_SIZE)
+  doc.font(font).fontSize(size)
   const name = raw.trim() || '—'
   const words = name.split(/\s+/).filter(Boolean)
   const lines: string[] = []
@@ -531,34 +578,134 @@ export function wrapQuoteCompanyLines(
   return lines.length ? lines : ['—']
 }
 
+/** Word-wrap the razón social to at most three lines; ellipsis only if it still overflows. */
+export function wrapQuoteCompanyLines(
+  doc: PdfDoc,
+  raw: string,
+  width: number,
+  maxLines = HEADER_COMPANY_MAX_LINES,
+  size = HEADER_COMPANY_SIZE
+): string[] {
+  return wrapTextLines(doc, raw, width, maxLines, 'Helvetica-Bold', size)
+}
+
+/** Sender data frozen on the quote. Everything optional; empty email / cel drop their line. */
+export type QuoteSenderInfo = { name: string; cargo: string; email: string; phone: string }
+
+export type QuoteSenderLine = { text: string; font: string; size: number; y: number; height: number }
+
+/** Lines of the page-1 sender block, y relative to the block top. */
+export function layoutSenderBlock(doc: PdfDoc, sender: QuoteSenderInfo, width = HEADER_SENDER_W) {
+  const lines: QuoteSenderLine[] = []
+  let y = 0
+  const push = (text: string, font: string, size: number, gap: number) => {
+    doc.font(font).fontSize(size)
+    const height = doc.currentLineHeight()
+    if (lines.length) y += gap
+    lines.push({ text, font, size, y, height })
+    y += height
+  }
+
+  const nameLines = wrapTextLines(
+    doc,
+    formatQuoteAgentName(sender.name),
+    width,
+    SENDER_NAME_MAX_LINES,
+    'Helvetica-Bold',
+    SENDER_NAME_SIZE
+  )
+  nameLines.forEach((line, index) => push(line, 'Helvetica-Bold', SENDER_NAME_SIZE, index === 0 ? 0 : 0.5))
+
+  doc.font('Helvetica').fontSize(SENDER_CARGO_SIZE)
+  push(ellipsizeToWidth(doc, quoteDisplayCargo(sender.cargo), width), 'Helvetica', SENDER_CARGO_SIZE, SENDER_LINE_GAP)
+
+  const email = sender.email.trim()
+  if (email) {
+    let size = SENDER_EMAIL_SIZE
+    doc.font('Helvetica').fontSize(size)
+    if (doc.widthOfString(email) > width) {
+      size = SENDER_EMAIL_SIZE_MIN
+      doc.font('Helvetica').fontSize(size)
+    }
+    push(ellipsizeToWidth(doc, email, width), 'Helvetica', size, SENDER_LINE_GAP)
+  }
+
+  const cel = sender.phone.trim()
+  if (cel) {
+    doc.font('Helvetica').fontSize(SENDER_CEL_SIZE)
+    push(ellipsizeToWidth(doc, `Cel. ${formatQuoteCel(cel)}`, width), 'Helvetica', SENDER_CEL_SIZE, SENDER_LINE_GAP)
+  }
+
+  return { lines, height: y }
+}
+
 export type QuoteHeaderMetrics = {
   height: number
   companyY: number
   companyHeight: number
   companyLineCount: number
+  companySize: number
   rucY: number
   lines: string[]
+  /** Bottom of the left column (RUC line). */
+  leftBottom: number
+  /** Top of the sender block (vertically centred on the divider span). */
+  senderTop: number
+  senderHeight: number
+  senderBottom: number
+  senderLines: QuoteSenderLine[]
+  /** White divider spans the header content height. */
+  dividerTop: number
+  dividerBottom: number
 }
 
-export function measureQuoteHeader(doc: PdfDoc, companyName: string): QuoteHeaderMetrics {
+const EMPTY_SENDER: QuoteSenderInfo = { name: '', cargo: '', email: '', phone: '' }
+
+/**
+ * Page-1 red band. Three columns: logo box, title/company/RUC (HEADER_TEXT_RIGHT), sender block right of the
+ * divider. Height = max(left column, sender block, logo) + padding, never below HEADER_H.
+ */
+export function measureQuoteHeader(
+  doc: PdfDoc,
+  companyName: string,
+  sender: QuoteSenderInfo = EMPTY_SENDER
+): QuoteHeaderMetrics {
   const { textW } = headerTextFrame()
-  const lines = wrapQuoteCompanyLines(doc, companyName, textW)
-  doc.font('Helvetica-Bold').fontSize(HEADER_COMPANY_SIZE)
+  let companySize = HEADER_COMPANY_SIZE
+  let lines = wrapQuoteCompanyLines(doc, companyName, textW, HEADER_COMPANY_MAX_LINES, companySize)
+  if (lines.length > 2) {
+    companySize = HEADER_COMPANY_SIZE_SMALL
+    lines = wrapQuoteCompanyLines(doc, companyName, textW, HEADER_COMPANY_MAX_LINES, companySize)
+  }
+  doc.font('Helvetica-Bold').fontSize(companySize)
   const lineH = doc.currentLineHeight()
   const companyHeight = lineH * lines.length
   const rucY = HEADER_COMPANY_Y + companyHeight + HEADER_COMPANY_RUC_GAP
   doc.font('Helvetica').fontSize(HEADER_RUC_SIZE)
   const rucH = doc.currentLineHeight()
-  const textBottom = rucY + rucH
+  const leftBottom = rucY + rucH
   const logoBottom = HEADER_BOX_Y + HEADER_BOX_H
-  const height = Math.max(HEADER_H, Math.ceil(Math.max(textBottom, logoBottom) + HEADER_PAD_BOTTOM))
+
+  const block = layoutSenderBlock(doc, sender)
+  const dividerTop = HEADER_BOX_Y
+  const dividerBottom = Math.max(leftBottom, logoBottom, dividerTop + block.height)
+  const senderTop = dividerTop + (dividerBottom - dividerTop - block.height) / 2
+  const height = Math.max(HEADER_H, Math.ceil(dividerBottom + HEADER_PAD_BOTTOM))
   return {
     height,
     companyY: HEADER_COMPANY_Y,
     companyHeight,
     companyLineCount: lines.length,
+    companySize,
     rucY,
     lines,
+    leftBottom,
+    senderTop,
+    senderHeight: block.height,
+    senderBottom: senderTop + block.height,
+    senderLines: block.lines,
+    dividerTop,
+    dividerBottom,
   }
 }
 
@@ -571,12 +718,21 @@ function withTempPdfDoc<T>(fn: (doc: PdfDoc) => T): T {
 }
 
 /** Header layout for tests (throwaway doc so font metrics match the sheet). */
-export function quoteHeaderMetrics(companyName: string): QuoteHeaderMetrics {
-  return withTempPdfDoc((doc) => measureQuoteHeader(doc, companyName))
+export function quoteHeaderMetrics(companyName: string, sender?: QuoteSenderInfo): QuoteHeaderMetrics {
+  return withTempPdfDoc((doc) => measureQuoteHeader(doc, companyName, sender))
+}
+
+function senderFromInput(input: QuotePdfInput): QuoteSenderInfo {
+  return {
+    name: input.senderName ?? '',
+    cargo: input.senderCargo ?? '',
+    email: input.senderEmail ?? '',
+    phone: input.senderPhone ?? '',
+  }
 }
 
 function drawHeader(doc: PdfDoc, input: QuotePdfInput, letterhead: string | null): number {
-  const layout = measureQuoteHeader(doc, input.companyName)
+  const layout = measureQuoteHeader(doc, input.companyName, senderFromInput(input))
   const { textX, textW } = headerTextFrame()
 
   doc.save()
@@ -607,7 +763,7 @@ function drawHeader(doc: PdfDoc, input: QuotePdfInput, letterhead: string | null
   doc.text('PROPUESTA COMERCIAL', textX, HEADER_TITLE_Y, { width: textW, lineBreak: false })
   doc.font('Helvetica-Bold').fontSize(11).fillColor('#FFFFFF')
   doc.text('PORTABILIDAD MÓVIL', textX, HEADER_SUBTITLE_Y, { width: textW, lineBreak: false })
-  doc.font('Helvetica-Bold').fontSize(HEADER_COMPANY_SIZE).fillColor('#FFFFFF')
+  doc.font('Helvetica-Bold').fontSize(layout.companySize).fillColor('#FFFFFF')
   const lineH = doc.currentLineHeight()
   layout.lines.forEach((line, index) => {
     doc.text(line, textX, HEADER_COMPANY_Y + index * lineH, { width: textW, lineBreak: false })
@@ -616,6 +772,21 @@ function drawHeader(doc: PdfDoc, input: QuotePdfInput, letterhead: string | null
   const when = formatQuoteDate(input.issuedAt ?? new Date())
   doc.font('Helvetica').fontSize(HEADER_RUC_SIZE).fillColor('#FFFFFF')
   doc.text(`${ruc}  |  ${when}`, textX, layout.rucY, { width: textW, lineBreak: false })
+
+  // Thin white vertical divider, then the sender block (left-aligned, white, no box).
+  doc.save()
+  doc.strokeColor('#FFFFFF')
+  doc.lineWidth(HEADER_DIVIDER_W)
+  doc.moveTo(HEADER_DIVIDER_X, layout.dividerTop).lineTo(HEADER_DIVIDER_X, layout.dividerBottom).stroke()
+  doc.restore()
+  for (const line of layout.senderLines) {
+    doc.font(line.font).fontSize(line.size).fillColor('#FFFFFF')
+    doc.text(line.text, HEADER_SENDER_X, layout.senderTop + line.y, {
+      width: HEADER_SENDER_W,
+      align: 'left',
+      lineBreak: false,
+    })
+  }
   return layout.height
 }
 
@@ -672,58 +843,6 @@ function drawWordmark(doc: PdfDoc, x: number, y: number, w: number, h: number) {
   doc.text('Claro', x, y + h / 2 - titleOffset, { width: w, align: 'center', lineBreak: false })
   doc.font('Helvetica-Bold').fontSize(subSize).fillColor(INK)
   doc.text('empresas', x, y + h / 2 + 2, { width: w, align: 'center', lineBreak: false })
-}
-
-function drawSignatureStamp(doc: PdfDoc, lineY: number, sender: string, cargo: string, phone: string) {
-  const cel = phone.trim()
-  const y = lineY
-  const bottom = doc.page.margins.bottom
-  const top = doc.page.margins.top
-  doc.page.margins.bottom = 0
-  doc.page.margins.top = 0
-  doc.save()
-  doc.strokeColor('#9AA3AE')
-  doc.lineWidth(0.8)
-  doc.moveTo(STAMP_X, y).lineTo(STAMP_X + STAMP_LINE_W, y).stroke()
-  doc.restore()
-  let textY = y + 8
-  doc.font('Helvetica-Bold').fontSize(10).fillColor(INK)
-  doc.text(formatQuoteAgentName(sender), STAMP_X, textY, {
-    width: STAMP_BLOCK_W,
-    align: 'left',
-    lineBreak: false,
-  })
-  textY += 15
-  doc.font('Helvetica').fontSize(9).fillColor(MUTED)
-  doc.text(quoteDisplayCargo(cargo), STAMP_X, textY, {
-    width: STAMP_BLOCK_W,
-    align: 'left',
-    lineBreak: false,
-  })
-  if (cel) {
-    textY += 13
-    doc.font('Helvetica').fontSize(9).fillColor(MUTED)
-    doc.text(`Cel. ${formatQuoteCel(cel)}`, STAMP_X, textY, {
-      width: STAMP_BLOCK_W,
-      align: 'left',
-      lineBreak: false,
-    })
-  }
-  doc.page.margins.bottom = bottom
-  doc.page.margins.top = top
-}
-
-/** One unit under the last content (right-aligned). Moves whole to a new page when it does not fit. */
-function finishWithSignatureStamp(doc: PdfDoc, sender: string, cargo: string, phone: string) {
-  const hasPhone = Boolean(phone.trim())
-  const placement = quoteStampPlacement(doc.y, contentTop(doc), hasPhone)
-  if (placement.newPage) {
-    doc.addPage()
-    const again = quoteStampPlacement(contentTop(doc), contentTop(doc), hasPhone)
-    drawSignatureStamp(doc, again.lineY, sender, cargo, phone)
-    return
-  }
-  drawSignatureStamp(doc, placement.lineY, sender, cargo, phone)
 }
 
 function drawKpiBand(doc: PdfDoc, y: number, total: number, percent: number): number {
@@ -785,45 +904,49 @@ function tableCellText(
 }
 
 const TABLE_PAD_X = 5
-const TABLE_PAD_Y = 3
+/** Was 3. With TABLE_ROW_MIN a single-line body row is ~20 pt instead of ~24 pt. */
+const TABLE_PAD_Y = 2
 const TABLE_BODY_SIZE = 8
 const TABLE_HEADER_SIZE = 7.2
+const TABLE_ROW_MIN = 16
+const TABLE_HEADER_MIN = 18
+
+function tableHeaderMetrics(doc: PdfDoc, cols: TableCol[]): { h: number; heights: number[] } {
+  const heights = cols.map((col) =>
+    cellHeight(doc, col.header, Math.max(10, col.width - TABLE_PAD_X * 2), 'Helvetica-Bold', TABLE_HEADER_SIZE)
+  )
+  return { h: Math.max(TABLE_HEADER_MIN, ...heights) + TABLE_PAD_Y * 2, heights }
+}
+
+function tableRowMetrics(
+  doc: PdfDoc,
+  cols: TableCol[],
+  row: QuotePdfPlanRow,
+  percent: number
+): { h: number; heights: number[]; values: ReturnType<typeof tableCellText>[] } {
+  const values = cols.map((col) => tableCellText(row, col.key, percent))
+  const heights = values.map((cell, i) =>
+    cellHeight(doc, cell.text, Math.max(10, cols[i].width - TABLE_PAD_X * 2), cell.font || 'Helvetica', TABLE_BODY_SIZE)
+  )
+  return { h: Math.max(TABLE_ROW_MIN, ...heights) + TABLE_PAD_Y * 2, heights, values }
+}
 
 function planTableHeight(doc: PdfDoc, rows: QuotePdfPlanRow[], percent: number): number {
   const cols = layoutTableColumns(CONTENT_W, percent)
-  const headerHeights = cols.map((col) =>
-    cellHeight(doc, col.header, Math.max(10, col.width - TABLE_PAD_X * 2), 'Helvetica-Bold', TABLE_HEADER_SIZE)
-  )
-  let h = Math.max(20, ...headerHeights) + TABLE_PAD_Y * 2
-  for (const row of rows) {
-    const values = cols.map((col) => tableCellText(row, col.key, percent))
-    const heights = values.map((cell, i) =>
-      cellHeight(
-        doc,
-        cell.text,
-        Math.max(10, cols[i].width - TABLE_PAD_X * 2),
-        cell.font || 'Helvetica',
-        TABLE_BODY_SIZE
-      )
-    )
-    h += Math.max(18, ...heights) + TABLE_PAD_Y * 2
-  }
+  let h = tableHeaderMetrics(doc, cols).h
+  for (const row of rows) h += tableRowMetrics(doc, cols, row, percent).h
   return h
 }
 
 function drawPlanTable(doc: PdfDoc, rows: QuotePdfPlanRow[], percent: number, yStart: number): number {
   const cols = layoutTableColumns(CONTENT_W, percent)
   const padX = TABLE_PAD_X
-  const padY = TABLE_PAD_Y
   const bodySize = TABLE_BODY_SIZE
   const headerSize = TABLE_HEADER_SIZE
   let y = yStart
 
   const paintHeader = () => {
-    const heights = cols.map((col) =>
-      cellHeight(doc, col.header, Math.max(10, col.width - padX * 2), 'Helvetica-Bold', headerSize)
-    )
-    const h = Math.max(20, ...heights) + padY * 2
+    const { h, heights } = tableHeaderMetrics(doc, cols)
     ensureSpace(doc, y, h + 8)
     y = doc.y
     doc.save()
@@ -831,33 +954,22 @@ function drawPlanTable(doc: PdfDoc, rows: QuotePdfPlanRow[], percent: number, yS
     doc.roundedRect(MARGIN_X, y, CONTENT_W, h, 8).fill()
     doc.restore()
     let x = MARGIN_X
-    for (const col of cols) {
+    cols.forEach((col, i) => {
       doc.font('Helvetica-Bold').fontSize(headerSize).fillColor('#FFFFFF')
-      doc.text(col.header, x + padX, y + padY + 2, {
+      doc.text(col.header, x + padX, y + (h - heights[i]) / 2, {
         width: Math.max(10, col.width - padX * 2),
         align: col.align ?? 'left',
         lineGap: 0,
       })
       x += col.width
-    }
+    })
     y += h
     doc.y = y
   }
 
   paintHeader()
   for (let index = 0; index < rows.length; index++) {
-    const row = rows[index]
-    const values = cols.map((col) => tableCellText(row, col.key, percent))
-    const heights = values.map((cell, i) =>
-      cellHeight(
-        doc,
-        cell.text,
-        Math.max(10, cols[i].width - padX * 2),
-        cell.font || 'Helvetica',
-        bodySize
-      )
-    )
-    const h = Math.max(18, ...heights) + padY * 2
+    const { h, heights, values } = tableRowMetrics(doc, cols, rows[index], percent)
     ensureSpace(doc, y, h + 6)
     y = doc.y
     if (index % 2 === 1) {
@@ -871,7 +983,7 @@ function drawPlanTable(doc: PdfDoc, rows: QuotePdfPlanRow[], percent: number, yS
       const col = cols[i]
       const cell = values[i]
       doc.font(cell.font || 'Helvetica').fontSize(bodySize).fillColor(cell.color)
-      doc.text(cell.text, x + padX, y + padY, {
+      doc.text(cell.text, x + padX, y + (h - heights[i]) / 2, {
         width: Math.max(10, col.width - padX * 2),
         align: col.key === 'plan' ? 'left' : col.align ?? 'left',
         lineGap: 0,
@@ -914,13 +1026,10 @@ const SECTION_BADGE = 24
 const SECTION_BADGE_R = 7
 const APPS_ROW_H = 26
 const APPS_BLOCK_PAD = 12
-const APPS_AFTER = 8
-const ROAM_GAP = 10
 const ROAM_CARD_H = 62
-const ROAM_AFTER = 12
 
-function sectionTitleHeight(): number {
-  return SECTION_BADGE + 12
+function sectionTitleHeight(sp: PageSpacing): number {
+  return SECTION_BADGE + sp.titleGap
 }
 
 function roamingCardRowCount(planCount: number): number {
@@ -928,71 +1037,171 @@ function roamingCardRowCount(planCount: number): number {
   return Math.ceil(planCount / cols)
 }
 
-function roamingCardsHeight(planCount: number): number {
+function roamingCardsHeight(planCount: number, sp: PageSpacing): number {
   const rows = roamingCardRowCount(planCount)
-  if (rows <= 0) return ROAM_AFTER
-  return rows * ROAM_CARD_H + (rows - 1) * ROAM_GAP + ROAM_AFTER
+  if (rows <= 0) return sp.roamAfter
+  return rows * ROAM_CARD_H + (rows - 1) * sp.roamGap + sp.roamAfter
 }
 
-function appsListHeight(rowCount: number): number {
-  return rowCount * APPS_ROW_H + APPS_BLOCK_PAD + APPS_AFTER
+function appsListHeight(rowCount: number, sp: PageSpacing): number {
+  return rowCount * APPS_ROW_H + APPS_BLOCK_PAD + sp.appsAfter
 }
 
 function extrasBlockHeight(doc: PdfDoc, extras: string): number {
   const body = extras.trim()
   if (!body) return 0
-  const textH = cellHeight(doc, body, CONTENT_W, 'Helvetica', 10)
+  doc.font('Helvetica').fontSize(10)
+  const textH = doc.heightOfString(body, { width: CONTENT_W, lineGap: 2 })
   return 28 + textH + 10
 }
 
+const ZONES_TITLE = 'Zonas de roaming internacional'
+const ZONES_AFTER = 8
+
+function pngPixelSize(file: string): { width: number; height: number } {
+  const buf = readFileSync(file)
+  if (buf.length < 24) return { width: 1, height: 1 }
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) }
+}
+
+type ZonesMetrics = {
+  /** Section title band (badge + gap) for the spacing set in use. */
+  titleH: number
+  /** Natural (scale 1) image box. */
+  imgW: number
+  imgH: number
+}
+
+function roamingZonesMetrics(imagePath: string, sp: PageSpacing): ZonesMetrics {
+  const image = pngPixelSize(imagePath)
+  const imgW = CONTENT_W
+  const imgH = image.width > 0 ? (image.height / image.width) * imgW : 0
+  return { titleH: sectionTitleHeight(sp), imgW, imgH }
+}
+
+/** Height of title + map at the given scale (excludes the trailing doc.y gap). */
+function zonesBlockHeight(zones: ZonesMetrics, scale: number): number {
+  return zones.titleH + zones.imgH * scale
+}
+
+/** Where page 1 ends (doc.y) for a given spacing/breathing/map-scale plan, assuming everything stays on page 1. */
 function measurePage1EndY(
   doc: PdfDoc,
   headerHeight: number,
   rows: QuotePdfPlanRow[],
   percent: number,
   extras: string,
+  sp: PageSpacing,
   breathing: number,
-  zonesPath: string | null
+  zones: { metrics: ZonesMetrics; scale: number } | null
 ): number {
   let y = headerHeight + HEADER_AFTER
   doc.font('Helvetica-Bold').fontSize(16)
   y += doc.heightOfString('Conectividad y beneficios para tu empresa', { width: CONTENT_W, lineGap: 0 })
-  y += AFTER_TITLE
+  y += sp.afterTitle
   doc.font('Helvetica').fontSize(11)
-  y += doc.currentLineHeight()
-  y += AFTER_HEADLINE
+  y += doc.currentLineHeight(true)
+  y += sp.afterHeadline
   y += percent > 0 ? 56 : 52
-  y += AFTER_KPI + breathing
-  y += sectionTitleHeight()
+  y += sp.afterKpi + breathing
+  y += sectionTitleHeight(sp)
   y += planTableHeight(doc, rows, percent)
-  y += AFTER_TABLE + breathing
-  y += sectionTitleHeight() + roamingCardsHeight(rows.length)
+  y += sp.afterTable + breathing
+  y += sectionTitleHeight(sp) + roamingCardsHeight(rows.length, sp)
   y += breathing
-  y += sectionTitleHeight() + appsListHeight(rows.length)
+  y += sectionTitleHeight(sp) + appsListHeight(rows.length, sp)
   y += extrasBlockHeight(doc, extras)
-  if (zonesPath && mixHasRoaming(rows)) {
-    y += roamingZonesMetrics(doc, zonesPath).needed
-  }
+  if (zones) y += zonesBlockHeight(zones.metrics, zones.scale)
   return y
 }
 
-/** 12 pt extra between KPI / table / roaming / apps when that still fits on page 1. */
-function page1BreathingPt(
+export type QuotePage1Layout = {
+  spacing: PageSpacing
+  breathing: number
+  /** 1 = natural size; floor QUOTE_MAP_MIN_SCALE. Only below 1 when it is the only way to keep the map on page 1. */
+  mapScale: number
+  /** True when the plan keeps the flags map on page 1. */
+  mapOnPage1: boolean
+}
+
+/**
+ * Decide page-1 spacing. Rows are always compact (see TABLE_PAD_Y). Then, in order:
+ *  1. normal gaps (+ breathing only if the map still fits with it),
+ *  2. tight gaps with the map at 100 %,
+ *  3. tight gaps with the map scaled down to at most 15 %,
+ *  4. otherwise the map moves whole to page 2 and page 1 keeps normal gaps / breathing for the body.
+ */
+function choosePage1Layout(
   doc: PdfDoc,
   headerHeight: number,
   rows: QuotePdfPlanRow[],
   percent: number,
   extras: string,
   zonesPath: string | null
-): number {
-  const bodyGrown = measurePage1EndY(doc, headerHeight, rows, percent, extras, PAGE1_BREATHING_PT, null)
-  if (bodyGrown > PAGE_BOTTOM) return 0
-  if (zonesPath && mixHasRoaming(rows)) {
-    const zonesNow = measurePage1EndY(doc, headerHeight, rows, percent, extras, 0, zonesPath)
-    const zonesGrown = measurePage1EndY(doc, headerHeight, rows, percent, extras, PAGE1_BREATHING_PT, zonesPath)
-    if (zonesNow <= PAGE_BOTTOM && zonesGrown > PAGE_BOTTOM) return 0
+): QuotePage1Layout {
+  const hasZones = Boolean(zonesPath) && mixHasRoaming(rows)
+  if (hasZones && zonesPath) {
+    const normalZones = { metrics: roamingZonesMetrics(zonesPath, SPACING_NORMAL), scale: 1 }
+    const fitsNormal = (breathing: number) =>
+      measurePage1EndY(doc, headerHeight, rows, percent, extras, SPACING_NORMAL, breathing, normalZones) <=
+      PAGE_BOTTOM
+    if (fitsNormal(0)) {
+      return {
+        spacing: SPACING_NORMAL,
+        breathing: fitsNormal(PAGE1_BREATHING_PT) ? PAGE1_BREATHING_PT : 0,
+        mapScale: 1,
+        mapOnPage1: true,
+      }
+    }
+    const tightMetrics = roamingZonesMetrics(zonesPath, SPACING_TIGHT)
+    const tightBodyEnd = measurePage1EndY(doc, headerHeight, rows, percent, extras, SPACING_TIGHT, 0, null)
+    const room = PAGE_BOTTOM - tightBodyEnd - tightMetrics.titleH - 0.5
+    if (room > 0 && tightMetrics.imgH > 0) {
+      const fullScale = room / tightMetrics.imgH
+      if (fullScale >= 1) {
+        return { spacing: SPACING_TIGHT, breathing: 0, mapScale: 1, mapOnPage1: true }
+      }
+      // Tiny safety margin so float noise never pushes the map to page 2.
+      const scale = Math.floor(fullScale * 1000) / 1000 - 0.001
+      if (scale >= QUOTE_MAP_MIN_SCALE) {
+        return { spacing: SPACING_TIGHT, breathing: 0, mapScale: scale, mapOnPage1: true }
+      }
+    }
   }
-  return PAGE1_BREATHING_PT
+  const bodyGrown = measurePage1EndY(
+    doc,
+    headerHeight,
+    rows,
+    percent,
+    extras,
+    SPACING_NORMAL,
+    PAGE1_BREATHING_PT,
+    null
+  )
+  return {
+    spacing: SPACING_NORMAL,
+    breathing: bodyGrown > PAGE_BOTTOM ? 0 : PAGE1_BREATHING_PT,
+    mapScale: 1,
+    mapOnPage1: false,
+  }
+}
+
+/** Test hook: the page-1 plan for a given mix, using the same metrics as the renderer. */
+export function quotePage1Layout(input: QuotePdfInput): QuotePage1Layout & { headerHeight: number } {
+  return withTempPdfDoc((doc) => {
+    const rows = rowsForPdf(input)
+    const percent = normalizeQuoteDiscountPercent(input.discountPercent)
+    const header = measureQuoteHeader(doc, input.companyName, senderFromInput(input))
+    const layout = choosePage1Layout(
+      doc,
+      header.height,
+      rows,
+      percent,
+      (input.extras || '').trim(),
+      bundledRoamingZonesPath()
+    )
+    return { ...layout, headerHeight: header.height }
+  })
 }
 
 function paintSectionTitle(doc: PdfDoc, n: number, title: string, y: number): number {
@@ -1013,7 +1222,7 @@ function paintSectionTitle(doc: PdfDoc, n: number, title: string, y: number): nu
     width: CONTENT_W - SECTION_BADGE - 10,
     lineBreak: false,
   })
-  doc.y = y + SECTION_BADGE + 12
+  doc.y = y + sectionTitleHeight(spacingOf(doc))
   return doc.y
 }
 
@@ -1043,28 +1252,31 @@ function paintAppRows(doc: PdfDoc, rows: QuotePdfPlanRow[], y: number, from: num
 }
 
 function drawRoamingSection(doc: PdfDoc, rows: QuotePdfPlanRow[], y: number): number {
-  const needed = sectionTitleHeight() + roamingCardsHeight(rows.length)
+  const sp = spacingOf(doc)
+  const needed = sectionTitleHeight(sp) + roamingCardsHeight(rows.length, sp)
   y = startKeepTogether(doc, y, needed)
   y = paintSectionTitle(doc, 2, 'Roaming internacional', y)
   return drawRoaming(doc, rows, y)
 }
 
 function drawAppsSection(doc: PdfDoc, rows: QuotePdfPlanRow[], y: number): number {
-  const needed = sectionTitleHeight() + appsListHeight(rows.length)
+  const sp = spacingOf(doc)
+  const needed = sectionTitleHeight(sp) + appsListHeight(rows.length, sp)
   y = startKeepTogether(doc, y, needed)
   y = paintSectionTitle(doc, 3, 'Aplicaciones ilimitadas por plan', y)
   return drawApps(doc, rows, y)
 }
 
 function drawRoaming(doc: PdfDoc, rows: QuotePdfPlanRow[], y: number): number {
+  const sp = spacingOf(doc)
   const cols = Math.min(3, Math.max(1, rows.length))
-  const cardW = (CONTENT_W - ROAM_GAP * (cols - 1)) / cols
+  const cardW = (CONTENT_W - sp.roamGap * (cols - 1)) / cols
   let x = MARGIN_X
   let rowY = y
   rows.forEach((row, index) => {
     if (index % cols === 0) {
       if (index > 0) {
-        rowY += ROAM_CARD_H + ROAM_GAP
+        rowY += ROAM_CARD_H + sp.roamGap
         x = MARGIN_X
       }
       if (rowY + ROAM_CARD_H > PAGE_BOTTOM) {
@@ -1086,13 +1298,14 @@ function drawRoaming(doc: PdfDoc, rows: QuotePdfPlanRow[], y: number): number {
     doc.text(`${min}  |  ${inet}`, x + 12, rowY + 28, { width: cardW - 24, lineBreak: false })
     doc.font('Helvetica').fontSize(9).fillColor(MUTED)
     doc.text(displayBenefit(roam.sms), x + 12, rowY + 44, { width: cardW - 24, lineBreak: false })
-    x += cardW + ROAM_GAP
+    x += cardW + sp.roamGap
   })
-  doc.y = rowY + ROAM_CARD_H + ROAM_AFTER
+  doc.y = rowY + ROAM_CARD_H + sp.roamAfter
   return doc.y
 }
 
 function drawApps(doc: PdfDoc, rows: QuotePdfPlanRow[], y: number): number {
+  const sp = spacingOf(doc)
   if (rows.length === 0) {
     doc.y = y
     return y
@@ -1100,7 +1313,7 @@ function drawApps(doc: PdfDoc, rows: QuotePdfPlanRow[], y: number): number {
   const fullH = rows.length * APPS_ROW_H + APPS_BLOCK_PAD
   if (y + fullH <= PAGE_BOTTOM) {
     paintAppRows(doc, rows, y, 0, rows.length)
-    doc.y = y + fullH + APPS_AFTER
+    doc.y = y + fullH + sp.appsAfter
     return doc.y
   }
 
@@ -1117,7 +1330,7 @@ function drawApps(doc: PdfDoc, rows: QuotePdfPlanRow[], y: number): number {
     }
     paintAppRows(doc, rows, y, index, count)
     index += count
-    y = y + h + APPS_AFTER
+    y = y + h + sp.appsAfter
     if (index < rows.length) {
       doc.addPage()
       y = contentTop(doc)
@@ -1147,53 +1360,34 @@ function drawExtras(doc: PdfDoc, extras: string, y: number): number {
   return doc.y
 }
 
-const ZONES_TITLE = 'Zonas de roaming internacional'
-
-function pngPixelSize(file: string): { width: number; height: number } {
-  const buf = readFileSync(file)
-  if (buf.length < 24) return { width: 1, height: 1 }
-  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) }
-}
-
-function roamingZonesMetrics(_doc: PdfDoc, imagePath: string): {
-  titleH: number
-  imgW: number
-  imgH: number
-  needed: number
-} {
-  const titleH = sectionTitleHeight()
-  const image = pngPixelSize(imagePath)
-  const imgW = CONTENT_W
-  const imgH = image.width > 0 ? (image.height / image.width) * imgW : 0
-  return { titleH, imgW, imgH, needed: titleH + imgH + 8 }
-}
-
 /**
  * Title glued to the flags graphic (section badge 4 after Planes, Roaming, Apps).
  * Measure first; if the pair does not fit, move the entire block. Never split the map.
+ * `scale` (0.85–1) is only used when the pair then fits on the current page; on a new page it is 100 %.
  */
-function drawRoamingZones(doc: PdfDoc, y: number, imagePath: string): number {
-  const metrics = roamingZonesMetrics(doc, imagePath)
-  let imgW = metrics.imgW
-  let imgH = metrics.imgH
-  let needed = metrics.needed
+function drawRoamingZones(doc: PdfDoc, y: number, imagePath: string, scale = 1): number {
+  const metrics = roamingZonesMetrics(imagePath, spacingOf(doc))
+  let useScale = scale
+  if (y + zonesBlockHeight(metrics, useScale) > PAGE_BOTTOM + 0.01) useScale = 1
+  let imgW = metrics.imgW * useScale
+  let imgH = metrics.imgH * useScale
 
-  y = startKeepTogether(doc, y, needed)
+  y = startKeepTogether(doc, y, zonesBlockHeight(metrics, useScale))
 
   const available = PAGE_BOTTOM - y
+  const needed = zonesBlockHeight(metrics, useScale)
   if (needed > available && imgH > 0) {
-    const maxImg = Math.max(80, available - metrics.titleH - 8)
-    const scale = maxImg / imgH
-    imgH *= scale
-    imgW *= scale
-    needed = metrics.titleH + imgH + 8
+    const maxImg = Math.max(80, available - metrics.titleH)
+    const shrink = maxImg / imgH
+    imgH *= shrink
+    imgW *= shrink
   }
 
   y = paintSectionTitle(doc, 4, ZONES_TITLE, y)
   const imgX = MARGIN_X + (CONTENT_W - imgW) / 2
   const imgY = y
   doc.image(imagePath, imgX, imgY, { width: imgW, height: imgH })
-  doc.y = imgY + imgH + 8
+  doc.y = imgY + imgH + ZONES_AFTER
   return doc.y
 }
 
@@ -1223,9 +1417,6 @@ export function renderQuotePdf(input: QuotePdfInput, options?: { compress?: bool
       0
     )
     const letterhead = bundledClaroLogoPath() ?? usableImagePath(input.letterheadPath)
-    const sender = (input.senderName || '').trim()
-    const senderPhone = (input.senderPhone || '').trim()
-    const senderCargo = input.senderCargo ?? ''
     const extras = (input.extras || '').trim()
     const zonesPath = bundledRoamingZonesPath()
 
@@ -1242,7 +1433,10 @@ export function renderQuotePdf(input: QuotePdfInput, options?: { compress?: bool
     paintPageChrome(true)
     doc.on('pageAdded', () => paintPageChrome(false))
 
-    const breathing = page1BreathingPt(doc, headerHeight, rows, percent, extras, zonesPath)
+    const plan = choosePage1Layout(doc, headerHeight, rows, percent, extras, zonesPath)
+    const sp = plan.spacing
+    const breathing = plan.breathing
+    pageSpacing.set(doc, sp)
 
     let y = headerHeight + HEADER_AFTER
     doc.x = MARGIN_X
@@ -1250,16 +1444,16 @@ export function renderQuotePdf(input: QuotePdfInput, options?: { compress?: bool
 
     doc.font('Helvetica-Bold').fontSize(16).fillColor(INK)
     doc.text('Conectividad y beneficios para tu empresa', MARGIN_X, y, { width: CONTENT_W, lineGap: 0 })
-    y = doc.y + AFTER_TITLE
+    y = doc.y + sp.afterTitle
     doc.font('Helvetica').fontSize(11).fillColor(MUTED)
     doc.text(mobileHeadline(totalLines, input.headlineSuffix), MARGIN_X, y, { width: CONTENT_W, lineBreak: false })
-    y = doc.y + AFTER_HEADLINE
+    y = doc.y + sp.afterHeadline
 
-    y = drawKpiBand(doc, y, discountedTotal, percent) + AFTER_KPI + breathing
+    y = drawKpiBand(doc, y, discountedTotal, percent) + sp.afterKpi + breathing
     doc.y = y
 
     y = sectionTitle(doc, 1, 'Planes, precios y beneficios incluidos', doc.y)
-    y = drawPlanTable(doc, rows, percent, y) + AFTER_TABLE + breathing
+    y = drawPlanTable(doc, rows, percent, y) + sp.afterTable + breathing
     doc.y = y
 
     y = drawRoamingSection(doc, rows, doc.y)
@@ -1273,10 +1467,8 @@ export function renderQuotePdf(input: QuotePdfInput, options?: { compress?: bool
     doc.y = y
 
     if (mixHasRoaming(rows) && zonesPath) {
-      drawRoamingZones(doc, doc.y, zonesPath)
+      drawRoamingZones(doc, doc.y, zonesPath, plan.mapOnPage1 ? plan.mapScale : 1)
     }
-
-    finishWithSignatureStamp(doc, sender, senderCargo, senderPhone)
 
     doc.end()
   })

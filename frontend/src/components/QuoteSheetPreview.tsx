@@ -48,6 +48,7 @@ export default function QuoteSheetPreview({
   senderName,
   senderPhone,
   senderCargo,
+  senderEmail,
   onExtras,
   size = 'panel',
 }: {
@@ -60,6 +61,8 @@ export default function QuoteSheetPreview({
   senderName: string
   senderPhone: string
   senderCargo?: string | null
+  /** Profile Correo, else login email. Empty hides the line. */
+  senderEmail?: string | null
   onExtras: (value: string) => void
   size?: 'panel' | 'wide'
 }) {
@@ -68,6 +71,7 @@ export default function QuoteSheetPreview({
   const navy = CLARO_NAVY
   const sender = senderName.trim()
   const phone = senderPhone.trim()
+  const email = (senderEmail ?? '').trim().toLowerCase()
   const extrasText = extras.trim()
   const ordered = sortQuoteMixRows(rows)
   const totalLines = ordered.reduce((sum, row) => sum + row.lines, 0)
@@ -90,8 +94,8 @@ export default function QuoteSheetPreview({
 
   return (
     <div className="w-full min-w-0 overflow-hidden rounded-md border border-slate-200 bg-white text-slate-900 shadow-md">
-      <div className="flex items-start gap-4 px-5 py-4 text-white" style={{ backgroundColor: accent }}>
-        <div className="flex h-16 w-[7.75rem] shrink-0 items-center justify-center rounded-xl bg-white p-1">
+      <div className="flex items-stretch gap-3 px-5 py-4 text-white sm:gap-4" style={{ backgroundColor: accent }}>
+        <div className="flex h-16 w-[7.75rem] shrink-0 items-center justify-center self-start rounded-xl bg-white p-1">
           <img src={CLARO_LOGO_SRC} alt="Claro empresas" className="max-h-full max-w-full object-contain" />
         </div>
         <div className="min-w-0 flex-1 py-0.5">
@@ -112,6 +116,33 @@ export default function QuoteSheetPreview({
           <p className={wide ? 'mt-1.5 text-xs text-white/90' : 'mt-1.5 text-[11px] text-white/90'}>
             RUC {ruc.trim() || '—'} | {dateLabel}
           </p>
+        </div>
+        <div className="w-px shrink-0 self-stretch bg-white" aria-hidden data-testid="quote-header-divider" />
+        <div
+          className={`flex min-w-0 shrink-0 flex-col justify-center text-left ${
+            wide ? 'w-[9rem] gap-0.5' : 'w-[6.75rem] gap-px sm:w-[7.5rem]'
+          }`}
+          data-testid="quote-header-sender"
+        >
+          <p className={wide ? 'line-clamp-2 break-words text-sm font-bold leading-tight' : 'line-clamp-2 break-words text-xs font-bold leading-tight'}>
+            {formatQuoteAgentName(sender)}
+          </p>
+          <p className={wide ? 'truncate text-xs leading-tight' : 'truncate text-[11px] leading-tight'}>
+            {quoteDisplayCargo(senderCargo)}
+          </p>
+          {email ? (
+            <p
+              className={wide ? 'truncate text-[11px] leading-tight' : 'truncate text-[10px] leading-tight'}
+              title={email}
+            >
+              {email}
+            </p>
+          ) : null}
+          {phone ? (
+            <p className={wide ? 'truncate text-xs leading-tight' : 'truncate text-[11px] leading-tight'}>
+              Cel. {formatQuoteCel(phone)}
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -254,18 +285,6 @@ export default function QuoteSheetPreview({
         ) : null}
       </div>
 
-      <div className={wide ? 'flex justify-end px-8 pb-7 pt-10' : 'flex justify-end px-5 pb-5 pt-9'}>
-        <div className="w-[11.75rem] text-left">
-          <div className="w-[9.5rem] border-t border-[#9AA3AE]" aria-hidden />
-          <p className={wide ? 'mt-2 text-sm font-semibold text-slate-900' : 'mt-2 text-xs font-semibold text-slate-900'}>
-            {formatQuoteAgentName(sender)}
-          </p>
-          <p className={wide ? 'text-sm text-slate-500' : 'text-xs text-slate-500'}>{quoteDisplayCargo(senderCargo)}</p>
-          {phone ? (
-            <p className={wide ? 'text-sm text-slate-500' : 'text-xs text-slate-500'}>Cel. {formatQuoteCel(phone)}</p>
-          ) : null}
-        </div>
-      </div>
     </div>
   )
 }

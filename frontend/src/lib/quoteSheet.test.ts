@@ -136,7 +136,10 @@ assert.equal(
 )
 
 section('updated MAX Negocios headers fill DATOS and INTERNET; old names still work')
-assert.deepEqual([...QUOTE_PLAN_INTERNET_LABELS], ['Internet base (GB)', 'Lineas nueva Gbs'])
+assert.deepEqual(
+  [...QUOTE_PLAN_INTERNET_LABELS],
+  ['Internet base (GB)', 'Lineas nueva Gbs', 'Tethering Linea nueva', 'Tehering Linea nueva']
+)
 assert.deepEqual(
   [...QUOTE_PLAN_DATA_LABELS],
   [
@@ -159,7 +162,22 @@ assert.equal(
   quotePlanData([{ label: 'Portabilidad Full Claro (GB)', value: '30 GB' }], 'portabilidad'),
   '30 GB'
 )
-assert.deepEqual([...QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD], ['Portabilidad base (GB)'])
+assert.deepEqual(
+  [...QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD],
+  ['Portabilidad base (GB)', 'Tethering Portabilidad', 'Tehering Portabilidad']
+)
+const tetheringRow = [
+  { label: 'Tethering Linea nueva', value: '30 GB' },
+  { label: 'Lineass nuevas Internet', value: 'ILIMITADO' },
+  { label: 'Tethering Portabilidad', value: '55 GB' },
+  { label: 'Portabilidad internet', value: '55 GB' },
+]
+assert.equal(quotePlanInternet(tetheringRow, 'nueva'), '30 GB')
+assert.equal(quotePlanInternet(tetheringRow, 'portabilidad'), '55 GB')
+assert.equal(quotePlanData(tetheringRow, 'nueva'), 'ILIMITADO')
+assert.equal(quotePlanData(tetheringRow, 'portabilidad'), '55 GB')
+assert.equal(quotePlanInternet([{ label: 'Tehering Linea nueva', value: '31 GB' }], 'nueva'), '31 GB')
+assert.equal(quotePlanInternet([{ label: 'Tehering Portabilidad', value: '56 GB' }], 'portabilidad'), '56 GB')
 assert.equal(
   mixHasRoaming([
     {

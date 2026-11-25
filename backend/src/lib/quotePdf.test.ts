@@ -22,14 +22,14 @@ import {
   QUOTE_HEADLINE_SUFFIX_DEFAULT,
   QUOTE_DEFAULT_CARGO,
   renderQuotePdf,
-  quoteStampBlockHeight,
-  quoteStampPlacement,
-  quoteStampUnitHeight,
-  STAMP_BLOCK_W,
-  STAMP_CONTENT_GAP,
-  STAMP_MARGIN_BOTTOM,
-  STAMP_SIGN_SPACE,
-  STAMP_X,
+  quotePage1Layout,
+  QUOTE_MAP_MIN_SCALE,
+  HEADER_DIVIDER_X,
+  HEADER_SENDER_X,
+  HEADER_SENDER_W,
+  resolveQuoteSenderEmail,
+  parseContactEmail,
+  sanitizeQuoteSenderEmail,
   type QuotePdfInput,
 } from './quotePdf'
 import {
@@ -114,7 +114,8 @@ function pdfPageTexts(pdf: Buffer): string[] {
 
 function shortStampLines(pdf: Buffer): { y: number; width: number }[] {
   const raw = pdf.toString('latin1')
-  const re = /([0-9.]+) ([0-9.]+) m\r?\n([0-9.]+) ([0-9.]+) l/g
+  // Stroked straight lines only (rounded-rect fills also start with `m` + `l`).
+  const re = /([0-9.]+) ([0-9.]+) m\r?\n([0-9.]+) ([0-9.]+) l\r?\nS/g
   const out: { y: number; width: number }[] = []
   let match: RegExpExecArray | null
   while ((match = re.exec(raw))) {
@@ -130,14 +131,17 @@ function shortStampLines(pdf: Buffer): { y: number; width: number }[] {
 const TEST_PAGE_W = 595.28
 const TEST_PAGE_H = 841.89
 const TEST_MARGIN_X = 40
+const CONTENT_W_TEST = TEST_PAGE_W - TEST_MARGIN_X * 2
 
 type PageGeometry = {
-  /** Right-anchored short line (x1, x2, y top-down) or null. */
-  stampLine: { x1: number; x2: number; y: number } | null
+  /** White vertical divider in the page-1 header (x, top-down y span) or null. */
+  divider: { x: number; yTop: number; yBottom: number } | null
   /** Text runs with left x and baseline y (top-down). */
   texts: { x: number; y: number; hex: string }[]
   /** Image bottoms (top-down) for pictures wider than half the content area. */
   wideImageBottoms: number[]
+  /** Widths of those same pictures. */
+  wideImageWidths: number[]
 }
 
 /** One entry per page content stream, in page order (uncompressed PDFs only). */
@@ -149,23 +153,27 @@ function pdfPageGeometries(pdf: Buffer): PageGeometry[] {
   while ((header = headerRe.exec(raw))) {
     const stream = raw.slice(header.index + header[0].length, header.index + header[0].length + Number(header[1]))
     if (!/ Tf/.test(stream)) continue
-    let stampLine: PageGeometry['stampLine'] = null
+    let divider: PageGeometry['divider'] = null
     for (const m of stream.matchAll(/([0-9.]+) ([0-9.]+) m\r?\n([0-9.]+) ([0-9.]+) l/g)) {
-      const x1 = Number(m[1])
-      const x2 = Number(m[3])
-      if (Math.abs(Number(m[2]) - Number(m[4])) > 0.5) continue
-      const width = Math.abs(x2 - x1)
-      if (Math.abs(width - 150) < 0.5 && x1 > 300) stampLine = { x1, x2, y: Number(m[2]) }
+      if (Math.abs(Number(m[1]) - Number(m[3])) > 0.01) continue
+      const y1 = Number(m[2])
+      const y2 = Number(m[4])
+      if (Math.abs(y2 - y1) < 20) continue
+      divider = { x: Number(m[1]), yTop: Math.min(y1, y2), yBottom: Math.max(y1, y2) }
     }
     const texts: PageGeometry['texts'] = []
     for (const m of stream.matchAll(/1 0 0 1 ([0-9.]+) ([0-9.]+) Tm\r?\n\/F\d+ [0-9.]+ Tf\r?\n\[<([0-9A-Fa-f]+)>/g)) {
       texts.push({ x: Number(m[1]), y: TEST_PAGE_H - Number(m[2]), hex: m[3] })
     }
     const wideImageBottoms: number[] = []
+    const wideImageWidths: number[] = []
     for (const m of stream.matchAll(/([0-9.]+) 0 0 -([0-9.]+) [0-9.]+ ([0-9.]+) cm\r?\n\/I\d+ Do/g)) {
-      if (Number(m[1]) > 250) wideImageBottoms.push(Number(m[3]))
+      if (Number(m[1]) > 250) {
+        wideImageBottoms.push(Number(m[3]))
+        wideImageWidths.push(Number(m[1]))
+      }
     }
-    out.push({ stampLine, texts, wideImageBottoms })
+    out.push({ divider, texts, wideImageBottoms, wideImageWidths })
   }
   return out
 }
@@ -587,11 +595,12 @@ async function main() {
   )
   assert.equal(pageCount(longPdf), 1)
 
-  section('company name longer than two lines ellipsizes the second line')
+  section('company name longer than three lines ellipsizes the third line')
   const hugeCompany = Array.from({ length: 24 }, () => 'RESPONSABILIDAD').join(' ')
   const hugeHeader = quoteHeaderMetrics(hugeCompany)
-  assert.equal(hugeHeader.companyLineCount, 2)
-  assert.ok(hugeHeader.lines[1]?.includes('...'))
+  assert.equal(hugeHeader.companyLineCount, 3)
+  assert.equal(hugeHeader.companySize, 10, 'three lines use the 10 pt company font')
+  assert.ok(hugeHeader.lines[2]?.includes('...'))
   assert.ok(hugeHeader.rucY > hugeHeader.companyY + hugeHeader.companyHeight - 0.01)
 
   section('short mix of 2–3 plans without roaming stays on one page')
@@ -651,8 +660,12 @@ async function main() {
   assert.ok(tallText.includes(QUOTE_DEFAULT_CARGO))
   const tallPagesText = pdfPageTexts(tall)
   assert.ok(tallPagesText.length >= 2, 'tall mix exposes at least two page text streams')
-  assert.equal(tallPagesText[0]?.includes(QUOTE_DEFAULT_CARGO), false, 'page 1 of a 2-page quote has no stamp')
-  assert.ok(tallPagesText[tallPagesText.length - 1]?.includes(QUOTE_DEFAULT_CARGO), 'stamp is on the last page')
+  assert.ok(tallPagesText[0]?.includes(QUOTE_DEFAULT_CARGO), 'page 1 header carries the sender block')
+  assert.equal(
+    tallPagesText[tallPagesText.length - 1]?.includes(QUOTE_DEFAULT_CARGO),
+    false,
+    'no signature stamp on the last page anymore'
+  )
   const tallFooter = pdfTextAtY(tall).filter((item) => item.y > 0 && item.y < 36)
   const tallFooterText = tallFooter.map((item) => item.text).join('')
   if (tallFooter.length > 0) {
@@ -931,7 +944,7 @@ async function main() {
   const cantCol = quotePlanTableColumns(515, 0).find((col) => col.key === 'cant')
   assert.equal(cantCol?.align, 'center')
 
-  section('signature stamp is last-page only, with default or custom cargo')
+  section('sender block is page-1 header only, with default or custom cargo')
   assert.equal(quoteDisplayCargo(''), QUOTE_DEFAULT_CARGO)
   assert.equal(quoteDisplayCargo('   '), QUOTE_DEFAULT_CARGO)
   assert.equal(quoteDisplayCargo('Consultor senior'), 'Consultor senior')
@@ -942,10 +955,10 @@ async function main() {
   assert.equal(pageCount(onePage), 1)
   assert.ok(onePageText.includes('Ana'))
   assert.ok(onePageText.includes(QUOTE_DEFAULT_CARGO))
-  assert.ok(onePageText.includes('Cel.') || onePageText.includes('999 111 222'))
+  assert.ok(onePageText.includes('Cel.') && onePageText.includes('999 111 222'))
   assert.equal(onePageText.includes('EJECUTIVO COMERCIAL'), false)
   assert.equal(onePageText.includes('Firma'), false)
-  assert.ok(shortStampLines(onePage).length >= 1, 'short muted signature line (~150 pt)')
+  assert.equal(shortStampLines(onePage).length, 0, 'no horizontal signature line anymore')
   const customCargoPdf = await renderQuotePdf(
     sample({ benefits: noRoamingBenefits, senderCargo: 'Consultor senior' }),
     { compress: false }
@@ -964,110 +977,237 @@ async function main() {
   assert.ok(pageCount(twoPage) >= 2)
   const twoPageTexts = pdfPageTexts(twoPage)
   assert.ok(twoPageTexts.length >= 2)
-  assert.equal(twoPageTexts[0]?.includes(QUOTE_DEFAULT_CARGO), false, 'first page has no cargo stamp')
-  assert.equal(twoPageTexts[0]?.includes('Ana'), false, 'first page has no agent name stamp')
-  assert.ok(twoPageTexts[twoPageTexts.length - 1]?.includes(QUOTE_DEFAULT_CARGO))
-  assert.ok(twoPageTexts[twoPageTexts.length - 1]?.includes('Ana'))
+  assert.ok(twoPageTexts[0]?.includes(QUOTE_DEFAULT_CARGO), 'first page header has the cargo')
+  assert.ok(twoPageTexts[0]?.includes('Ana'), 'first page header has the agent name')
+  assert.equal(
+    twoPageTexts.slice(1).some((text) => text.includes(QUOTE_DEFAULT_CARGO) || text.includes('Ana')),
+    false,
+    'continuation pages never repeat the sender block'
+  )
   assert.equal(pdfText(twoPage).includes('EJECUTIVO COMERCIAL'), false)
-  assert.ok(shortStampLines(twoPage).length >= 1)
+  assert.equal(shortStampLines(twoPage).length, 0)
 
-  section('signature stamp is right-anchored, left-aligned inside, and rises under the content')
-  assert.equal(STAMP_X, TEST_PAGE_W - TEST_MARGIN_X - STAMP_BLOCK_W)
-  assert.equal(STAMP_BLOCK_W, 190)
-  assert.equal(STAMP_CONTENT_GAP, 32)
-  assert.equal(STAMP_SIGN_SPACE, 40)
-  const unit = quoteStampUnitHeight(true)
-  assert.ok(unit >= STAMP_SIGN_SPACE + quoteStampBlockHeight(true), 'keep-together unit includes the signing space')
-  // Pure placement rule.
-  const roomy = quoteStampPlacement(300, 60, true)
-  assert.equal(roomy.newPage, false)
-  assert.equal(roomy.lineY, 300 + STAMP_SIGN_SPACE, 'line sits ~40 pt under the last content cursor')
-  assert.ok(roomy.lineY - 300 >= STAMP_CONTENT_GAP, 'never tighter than the 32 pt gap')
-  const lastFit = TEST_PAGE_H - STAMP_MARGIN_BOTTOM - unit
-  assert.equal(quoteStampPlacement(lastFit, 60, true).newPage, false, 'fits exactly at the limit')
-  const tooLow = quoteStampPlacement(lastFit + 1, 60, true)
-  assert.equal(tooLow.newPage, true, 'does not fit: whole block moves to a new page')
-  assert.equal(tooLow.lineY, 60 + STAMP_SIGN_SPACE, 'new page: top-down from content top, not the page floor')
-  assert.ok(tooLow.lineY + quoteStampBlockHeight(true) < 200, 'new-page stamp is not hugging the page floor')
-
-  const onePageGeo = pdfPageGeometries(onePage)
-  assert.equal(onePageGeo.length, 1)
-  const oneLine = onePageGeo[0].stampLine
-  assert.ok(oneLine, 'one-page quote has the signature line')
-  assert.ok(Math.abs(oneLine!.x2 - (TEST_PAGE_W - TEST_MARGIN_X - (STAMP_BLOCK_W - 150))) < 0.5, 'line is on the right half')
-  assert.ok(oneLine!.x1 > TEST_PAGE_W / 2 && oneLine!.x1 !== TEST_MARGIN_X, 'not the old left margin')
-  assert.ok(oneLine!.x1 + STAMP_BLOCK_W <= TEST_PAGE_W - TEST_MARGIN_X + 0.5, 'block right edge is the content margin')
-  const oneNames = stampNameRuns(onePageGeo[0])
-  assert.equal(oneNames.length, 1, 'name printed once')
-  assert.ok(Math.abs(oneNames[0].x - oneLine!.x1) < 0.5, 'name shares the line left edge')
-  const oneCargo = onePageGeo[0].texts.filter((item) => Math.abs(item.x - oneLine!.x1) < 0.5)
-  assert.equal(oneCargo.length, 3, 'name + cargo + cel share one left edge (no centered look)')
-  assert.ok(
-    oneLine!.y < TEST_PAGE_H - STAMP_MARGIN_BOTTOM - quoteStampBlockHeight(true) - 60,
-    'half-empty last page: stamp is not at the page floor'
+  section('header: white vertical divider, left-aligned sender block right of it')
+  assert.equal(HEADER_DIVIDER_X, 450)
+  assert.equal(HEADER_SENDER_X, 462)
+  assert.ok(HEADER_SENDER_W >= 105 && HEADER_SENDER_W <= 112, `sender width ~105-110 (got ${HEADER_SENDER_W})`)
+  assert.ok(HEADER_SENDER_X + HEADER_SENDER_W <= TEST_PAGE_W - 20, 'block stays inside the page')
+  const fullSender = {
+    name: 'Carlos Tenorio',
+    cargo: 'Ejecutivo de ventas',
+    email: 'agente1@gmail.com',
+    phone: '955442084',
+  }
+  const withSender = await renderQuotePdf(
+    sample({
+      senderName: fullSender.name,
+      senderCargo: fullSender.cargo,
+      senderEmail: fullSender.email,
+      senderPhone: fullSender.phone,
+      benefits: noRoamingBenefits,
+    }),
+    { compress: false }
   )
-
-  const twoGeo = pdfPageGeometries(twoPage)
-  assert.equal(twoGeo.length, pageCount(twoPage))
-  twoGeo.slice(0, -1).forEach((page, index) => {
-    assert.equal(page.stampLine, null, `page ${index + 1} has no stamp line`)
-    assert.equal(stampNameRuns(page).length, 0, `page ${index + 1} has no stamp name`)
+  const withSenderText = pdfText(withSender)
+  assert.ok(withSenderText.includes('Carlos Tenorio'))
+  assert.ok(withSenderText.includes('agente1@gmail.com'))
+  assert.ok(withSenderText.includes('Cel. 955 442 084'))
+  assert.equal(onePageText.includes('@'), false, 'no email line when senderEmail is empty (old quotes)')
+  const senderGeo = pdfPageGeometries(withSender)
+  assert.equal(senderGeo.length, 1)
+  const divider = senderGeo[0].divider
+  assert.ok(divider, 'page 1 has the vertical divider')
+  assert.ok(Math.abs(divider!.x - HEADER_DIVIDER_X) < 0.5, 'divider x ≈ 450')
+  const senderHeader = quoteHeaderMetrics(sample().companyName, fullSender)
+  assert.equal(senderHeader.senderLines.length, 4, 'name + cargo + email + cel')
+  assert.deepEqual(
+    senderHeader.senderLines.map((line) => line.size),
+    [10, 9, 8, 9],
+    'bold 10 / cargo 9 / email 8 / cel 9'
+  )
+  assert.ok(Math.abs(divider!.yTop - senderHeader.dividerTop) < 0.5)
+  assert.ok(Math.abs(divider!.yBottom - senderHeader.dividerBottom) < 0.5)
+  const senderRuns = senderGeo[0].texts.filter((item) => Math.abs(item.x - HEADER_SENDER_X) < 0.5)
+  assert.equal(senderRuns.length, 4, 'four runs share one left edge (left-aligned, no box)')
+  senderRuns.forEach((run, index) => {
+    assert.ok(run.y >= divider!.yTop && run.y <= divider!.yBottom + 1, `sender run ${index} inside the divider span`)
+    if (index > 0) assert.ok(run.y > senderRuns[index - 1].y, 'lines stack top-down')
   })
-  const twoLast = twoGeo[twoGeo.length - 1]
-  assert.ok(twoLast.stampLine, 'stamp line on the last page')
-  assert.equal(stampNameRuns(twoLast).length, 1, 'name once on the last page only')
-  assert.ok(twoLast.stampLine!.x1 > TEST_PAGE_W / 2)
-  assert.ok(twoLast.wideImageBottoms.length >= 1, 'last page holds the zonas map')
-  const mapBottom = Math.max(...twoLast.wideImageBottoms)
-  const gapUnderMap = twoLast.stampLine!.y - mapBottom
-  assert.ok(gapUnderMap >= 32 && gapUnderMap <= 60, `stamp sits 32–60 pt under the map (got ${gapUnderMap.toFixed(1)})`)
-  assert.ok(
-    twoLast.stampLine!.y + quoteStampBlockHeight(true) < TEST_PAGE_H - STAMP_MARGIN_BOTTOM - 100,
-    'with a half-empty last page the stamp is not hugging the page floor'
-  )
+  const noEmailHeader = quoteHeaderMetrics('ACME SAC', { ...fullSender, email: '', phone: '' })
+  assert.equal(noEmailHeader.senderLines.length, 2, 'email and cel are optional')
+  const celOnlyHeader = quoteHeaderMetrics('ACME SAC', { ...fullSender, email: '' })
+  assert.equal(celOnlyHeader.senderLines.length, 3)
+  assert.equal(HEADER_DIVIDER_X - 10 >= 180 + 255, true, 'left column is ~258-270 pt wide')
 
-  section('stamp never splits, never overlaps content, and appears once across mix sizes')
-  const sweepRows = (count: number) =>
+  section('sender block fits: name wraps to 2 lines, cargo and email ellipsize, email shrinks first')
+  const tallSender = quoteHeaderMetrics('ACME SAC', {
+    name: 'Maria Fernanda Del Carmen Rodriguez Villanueva De La Cruz',
+    cargo: 'Ejecutivo senior de cuentas corporativas y gobierno',
+    email: 'maria.fernanda.rodriguez.villanueva@empresa-corporativa.com.pe',
+    phone: '955442084',
+  })
+  const nameLines = tallSender.senderLines.filter((line) => line.font === 'Helvetica-Bold')
+  assert.ok(nameLines.length <= 2, 'name wraps to at most 2 lines')
+  assert.ok(nameLines[nameLines.length - 1].text.endsWith('...'), 'name ellipsizes after two lines')
+  const cargoLine = tallSender.senderLines.find((line) => line.size === 9 && !line.text.startsWith('Cel.'))
+  assert.ok(cargoLine?.text.endsWith('...'), 'long cargo ellipsizes')
+  const emailLine = tallSender.senderLines[tallSender.senderLines.length - 2]
+  assert.equal(emailLine?.size, 7.5, 'email shrinks to 7.5 before ellipsis')
+  assert.ok(emailLine?.text.endsWith('...'), 'email ellipsizes after shrinking')
+  assert.ok(tallSender.height >= 96, 'band never smaller than the base height')
+  assert.ok(tallSender.dividerBottom >= tallSender.senderBottom - 0.01, 'divider spans the sender block')
+  assert.ok(tallSender.height >= tallSender.dividerBottom + 10 - 1, 'band is padded under the content')
+  const midEmail = quoteHeaderMetrics('ACME SAC', { ...fullSender, email: 'agente.ventas01@gmail.com' })
+  const midEmailLine = midEmail.senderLines[midEmail.senderLines.length - 2]
+  assert.ok(midEmailLine && midEmailLine.size <= 8, 'a longer email never grows past 8 pt')
+
+  section('company name may use three lines; 10 pt then, and header grows with max(left, sender, logo)')
+  const threeLineCompany =
+    'INVERSIONES BOSTON FOODS EMPRESA INDIVIDUAL DE RESPONSABILIDAD LIMITADA DEL PERU Y SERVICIOS GENERALES'
+  const threeHeader = quoteHeaderMetrics(threeLineCompany, fullSender)
+  assert.equal(threeHeader.companySize, 10, 'three lines drop the company font to 10 pt')
+  assert.ok(threeHeader.companyLineCount === 3 || threeHeader.companyLineCount === 2)
+  const longHeaderFull = quoteHeaderMetrics(LONG_COMPANY, fullSender)
+  assert.ok(threeHeader.height >= longHeaderFull.height - 1)
+  assert.ok(threeHeader.height >= threeHeader.leftBottom + 10 - 1, 'left column drives the height')
+  assert.ok(
+    threeHeader.dividerBottom >= Math.max(threeHeader.leftBottom, 16 + 64),
+    'divider covers the whole content height (left column or logo)'
+  )
+  const threePdf = await renderQuotePdf(
+    sample({ companyName: threeLineCompany, senderEmail: fullSender.email, benefits: noRoamingBenefits }),
+    { compress: false }
+  )
+  const threeGeo = pdfPageGeometries(threePdf)[0]
+  const headerRuns = threeGeo.texts.filter((item) => item.y <= threeHeader.height)
+  const bodyRuns = threeGeo.texts.filter((item) => item.y > threeHeader.height)
+  assert.ok(headerRuns.length >= 8, 'title, company, RUC and the sender block live in the band')
+  assert.ok(bodyRuns.length > 0)
+  assert.ok(
+    Math.min(...bodyRuns.map((item) => item.y)) >= threeHeader.height + 20,
+    'content starts at the measured header height + 20 (no overlap)'
+  )
+  assert.ok(
+    Math.max(...headerRuns.map((item) => item.y)) <= threeHeader.dividerBottom + 1,
+    'header text stays within the divider span'
+  )
+  assert.ok(threeGeo.divider, 'divider present with the taller header')
+
+  section('page 1: map fits for typical 2-plan quotes; rows are compact; floor 85 %')
+  const mixRows = (count: number, origin = true) =>
     Array.from({ length: count }, (_, index) => ({
-      name: `MAX NEGOCIOS+ ${String(29.9 + index)}`,
-      priceSoles: 29.9 + index,
-      lines: 1,
-      monthlySoles: 29.9 + index,
+      name: `MAX NEGOCIOS+ ${String(29.9 + index * 10)}`,
+      priceSoles: 29.9 + index * 10,
+      lines: 2 + index,
+      monthlySoles: quoteLineTotal(29.9 + index * 10, 2 + index),
       proposed: index === 0,
-      origin: (index % 2 === 0 ? 'portabilidad' : 'nueva') as 'portabilidad' | 'nueva',
+      ...(origin ? { origin: (index % 2 === 0 ? 'nueva' : 'portabilidad') as 'nueva' | 'portabilidad' } : {}),
       colors,
       benefits: CATALOG_BENEFITS,
     }))
-  let sawNewPageStamp = false
+  const fitReport: string[] = []
+  for (const count of [1, 2, 3, 4]) {
+    for (const withExtras of [false, true]) {
+      const input = sample({
+        planRows: mixRows(count),
+        extras: withExtras ? 'Asesor posventa · Nota de crédito en el tercer mes · Portabilidad asistida' : '',
+        senderEmail: 'ana@acme.pe',
+      })
+      const pdf = await renderQuotePdf(input, { compress: false })
+      const geo = pdfPageGeometries(pdf)
+      const layout = quotePage1Layout(input)
+      const label = `plans=${count} extras=${withExtras ? 'yes' : 'no'}`
+      const mapPage = geo.findIndex((page) => page.wideImageWidths.some((w) => w > 400))
+      assert.ok(mapPage >= 0, `${label}: map is drawn`)
+      assert.equal(geo.filter((page) => page.wideImageWidths.some((w) => w > 400)).length, 1, `${label}: map drawn once`)
+      const mapW = Math.max(...geo[mapPage].wideImageWidths)
+      assert.ok(mapW <= CONTENT_W_TEST + 0.5, `${label}: map never wider than the content`)
+      assert.ok(mapW >= CONTENT_W_TEST * QUOTE_MAP_MIN_SCALE - 0.5, `${label}: map never below 85 % (${mapW.toFixed(1)})`)
+      assert.equal(layout.mapOnPage1, mapPage === 0, `${label}: layout plan agrees with the render`)
+      if (mapPage === 0) {
+        assert.ok(Math.max(...geo[0].wideImageBottoms) <= TEST_PAGE_H - 20 + 0.5, `${label}: map above the floor margin`)
+        assert.ok(layout.mapScale >= QUOTE_MAP_MIN_SCALE && layout.mapScale <= 1)
+      } else {
+        assert.ok(mapW > CONTENT_W_TEST - 0.5, `${label}: map on page 2 stays at 100 %`)
+        assert.ok(mapPage >= 1)
+        assert.ok(geo[mapPage].texts.length > 0)
+      }
+      if (count <= 2 && !withExtras) {
+        assert.equal(pageCount(pdf), 1, `${label}: one page including the map`)
+        assert.equal(mapPage, 0)
+      }
+      fitReport.push(`${label}: pages=${pageCount(pdf)} map=${mapPage + 1} scale=${(mapW / CONTENT_W_TEST).toFixed(3)}`)
+    }
+  }
+  console.log(fitReport.map((line) => `  ${line}`).join('\n'))
+
+  const rowA = await renderQuotePdf(sample({ planRows: mixRows(3), benefits: noRoamingBenefits }), { compress: false })
+  const rowGeo = pdfPageGeometries(rowA)[0]
+  const planCells = rowGeo.texts
+    .filter((item) => Buffer.from(item.hex, 'hex').toString('latin1').startsWith('MAX NEGOCIOS+'))
+    .map((item) => item.y)
+  assert.ok(planCells.length >= 3, 'three plan rows painted')
+  const rowPitch = planCells[1] - planCells[0]
+  assert.ok(rowPitch >= 19.5 && rowPitch <= 20.5, `single-line rows are ~20 pt (got ${rowPitch.toFixed(2)})`)
+
+  section('wrapped plan names keep rows tall enough: no clipping or overlap')
+  const wrapRows = [
+    { ...mixRows(1)[0], name: 'MAX ILIMITADO + 289.9 PLAN CORPORATIVO EXTENDIDO CON NOMBRE MUY LARGO PARA ENVOLVER' },
+    { ...mixRows(2)[1], name: 'MAX NEGOCIOS+ 39.9' },
+  ]
+  const wrapPdf = await renderQuotePdf(sample({ planRows: wrapRows, benefits: noRoamingBenefits }), { compress: false })
+  const wrapGeo = pdfPageGeometries(wrapPdf)[0]
+  const wrapCells = wrapGeo.texts
+    .filter((item) => /^MAX /.test(Buffer.from(item.hex, 'hex').toString('latin1')))
+    .map((item) => item.y)
+  assert.ok(wrapCells.length >= 2)
+  assert.ok(wrapCells[wrapCells.length - 1] > wrapCells[0] + 20, 'the second row starts below the taller first row')
+  assert.equal(pageCount(wrapPdf), 1)
+
+  section('sweep: sender once, divider on page 1 only, map once, nothing below the floor')
   for (let count = 1; count <= 14; count += 1) {
     for (const extrasText of ['', 'Asesor posventa · Nota de crédito en el tercer mes · Portabilidad asistida. '.repeat(3)]) {
-      const sweep = await renderQuotePdf(sample({ planRows: sweepRows(count), extras: extrasText }), { compress: false })
+      const sweep = await renderQuotePdf(
+        sample({ planRows: mixRows(count), extras: extrasText, senderEmail: 'ana@acme.pe' }),
+        { compress: false }
+      )
       const geo = pdfPageGeometries(sweep)
       const label = `rows=${count} extras=${extrasText ? 'yes' : 'no'}`
       assert.equal(geo.length, pageCount(sweep), `${label}: one stream per page`)
-      const withStamp = geo.filter((page) => page.stampLine)
-      assert.equal(withStamp.length, 1, `${label}: exactly one stamp line`)
-      const last = geo[geo.length - 1]
-      assert.ok(last.stampLine, `${label}: stamp is on the last page`)
-      assert.equal(stampNameRuns(last).length, 1, `${label}: name once`)
-      const line = last.stampLine!
-      assert.ok(line.x1 > TEST_PAGE_W / 2, `${label}: right side`)
-      const blockBottom = line.y + quoteStampBlockHeight(true)
-      assert.ok(blockBottom <= TEST_PAGE_H - STAMP_MARGIN_BOTTOM + 0.5, `${label}: block whole on the page`)
-      const stampTexts = last.texts.filter((item) => Math.abs(item.x - line.x1) < 0.5 && item.y > line.y)
-      const others = last.texts.filter((item) => !stampTexts.includes(item))
-      const lowestContentText = Math.max(0, ...others.map((item) => item.y))
-      assert.ok(line.y - lowestContentText >= 30, `${label}: no overlap with page text (${(line.y - lowestContentText).toFixed(1)} pt)`)
-      if (last.wideImageBottoms.length > 0) {
-        assert.ok(line.y - Math.max(...last.wideImageBottoms) >= 32, `${label}: clear of the zonas map`)
-      }
-      if (geo.length >= 2 && last.wideImageBottoms.length === 0 && others.length <= 4) {
-        sawNewPageStamp = true
-        assert.ok(line.y < 160, `${label}: lonely stamp page is placed under the header, not at the floor`)
+      assert.ok(geo[0].divider, `${label}: divider on page 1`)
+      geo.slice(1).forEach((page, index) => {
+        assert.equal(page.divider, null, `${label}: page ${index + 2} has no divider`)
+        assert.equal(
+          page.texts.some((item) => Math.abs(item.x - HEADER_SENDER_X) < 0.5),
+          false,
+          `${label}: page ${index + 2} has no sender block`
+        )
+      })
+      assert.equal(geo.reduce((sum, page) => sum + stampNameRuns(page).length, 0), 1, `${label}: name once`)
+      assert.equal(geo.filter((page) => page.wideImageWidths.some((w) => w > 400)).length, 1, `${label}: map once`)
+      for (const page of geo) {
+        assert.ok(Math.max(...page.texts.map((item) => item.y)) <= TEST_PAGE_H - 12, `${label}: text above the floor`)
+        if (page.wideImageBottoms.length) {
+          assert.ok(Math.max(...page.wideImageBottoms) <= TEST_PAGE_H - 20 + 0.5, `${label}: map above the floor`)
+        }
       }
     }
   }
-  console.log(`  (new-page stamp case exercised: ${sawNewPageStamp})`)
+
+  section('Correo: profile email wins, login email is the fallback, junk is rejected')
+  assert.equal(resolveQuoteSenderEmail('Ventas@Acme.PE ', 'login@x.pe'), 'ventas@acme.pe')
+  assert.equal(resolveQuoteSenderEmail('', 'Login@X.pe'), 'login@x.pe')
+  assert.equal(resolveQuoteSenderEmail(null, 'login@x.pe'), 'login@x.pe')
+  assert.equal(resolveQuoteSenderEmail(undefined, undefined), '')
+  assert.equal(sanitizeQuoteSenderEmail('a b@c.pe'), 'ab@c.pe')
+  assert.deepEqual(parseContactEmail('  Ventas@Acme.PE '), { email: 'ventas@acme.pe' })
+  assert.deepEqual(parseContactEmail(''), { email: null })
+  assert.deepEqual(parseContactEmail('   '), { email: null })
+  assert.ok('error' in parseContactEmail('no-es-correo'))
+  assert.ok('error' in parseContactEmail('a@b'))
+  assert.ok('error' in parseContactEmail('a b@c.pe'))
+  assert.ok('error' in parseContactEmail(`${'a'.repeat(116)}@b.pe`), 'over 120 chars is rejected')
+  assert.deepEqual(parseContactEmail(`${'a'.repeat(110)}@b.pe`), { email: `${'a'.repeat(110)}@b.pe` })
 
   console.log('\nquote PDF smoke test ok')
 }

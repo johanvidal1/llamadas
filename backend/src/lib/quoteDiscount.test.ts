@@ -18,7 +18,10 @@ function section(name: string) {
 }
 
 section('alias lists keep old MAX Negocios names and the updated GB headers')
-assert.deepEqual([...QUOTE_PLAN_INTERNET_LABELS], ['Internet base (GB)', 'Lineas nueva Gbs'])
+assert.deepEqual(
+  [...QUOTE_PLAN_INTERNET_LABELS],
+  ['Internet base (GB)', 'Lineas nueva Gbs', 'Tethering Linea nueva', 'Tehering Linea nueva']
+)
 assert.deepEqual(
   [...QUOTE_PLAN_DATA_LABELS],
   [
@@ -36,7 +39,10 @@ assert.equal(
   quotePlanData([{ label: 'Portabilidad Full Claro (GB)', value: '30 GB' }], 'portabilidad'),
   '30 GB'
 )
-assert.deepEqual([...QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD], ['Portabilidad base (GB)'])
+assert.deepEqual(
+  [...QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD],
+  ['Portabilidad base (GB)', 'Tethering Portabilidad', 'Tehering Portabilidad']
+)
 
 section('updated MAX Negocios labels fill INTERNET and DATOS')
 assert.equal(quotePlanInternet([{ label: 'Lineas nueva Gbs', value: '30 GB' }], 'nueva'), '30 GB')
@@ -72,6 +78,23 @@ assert.equal(quotePlanInternet(mixed), '20 GB')
 assert.equal(defaultQuotePlanOrigin(0), 'nueva')
 assert.equal(defaultQuotePlanOrigin(2), 'portabilidad')
 assert.equal(quotePlanNameWithOrigin('MAX NEGOCIOS+ 29.9', 'portabilidad'), 'MAX NEGOCIOS+ 29.9 · porta')
+
+section('Tethering headers (renamed INTERNET sources) fill INTERNET by origin')
+const tetheringRow = [
+  { label: 'Tethering Linea nueva', value: '30 GB' },
+  { label: 'Lineass nuevas Internet', value: 'ILIMITADO' },
+  { label: 'Tethering Portabilidad', value: '55 GB' },
+  { label: 'Portabilidad internet', value: '55 GB' },
+]
+assert.equal(quotePlanInternet(tetheringRow, 'nueva'), '30 GB')
+assert.equal(quotePlanInternet(tetheringRow, 'portabilidad'), '55 GB')
+assert.equal(quotePlanData(tetheringRow, 'nueva'), 'ILIMITADO')
+assert.equal(quotePlanData(tetheringRow, 'portabilidad'), '55 GB')
+assert.equal(displayDatosBenefit(quotePlanData(tetheringRow, 'nueva')), 'ILIMITADO')
+assert.equal(displayBenefit(quotePlanInternet(tetheringRow, 'nueva')), '30 GB')
+assert.equal(quotePlanInternet([{ label: ' tehering  linea NUEVA ', value: '31 GB' }], 'nueva'), '31 GB')
+assert.equal(quotePlanInternet([{ label: 'Tehering Portabilidad', value: '56 GB' }], 'portabilidad'), '56 GB')
+assert.equal(quotePlanInternet([{ label: 'Tethering Portabilidad', value: '55 GB' }], 'nueva'), '')
 
 section('mixHasRoaming still keys off cobertura headers only')
 assert.equal(

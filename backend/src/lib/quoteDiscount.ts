@@ -136,10 +136,19 @@ export const QUOTE_PLAN_DATA_LABELS = [
 ] as const
 
 /** INTERNET — línea nueva: old Internet base plus updated MAX Negocios. */
-export const QUOTE_PLAN_INTERNET_LABELS = ['Internet base (GB)', 'Lineas nueva Gbs'] as const
+export const QUOTE_PLAN_INTERNET_LABELS = [
+  'Internet base (GB)',
+  'Lineas nueva Gbs',
+  'Tethering Linea nueva',
+  'Tehering Linea nueva',
+] as const
 
 /** INTERNET — portabilidad. */
-export const QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD = ['Portabilidad base (GB)'] as const
+export const QUOTE_PLAN_INTERNET_LABELS_PORTABILIDAD = [
+  'Portabilidad base (GB)',
+  'Tethering Portabilidad',
+  'Tehering Portabilidad',
+] as const
 
 function dataLabelsFor(origin?: QuotePlanOrigin | null): readonly string[] {
   return origin === 'portabilidad' ? QUOTE_PLAN_DATA_LABELS_PORTABILIDAD : QUOTE_PLAN_DATA_LABELS_NUEVA

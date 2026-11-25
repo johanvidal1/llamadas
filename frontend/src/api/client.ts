@@ -76,6 +76,8 @@ export type AuthUser = {
   phone?: string | null
   /** Peru job title for the quote stamp. Null/empty prints Ejecutivo de ventas. */
   cargo?: string | null
+  /** Profile Correo for the quote header. Null/empty uses the login email. Own profile only. */
+  contactEmail?: string | null
   /** Client-only cache buster after avatar upload. */
   avatarVersion?: number
   batchQueueMode?: BatchQueueMode
@@ -95,6 +97,7 @@ export const patchMe = (data: {
   operator?: 'ENTEL' | 'MOVISTAR'
   phone?: string
   cargo?: string
+  contactEmail?: string
 }) => api.patch<AuthUser>('/auth/me', data).then((r) => r.data)
 
 export const uploadAvatar = (file: File) => {

@@ -43,6 +43,9 @@ export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
   const [savingPhone, setSavingPhone] = useState(false)
   const [cargo, setCargo] = useState('')
   const [savingCargo, setSavingCargo] = useState(false)
+  const [contactEmail, setContactEmail] = useState('')
+  const [emailError, setEmailError] = useState('')
+  const [savingEmail, setSavingEmail] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -87,6 +90,11 @@ export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
   useEffect(() => {
     setCargo(user?.cargo ?? '')
   }, [user?.cargo, user?.id])
+
+  useEffect(() => {
+    setContactEmail(user?.contactEmail ?? '')
+    setEmailError('')
+  }, [user?.contactEmail, user?.id])
 
   useEffect(() => {
     if (!open) return
@@ -146,6 +154,26 @@ export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
       toast.error(msg ?? 'No se pudo guardar el cargo')
     } finally {
       setSavingCargo(false)
+    }
+  }
+
+  const handleSaveEmail = async () => {
+    const trimmed = contactEmail.trim()
+    if (trimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setEmailError('Ingresa un correo válido.')
+      return
+    }
+    setEmailError('')
+    setSavingEmail(true)
+    try {
+      const next = await patchMe({ contactEmail: trimmed })
+      updateUser({ contactEmail: next.contactEmail ?? null })
+      toast.success(next.contactEmail ? 'Correo guardado' : 'Correo quitado')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(msg ?? 'No se pudo guardar el correo')
+    } finally {
+      setSavingEmail(false)
     }
   }
 
@@ -320,6 +348,34 @@ export default function UserAvatarMenu({ presence, isAdmin, onLogout }: Props) {
               className="mt-2 h-8 w-full rounded-md border border-blue-600 bg-white text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
             >
               {savingCargo ? 'Guardando…' : 'Guardar cargo'}
+            </button>
+          </div>
+
+          <div className="px-3 py-2" role="group" aria-label="Correo">
+            <label className="block text-[11px] font-semibold uppercase tracking-wide text-gray-500" htmlFor="avatar-menu-email">
+              Correo
+            </label>
+            <input
+              id="avatar-menu-email"
+              type="email"
+              className="mt-1 h-8 w-full rounded-md border border-gray-200 px-2 text-sm text-gray-900 outline-none focus:border-blue-500"
+              maxLength={120}
+              placeholder={user?.email || 'correo@empresa.pe'}
+              value={contactEmail}
+              onChange={(e) => {
+                setContactEmail(e.target.value)
+                setEmailError('')
+              }}
+            />
+            <p className="mt-1 text-[11px] text-gray-400">Vacío usa tu correo de acceso en la propuesta.</p>
+            {emailError ? <p className="mt-1 text-[11px] text-red-600">{emailError}</p> : null}
+            <button
+              type="button"
+              disabled={savingEmail}
+              onClick={() => void handleSaveEmail()}
+              className="mt-2 h-8 w-full rounded-md border border-blue-600 bg-white text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+            >
+              {savingEmail ? 'Guardando…' : 'Guardar correo'}
             </button>
           </div>
 

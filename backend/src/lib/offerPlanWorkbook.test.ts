@@ -6,6 +6,7 @@ import {
   parseOfferPlanWorkbook,
   priceFromPlanName,
 } from './offerPlanWorkbook'
+import { quotePlanData, quotePlanInternet } from './quoteDiscount'
 
 function section(name: string) {
   console.log(`\n• ${name}`)
@@ -207,6 +208,52 @@ if (existsSync(REAL_NEW_FILE)) {
   )
 } else {
   section('real updated xlsx not on this machine; fixture covered new GB headers')
+}
+
+section('fixture: Tethering headers import as-is and fill INTERNET by origin')
+const TETHERING_HEADERS = NEW_HEADERS.map((label) =>
+  label === 'Lineas nueva Gbs'
+    ? 'Tethering Linea nueva'
+    : label === 'Portabilidad base (GB)'
+      ? 'Tethering Portabilidad'
+      : label
+)
+function tetheringFixtureBuffer(): Buffer {
+  const rows: (string | number)[][] = [
+    ['MAX NEGOCIOS +', ...Array(TETHERING_HEADERS.length).fill('')],
+    ['Precio (S/)', ...TETHERING_HEADERS],
+    ...FIXTURE_NAMES.map((name, i) => [
+      name,
+      'ILIMITADO',
+      '300 min',
+      `${30 + i} GB`,
+      i === 0 ? 'ILIMITADO' : `${30 + i} GB`,
+      `${55 + i} GB`,
+      `${55 + i} GB`,
+      'WhatsApp',
+      '30 min',
+      '180 MB',
+      '100 sms',
+    ]),
+  ]
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), OFFER_PLAN_SHEET_NAME)
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+}
+const tethering = parseOfferPlanWorkbook(tetheringFixtureBuffer())
+assertCatalog(tethering, 'tethering-fixture', { requireFullClaro: false })
+assert.deepEqual(
+  tethering[0].benefits.map((benefit) => benefit.label),
+  TETHERING_HEADERS
+)
+assert.equal(tethering[0].benefits.find((b) => b.label === 'Tethering Linea nueva')?.value, '30 GB')
+assert.equal(tethering[0].benefits.find((b) => b.label === 'Tethering Portabilidad')?.value, '55 GB')
+{
+  const nueva = tethering[0].benefits
+  assert.equal(quotePlanInternet(nueva, 'nueva'), '30 GB')
+  assert.equal(quotePlanData(nueva, 'nueva'), 'ILIMITADO')
+  assert.equal(quotePlanInternet(nueva, 'portabilidad'), '55 GB')
+  assert.equal(quotePlanData(nueva, 'portabilidad'), '55 GB')
 }
 
 console.log('\noffer plan workbook ok')
